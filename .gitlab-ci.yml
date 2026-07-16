@@ -1,0 +1,59 @@
+stages:
+  - smoke
+  - environment
+  - artifact
+  - verify
+
+runner-smoke-test:
+  stage: smoke
+  script:
+    - echo "GitLab Runner is working"
+    - echo "Project=$CI_PROJECT_NAME"
+    - echo "Branch=$CI_COMMIT_BRANCH"
+    - echo "Commit=$CI_COMMIT_SHORT_SHA"
+    - echo "Runner=$CI_RUNNER_DESCRIPTION"
+    - echo "Runner tags=$CI_RUNNER_TAGS"
+    - date
+    - uname -a
+    - whoami
+    - uname -m
+
+inspect-runner:
+  stage: environment
+  script:
+    - echo "=== Runner ==="
+    - echo "Description=$CI_RUNNER_DESCRIPTION"
+    - echo "Architecture=$CI_RUNNER_EXECUTABLE_ARCH"
+    - echo "Tags=$CI_RUNNER_TAGS"
+    - echo "=== System ==="
+    - uname -a
+    - pwd
+    - df -h
+    - echo "=== Tools ==="
+    - git --version || true
+    - docker --version || true
+    - docker compose version || true
+    - java -version || true
+    - node --version || true
+    - npm --version || true
+    - python3 --version || true
+    - ssh -V || true
+
+create-artifact:
+  stage: artifact
+  script:
+    - mkdir -p ci-output
+    - echo "Pipeline=$CI_PIPELINE_ID" > ci-output/result.txt
+    - echo "Commit=$CI_COMMIT_SHORT_SHA" >> ci-output/result.txt
+    - echo "Runner=$CI_RUNNER_DESCRIPTION" >> ci-output/result.txt
+  artifacts:
+    paths:
+      - ci-output/
+    expire_in: 1 day
+
+verify-artifact:
+  stage: verify
+  script:
+    - test -f ci-output/result.txt
+    - cat ci-output/result.txt
+    - echo "Artifact test passed"

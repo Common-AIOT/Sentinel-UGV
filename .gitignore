@@ -1,0 +1,76 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.jks
+*.crt
+secrets/
+
+# IDE and OS
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+
+# Logs and temporary files
+*.log
+logs/
+tmp/
+temp/
+*.swp
+*.swo
+
+# Java / Gradle
+.gradle/
+build/
+out/
+target/
+*.class
+
+# Node / Next.js
+node_modules/
+.next/
+coverage/
+dist/
+*.tsbuildinfo
+.pnpm-store/
+
+# Python / ROS 2
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
+jetson/ros2_ws/build/
+jetson/ros2_ws/install/
+jetson/ros2_ws/log/
+
+# AI models and generated media
+*.engine
+*.onnx
+*.pt
+*.pth
+*.weights
+*.bag
+*.db3
+*.mp4
+*.avi
+*.mkv
+
+# Hardware generated artifacts
+*.stl
+*.step
+*.stp
+*.FCStd1
+
+# Runtime data and backups
+data/
+backups/
+*.dump
+*.sql.gz

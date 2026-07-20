@@ -1,0 +1,38 @@
+stages:
+  - lint
+  - test
+  - build
+  - package
+  - deploy_ec2
+  - smoke_test
+  - deploy_jetson_manual
+
+default:
+  interruptible: true
+
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH'
+
+validate:repository-structure:
+  stage: lint
+  image: alpine:3.20
+  script:
+    - test -d jetson/ros2_ws/src
+    - test -d backend/src
+    - test -d frontend/app
+    - test -d common/protocol
+    - test -f deploy/ec2/docker-compose.yml
+    - test -f scripts/health_check.sh
+    - test -f docs/repository-structure.md
+
+lint:shell:
+  stage: lint
+  image: koalaman/shellcheck-alpine:v0.10.0
+  script:
+    - shellcheck scripts/*.sh
+
+# Backend, frontend, ROS 2 and deployment jobs are added by each module owner
+# together with the first runnable application. The stage order above is the
+# project-wide contract defined in the integrated specification.

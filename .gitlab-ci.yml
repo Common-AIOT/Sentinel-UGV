@@ -38,6 +38,13 @@ validate:repository-structure:
   script:
     - sh scripts/ci/validate_repository.sh
 
+validate:compose-config:
+  stage: lint
+  image: docker:29-cli@sha256:be132a9f282288de4afaf63379dff75711fda0147c6b72a9df44e51841402144
+  script:
+    - docker compose --env-file .env.example --file deploy/local/docker-compose.yml config --quiet
+    - docker compose --env-file deploy/ec2/.env.example --file deploy/ec2/docker-compose.yml config --quiet
+
 lint:shell:
   stage: lint
   image:

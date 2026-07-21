@@ -3,6 +3,7 @@
 서버 런타임과 외부 노출 계층의 설정을 관리합니다.
 
 - `ec2/`: Docker Compose와 환경 변수 예시
+- `local/`: Host 개발용 PostgreSQL/TimescaleDB와 MediaMTX
 - `nginx/`: TLS 종료와 API/WebSocket reverse proxy
 - `mediamtx/`: 로컬·원격 WebRTC 중계 설정
 

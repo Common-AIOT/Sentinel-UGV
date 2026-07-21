@@ -9,29 +9,56 @@ stages:
 
 default:
   interruptible: true
+  retry:
+    max: 1
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
 
 workflow:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-    - if: '$CI_COMMIT_BRANCH'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+    - when: never
+
+verify:runner:
+  stage: lint
+  image: alpine:3.20
+  script:
+    - test -n "$CI_PIPELINE_ID"
+    - test -n "$CI_COMMIT_SHA"
+    - test -n "$CI_RUNNER_ID"
+    - echo "Runner ${CI_RUNNER_DESCRIPTION:-unknown} accepted pipeline ${CI_PIPELINE_ID}."
+    - echo "Commit ${CI_COMMIT_SHORT_SHA} on ${CI_COMMIT_REF_NAME}."
 
 validate:repository-structure:
   stage: lint
   image: alpine:3.20
   script:
-    - test -d jetson/ros2_ws/src
-    - test -d backend/src
-    - test -d frontend/app
-    - test -d common/protocol
-    - test -f deploy/ec2/docker-compose.yml
-    - test -f scripts/health_check.sh
-    - test -f docs/repository-structure.md
+    - sh scripts/ci/validate_repository.sh
 
 lint:shell:
   stage: lint
-  image: koalaman/shellcheck-alpine:v0.10.0
+  image:
+    name: koalaman/shellcheck-alpine:v0.10.0
+    entrypoint: [""]
   script:
-    - shellcheck scripts/*.sh
+    - shellcheck scripts/*.sh scripts/ci/*.sh
+
+diagnose:runner:
+  stage: lint
+  image: alpine:3.20
+  allow_failure: true
+  rules:
+    - when: manual
+  script:
+    - echo "Description=${CI_RUNNER_DESCRIPTION:-unknown}"
+    - echo "Architecture=${CI_RUNNER_EXECUTABLE_ARCH:-unknown}"
+    - echo "Tags=${CI_RUNNER_TAGS:-none}"
+    - uname -a
+    - id
+    - df -h
 
 # Backend, frontend, ROS 2 and deployment jobs are added by each module owner
 # together with the first runnable application. The stage order above is the

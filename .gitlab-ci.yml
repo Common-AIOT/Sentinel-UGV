@@ -151,6 +151,8 @@ deploy:ec2:
     # 3. EC2 접속 후 최신 이미지 Pull 및 컨테이너 재시작
     - ssh $EC2_USER@$EC2_HOST "cd ~/deploy && docker compose -f compose.prod.yaml pull && docker compose -f compose.prod.yaml up -d"
   rules:
+    - changes:
+        - backend/**/*
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
     - if: '$CI_PIPELINE_SOURCE == "web"'
 

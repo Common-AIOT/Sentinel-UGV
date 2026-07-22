@@ -108,6 +108,8 @@ build:backend-image:
   image: docker:24.0.5
   services:
     - docker:24.0.5-dind
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
   script:
     # 1. 도커 허브 로그인 (GitLab Variables에 등록한 변수 사용)
     - echo "$DOCKER_HUB_PASSWORD" | docker login -u "$DOCKER_HUB_USER" --password-stdin

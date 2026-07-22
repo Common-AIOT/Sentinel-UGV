@@ -8,6 +8,7 @@
 *.jks
 *.crt
 secrets/
+docs/private-docs
 
 # IDE and OS
 .idea/

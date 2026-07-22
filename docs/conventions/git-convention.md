@@ -14,19 +14,31 @@ develop → 작업 브랜치 → Merge Request → develop → 통합 테스트 
 - 병합은 CI, 리뷰와 충돌 해결을 마친 Merge Request로 수행합니다.
 - Squash Merge 후 작업 브랜치를 삭제합니다.
 
-## 브랜치 이름
+## 브랜치 이름과 MR 제목
 
 ```text
 <type>/<scope>/<jira-key>-<description>
 ```
 
-예: `feat/ros2/S15P11A301-145-frontier-exploration`
+예: `feature/ros2/S15P11A301-145-frontier-exploration`
 
-- type: `feat`, `fix`, `refactor`, `perf`, `test`, `docs`, `style`, `build`, `chore`, `ci`, `hotfix`, `revert`
+- type: `feature`, `fix`, `refactoring`, `performance`, `test`, `documentation`, `style`, `build`, `chore`, `ci`, `hotfix`, `revert`
 - scope: `frontend`, `backend`, `jetson`, `ros2`, `ai`, `camera`, `slam`, `navigation`, `control`, `streaming`, `database`, `common`, `deploy`, `docs`, `root`
 - 소문자 영문을 사용하고 단어는 하이픈으로 구분합니다.
 
-## 커밋과 MR 제목
+## MR 제목
+
+```text
+<type>(<scope>): <jira-key> <한국어 설명>
+```
+
+예: `feature(control): S15P11A301-162 명령 타임아웃 시 모터 정지 구현`
+
+- type: `feature`, `fix`, `refactoring`, `performance`, `test`, `documentation`, `style`, `build`, `chore`, `ci`, `hotfix`, `revert`
+- scope: `frontend`, `backend`, `jetson`, `ros2`, `ai`, `camera`, `slam`, `navigation`, `control`, `streaming`, `database`, `common`, `deploy`, `docs`, `root`
+- 소문자 영문을 사용하고 단어는 하이픈으로 구분합니다.
+
+## 커밋
 
 ```text
 <type>(<scope>): <jira-key> <한국어 설명>
@@ -34,6 +46,8 @@ develop → 작업 브랜치 → Merge Request → develop → 통합 테스트 
 
 예: `fix(control): S15P11A301-162 명령 타임아웃 시 모터 정지`
 
+- type: `feat`, `fix`, `refactor`, `perf`, `test`, `docs`, `style`, `build`, `chore`, `ci`, `hotfix`, `revert`
+- scope: `frontend`, `backend`, `jetson`, `ros2`, `ai`, `camera`, `slam`, `navigation`, `control`, `streaming`, `database`, `common`, `deploy`, `docs`, `root`
 - 하나의 커밋에는 하나의 목적만 포함합니다.
 - `수정`, `작업`, `업데이트` 같은 모호한 표현과 끝의 마침표를 사용하지 않습니다.
 - 임시 커밋은 허용하지만 병합할 때 정상 메시지 하나로 squash합니다.

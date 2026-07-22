@@ -101,3 +101,56 @@ diagnose:runner:
 # 백엔드, 프런트엔드, ROS 2 및 배포 job은 각 모듈이 실제로 실행 가능한 시점에
 # 해당 모듈 담당자가 추가합니다. 위 stages 순서는 통합 명세에서 정한 프로젝트 공통 계약입니다.
 # 현재 job에는 tags가 없으므로 Runner 설정에서 "Run untagged jobs"가 활성화되어야 합니다.
+
+# 백엔드 도커 이미지 빌드 및 도커 허브 업로드 (Push)
+build:backend-image:
+  stage: package
+  image: docker:24.0.5
+  services:
+    - docker:24.0.5-dind
+  script:
+    # 1. 도커 허브 로그인 (GitLab Variables에 등록한 변수 사용)
+    - echo "$DOCKER_HUB_PASSWORD" | docker login -u "$DOCKER_HUB_USER" --password-stdin
+
+    # 2. 백엔드 폴더로 이동
+    - cd backend
+
+    # 3. 깃랩 시크릿(File 타입)에서 application-prod.yml을 가져와서 리소스 폴더에 생성
+    - cp $APPLICATION_PROD_YML src/main/resources/application-prod.yml
+
+    # 4. 이미지 빌드 및 푸시
+    - docker build -t $DOCKER_HUB_USER/spring-backend:latest .
+    - docker push $DOCKER_HUB_USER/spring-backend:latest
+  rules:
+    # backend 폴더에 변경사항이 있을 때만 이 Job을 실행합니다. (파이프라인 최적화)
+    - changes:
+        - backend/**/*
+    # 사용자가 수동으로 파이프라인을 실행했을 때도 동작하도록 허용
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+
+# EC2 서버 자동 배포
+deploy:ec2:
+  stage: deploy_ec2
+  image: alpine:3.20
+  needs: ["build:backend-image"] # 빌드가 성공해야만 배포 실행
+  before_script:
+    # SSH 접속을 위한 패키지 설치 및 키 세팅
+    - apk add --no-cache openssh-client
+    - mkdir -p ~/.ssh
+    - eval $(ssh-agent -s)
+    - echo "$EC2_SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
+    - ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts
+  script:
+    # 1. EC2 배포용 디렉토리 생성
+    - ssh $EC2_USER@$EC2_HOST "mkdir -p ~/deploy"
+    
+    # 2. 실행 파일(compose.prod.yaml) 및 환경변수(.env) 전송
+    - scp backend/compose.prod.yaml $EC2_USER@$EC2_HOST:~/deploy/compose.prod.yaml
+    - scp $ENV_PROD $EC2_USER@$EC2_HOST:~/deploy/.env
+    
+    # 3. EC2 접속 후 최신 이미지 Pull 및 컨테이너 재시작
+    - ssh $EC2_USER@$EC2_HOST "cd ~/deploy && docker compose -f compose.prod.yaml pull && docker compose -f compose.prod.yaml up -d"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+

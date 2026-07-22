@@ -143,16 +143,16 @@ deploy:ec2:
   script:
     # 1. EC2 배포용 디렉토리 생성
     - ssh $EC2_USER@$EC2_HOST "mkdir -p ~/deploy"
-    
+
     # 2. 실행 파일(compose.prod.yaml) 및 환경변수(.env) 전송
     - scp backend/compose.prod.yaml $EC2_USER@$EC2_HOST:~/deploy/compose.prod.yaml
     - scp $ENV_PROD $EC2_USER@$EC2_HOST:~/deploy/.env
-    
+
     # 3. EC2 접속 후 최신 이미지 Pull 및 컨테이너 재시작
     - ssh $EC2_USER@$EC2_HOST "cd ~/deploy && docker compose -f compose.prod.yaml pull && docker compose -f compose.prod.yaml up -d"
   rules:
+    # build:backend-image와 동일한 조건: 백엔드 변경 시 또는 웹 수동 실행 시에만 실행
+    # (default branch 조건은 workflow:rules에서 이미 관리하므로 여기서 제거)
     - changes:
         - backend/**/*
-    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
     - if: '$CI_PIPELINE_SOURCE == "web"'
-

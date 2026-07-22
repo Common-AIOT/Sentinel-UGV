@@ -1,0 +1,8 @@
+spring:
+  application:
+    name: backend
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:local}
+  docker:
+    compose:
+      file: backend/compose.yaml

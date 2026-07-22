@@ -9,6 +9,7 @@
 *.crt
 secrets/
 docs/private-docs
+backend/src/main/resources/application-prod.yml
 
 # IDE and OS
 .idea/

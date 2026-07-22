@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: postgres-db
+    environment:
+      - POSTGRES_DB=sentinel_ugv
+      - POSTGRES_USER=${SPRING_DATASOURCE_USERNAME:-myuser}
+      - POSTGRES_PASSWORD=${SPRING_DATASOURCE_PASSWORD:-secret}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: spring-backend
+    environment:
+      - SPRING_PROFILES_ACTIVE=${SPRING_PROFILES_ACTIVE:-local}
+      # URL은 도커 내부 네트워크를 타야 하므로 postgres 고정, 유저/비번은 env 파일 참조
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/sentinel_ugv
+      - SPRING_DATASOURCE_USERNAME=${SPRING_DATASOURCE_USERNAME:-myuser}
+      - SPRING_DATASOURCE_PASSWORD=${SPRING_DATASOURCE_PASSWORD:-secret}
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

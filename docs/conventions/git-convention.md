@@ -14,7 +14,7 @@ develop → 작업 브랜치 → Merge Request → develop → 통합 테스트 
 - 병합은 CI, 리뷰와 충돌 해결을 마친 Merge Request로 수행합니다.
 - Squash Merge 후 작업 브랜치를 삭제합니다.
 
-## 브랜치 이름과 MR 제목
+## 브랜치 이름
 
 ```text
 <type>/<scope>/<jira-key>-<description>

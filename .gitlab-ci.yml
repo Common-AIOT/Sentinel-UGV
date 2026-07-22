@@ -1,3 +1,7 @@
+# GitLab CI/CD 파이프라인에서 사용할 단계와 실행 순서입니다.
+# 같은 stage의 job은 Runner 여유가 있으면 병렬로 실행되고,
+# 앞 stage의 필수 job이 성공해야 다음 stage로 넘어갑니다.
+# 현재 실제 job은 lint stage에만 있으며, 나머지는 후속 구현을 위한 예약 단계입니다.
 stages:
   - lint
   - test
@@ -7,59 +11,86 @@ stages:
   - smoke_test
   - deploy_jetson_manual
 
+# 별도 설정이 없는 모든 job에 공통으로 적용되는 기본 정책입니다.
 default:
+  # 더 최신 커밋의 파이프라인이 시작되면 기존 job을 안전하게 취소할 수 있음을 나타냅니다.
+  # 실제 자동 취소 여부는 GitLab 프로젝트의 중복 파이프라인 자동 취소 설정에도 영향을 받습니다.
   interruptible: true
   retry:
+    # 코드/테스트 실패가 아니라 Runner 인프라 문제일 때만 최대 1회 재시도합니다.
     max: 1
     when:
       - runner_system_failure
       - stuck_or_timeout_failure
 
+# 파이프라인 자체를 생성할 조건입니다. 위에서부터 평가하며 하나라도 일치하면 생성됩니다.
 workflow:
   rules:
+    # Merge Request가 생성되거나 새 커밋으로 갱신될 때 실행합니다.
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    # main/master 등 GitLab 프로젝트에 설정된 기본 브랜치에서 실행합니다.
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    # GitLab의 Build > Pipelines > Run pipeline에서 수동으로 시작한 경우 실행합니다.
     - if: '$CI_PIPELINE_SOURCE == "web"'
+    # 위 조건에 해당하지 않는 일반 기능 브랜치 push, 태그 push 등은 실행하지 않습니다.
     - when: never
 
+# Runner가 GitLab의 job을 정상적으로 수신했고 필수 CI 변수가 제공되는지 확인합니다.
 verify:runner:
   stage: lint
+  # 가볍고 빠른 Linux 컨테이너에서 검증 명령을 실행합니다.
   image: alpine:3.20
   script:
+    # test -n은 문자열이 비어 있으면 실패(exit code 1)합니다.
     - test -n "$CI_PIPELINE_ID"
     - test -n "$CI_COMMIT_SHA"
     - test -n "$CI_RUNNER_ID"
+    # 문제 발생 시 어떤 Runner와 커밋이 실행됐는지 job 로그에서 확인할 수 있게 출력합니다.
     - echo "Runner ${CI_RUNNER_DESCRIPTION:-unknown} accepted pipeline ${CI_PIPELINE_ID}."
     - echo "Commit ${CI_COMMIT_SHORT_SHA} on ${CI_COMMIT_REF_NAME}."
 
+# 프로젝트 필수 디렉터리와 필수 파일이 존재하며 비어 있지 않은지 검사합니다.
+# 실제 검사 대상 목록은 scripts/ci/validate_repository.sh에서 관리합니다.
 validate:repository-structure:
   stage: lint
   image: alpine:3.20
   script:
     - sh scripts/ci/validate_repository.sh
 
+# 로컬 개발용 및 EC2 배포용 Docker Compose 파일의 문법과 변수 치환을 검사합니다.
+# config --quiet는 컨테이너를 실행하지 않고 최종 Compose 설정의 유효성만 확인합니다.
 validate:compose-config:
   stage: lint
+  # SHA-256 digest로 이미지를 고정해 같은 Docker CLI 버전을 재현 가능하게 사용합니다.
   image: docker:29-cli@sha256:be132a9f282288de4afaf63379dff75711fda0147c6b72a9df44e51841402144
   script:
+    # 개발 환경 예시 변수와 로컬 Compose 설정을 조합해 검증합니다.
     - docker compose --env-file .env.example --file deploy/local/docker-compose.yml config --quiet
+    # EC2 환경 예시 변수와 EC2 Compose 설정을 조합해 검증합니다.
     - docker compose --env-file deploy/ec2/.env.example --file deploy/ec2/docker-compose.yml config --quiet
 
+# 저장소의 셸 스크립트를 ShellCheck로 정적 분석합니다.
 lint:shell:
   stage: lint
   image:
     name: koalaman/shellcheck-alpine:v0.10.0
+    # 이미지의 기본 ENTRYPOINT를 제거해 GitLab Runner가 script 명령을 직접 실행하게 합니다.
     entrypoint: [""]
   script:
+    # 일반 운영 스크립트와 CI 보조 스크립트를 모두 검사합니다.
     - shellcheck scripts/*.sh scripts/ci/*.sh
 
+# Runner 환경 문제를 조사할 때만 GitLab UI에서 수동 실행하는 진단 job입니다.
 diagnose:runner:
   stage: lint
   image: alpine:3.20
+  # 진단 자체가 실패해도 전체 파이프라인 상태를 실패로 변경하지 않습니다.
   allow_failure: true
   rules:
+    # 자동 실행하지 않고 파이프라인 화면에 실행 버튼을 표시합니다.
     - when: manual
   script:
+    # Runner 식별 정보와 컨테이너의 OS, 사용자 권한, 디스크 상태를 로그로 남깁니다.
     - echo "Description=${CI_RUNNER_DESCRIPTION:-unknown}"
     - echo "Architecture=${CI_RUNNER_EXECUTABLE_ARCH:-unknown}"
     - echo "Tags=${CI_RUNNER_TAGS:-none}"
@@ -67,6 +98,6 @@ diagnose:runner:
     - id
     - df -h
 
-# Backend, frontend, ROS 2 and deployment jobs are added by each module owner
-# together with the first runnable application. The stage order above is the
-# project-wide contract defined in the integrated specification.
+# 백엔드, 프런트엔드, ROS 2 및 배포 job은 각 모듈이 실제로 실행 가능한 시점에
+# 해당 모듈 담당자가 추가합니다. 위 stages 순서는 통합 명세에서 정한 프로젝트 공통 계약입니다.
+# 현재 job에는 tags가 없으므로 Runner 설정에서 "Run untagged jobs"가 활성화되어야 합니다.

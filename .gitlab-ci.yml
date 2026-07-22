@@ -107,9 +107,19 @@ build:backend-image:
   stage: package
   image: docker:24.0.5
   services:
-    - docker:24.0.5-dind
+    # Docker CLI가 비TLS DinD 데몬(2375)에 연결하도록 양쪽 설정을 맞춘다.
+    # 이 job을 실행하는 Docker executor Runner에는 config.toml의
+    # [runners.docker] privileged = true 설정도 필요하다.
+    - name: docker:24.0.5-dind
+      command: ["--tls=false"]
   variables:
-    DOCKER_TLS_CERTDIR: "/certs"
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
+  variables:
+    # DinD 서비스가 TLS 없이 실행되도록 설정 (빈 문자열 = TLS 비활성화)
+    DOCKER_TLS_CERTDIR: ""
+    # Docker 클라이언트가 DinD 서비스의 비-TLS 포트로 접속하도록 지정
+    DOCKER_HOST: tcp://docker:2375
   script:
     # 1. 도커 허브 로그인 (GitLab Variables에 등록한 변수 사용)
     - echo "$DOCKER_HUB_PASSWORD" | docker login -u "$DOCKER_HUB_USER" --password-stdin

@@ -10,12 +10,12 @@ def generate_launch_description():
     lidar_launch = PathJoinSubstitution([
         FindPackageShare('sentinel_bringup'), 'launch', 'lidar.launch.py'
     ])
+    camera_params = PathJoinSubstitution([
+        FindPackageShare('sentinel_bringup'), 'config', 'brio_100.yaml'
+    ])
     return LaunchDescription([
-        Node(package='v4l2_camera', executable='v4l2_camera_node',
-             namespace='camera', name='v4l2_camera', output='screen',
-             parameters=[{'video_device': '/dev/video0',
-                          'image_size': [1280, 720],
-                          'time_per_frame': [1, 30],
-                          'pixel_format': 'MJPG'}]),
+        Node(package='usb_cam', executable='usb_cam_node_exe',
+             namespace='camera', name='usb_cam', output='screen',
+             parameters=[camera_params]),
         IncludeLaunchDescription(PythonLaunchDescriptionSource(lidar_launch))
     ])

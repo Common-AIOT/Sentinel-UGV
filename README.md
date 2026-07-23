@@ -26,7 +26,7 @@
 ├─ deploy/                  # EC2, Nginx, MediaMTX 배포 설정
 ├─ scripts/                 # 설치·배포·점검·백업 스크립트
 ├─ hardware/                # CAD, 배선, BOM 산출물
-├─ docs/                    # 아키텍처·규칙·테스트 문서
+├─ docs/                    # v1.0-rc1 통합 명세서와 영역별 분할 문서
 └─ .gitlab-ci.yml           # GitLab CI/CD 파이프라인
 ```
 
@@ -38,17 +38,16 @@
 4. 공통 메시지를 변경할 때는 `common/`과 관련 문서를 함께 갱신합니다.
 5. 테스트 결과와 하드웨어 영향을 Merge Request에 기록합니다.
 
-세부 규칙은 [Git 규칙](docs/conventions/git-convention.md), 전체 구조 설명은 [저장소 안내](docs/repository-structure.md)를 참고하세요.
+세부 규칙은 [Git 브랜치·커밋·MR 컨벤션](docs/conventions/Git-브랜치-커밋-MR-컨벤션.md), 전체 구조 설명은 [15장 저장소·배포·CI/CD](docs/operations/15-저장소-배포-CI-CD.md)를 참고하세요.
 
 ## 개발 문서
 
 - [문서 인덱스](docs/README.md)
-- [시스템 컨텍스트](docs/architecture/system-context.md)
-- [로봇 런타임](docs/architecture/robot-runtime.md)
-- [제어와 텔레메트리](docs/architecture/control-and-telemetry.md)
-- [안전 정책](docs/architecture/safety-policy.md)
-- [로컬 개발 환경](docs/development/local-setup.md)
-- [테스트 전략](docs/testing/test-strategy.md)
+- [최종 통합 명세서 v1.0-rc1](docs/specifications/Sentinel_UGV_최종_통합_명세서_v1.0-rc1.md)
+- [전체 시스템 아키텍처](docs/architecture/05-전체-시스템-아키텍처.md)
+- [Jetson·Spring Boot·관제 웹 통신 설계](docs/architecture/31-Jetson-Spring-Boot-관제-웹-통신-설계.md)
+- [상태 머신 및 안전 정책](docs/architecture/14-상태-머신-및-안전-정책.md)
+- [테스트 및 검증 계획](docs/testing/16-테스트-및-검증-계획.md)
 
 ## 안전 원칙
 
@@ -59,4 +58,4 @@
 
 ## 프로젝트 상태
 
-현재 저장소는 명세서 v0.9에 맞춘 초기 모노레포 골격입니다. 각 모듈의 실제 애플리케이션 생성 시 해당 디렉터리의 안내 파일을 유지하거나 실제 실행 문서로 대체합니다.
+현재 저장소는 통합 명세서 v1.0-rc1에 맞춘 초기 모노레포 골격입니다. 각 모듈의 실제 애플리케이션 생성 시 해당 디렉터리의 안내 파일을 유지하거나 실제 실행 문서로 대체합니다.

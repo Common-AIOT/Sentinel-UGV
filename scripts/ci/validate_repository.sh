@@ -9,7 +9,13 @@ common/protocol
 common/schemas
 common/samples
 docs/architecture
-docs/development
+docs/backend
+docs/frontend
+docs/hardware
+docs/jetson
+docs/operations
+docs/product
+docs/specifications
 docs/testing
 "
 
@@ -18,13 +24,14 @@ required_files="
 deploy/ec2/docker-compose.yml
 deploy/local/docker-compose.yml
 deploy/local/README.md
-docs/repository-structure.md
-docs/architecture/system-context.md
-docs/architecture/robot-runtime.md
-docs/architecture/control-and-telemetry.md
-docs/architecture/safety-policy.md
-docs/development/local-setup.md
-docs/testing/test-strategy.md
+docs/README.md
+docs/specifications/Sentinel_UGV_최종_통합_명세서_v1.0-rc1.md
+docs/architecture/05-전체-시스템-아키텍처.md
+docs/architecture/14-상태-머신-및-안전-정책.md
+docs/architecture/31-Jetson-Spring-Boot-관제-웹-통신-설계.md
+docs/testing/16-테스트-및-검증-계획.md
+docs/testing/38-요구사항-추적표-최종-인수-시험.md
+scripts/docs/split-integrated-spec.ps1
 scripts/health_check.sh
 scripts/check_dev_environment.sh
 scripts/check_dev_environment.ps1

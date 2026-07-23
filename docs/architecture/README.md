@@ -1,12 +1,11 @@
 # Architecture
 
-시스템 컨텍스트, 로봇 런타임, 데이터 흐름과 안전 정책을 보관합니다.
+통합 명세서의 시스템 구조, 런타임, 상태와 통신 설계 장을 보관합니다.
 
-- [system-context.md](system-context.md): 시스템 경계, 배치 프로필, 데이터 소유권
-- [robot-runtime.md](robot-runtime.md): ROS 2 처리 파이프라인과 노드 경계
-- [control-and-telemetry.md](control-and-telemetry.md): REST, WebSocket, WebRTC 흐름
-- [safety-policy.md](safety-policy.md): 상태 머신, 제어 우선순위, 장애 정책
-
-새로운 기술 선택이나 기존 확정 결정을 변경할 때는 `adr/NNNN-short-title.md` 형식의 Architecture Decision Record를 추가합니다.
-
-아키텍처 결정에는 배경, 선택지, 결정, 장단점, 검증 방법과 변경일을 기록합니다.
+- [3장 기존 명세 대비 재설계 결정](03-기존-명세-대비-재설계-결정.md)
+- [5장 전체 시스템 아키텍처](05-전체-시스템-아키텍처.md)
+- [7장 소프트웨어 기술 스택 및 실행 환경](07-소프트웨어-기술-스택-및-실행-환경.md)
+- [14장 상태 머신 및 안전 정책](14-상태-머신-및-안전-정책.md)
+- [26장 Mission Manager·임무 상태 머신](26-Mission-Manager-임무-상태-머신-상세-설계.md)
+- [30장 피해자 발견·접근·상호작용 오케스트레이션](30-피해자-발견-접근-상호작용-오케스트레이션.md)
+- [31장 Jetson·Spring Boot·관제 웹 통신 설계](31-Jetson-Spring-Boot-관제-웹-통신-설계.md)

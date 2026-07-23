@@ -8,4 +8,4 @@ Jetson, backend와 frontend가 공유하는 외부 계약의 단일 기준점입
 
 계약을 변경할 때는 호환성, 버전과 생산자/소비자 영향 범위를 기록합니다.
 
-시스템 경계와 채널 선택은 [시스템 컨텍스트](../docs/architecture/system-context.md)와 [제어·텔레메트리 흐름](../docs/architecture/control-and-telemetry.md)을 참고합니다.
+시스템 경계와 채널 선택은 [5장 전체 시스템 아키텍처](../docs/architecture/05-전체-시스템-아키텍처.md)와 [31장 Jetson·Spring Boot·관제 웹 통신 설계](../docs/architecture/31-Jetson-Spring-Boot-관제-웹-통신-설계.md)를 참고합니다.

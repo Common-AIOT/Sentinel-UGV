@@ -17,11 +17,18 @@ default:
   # 실제 자동 취소 여부는 GitLab 프로젝트의 중복 파이프라인 자동 취소 설정에도 영향을 받습니다.
   interruptible: true
   retry:
-    # 코드/테스트 실패가 아니라 Runner 인프라 문제일 때만 최대 1회 재시도합니다.
-    max: 1
+    # 코드/테스트 실패가 아니라 Runner/API 인프라 문제일 때만 최대 2회 재시도합니다.
+    max: 2
     when:
+      - api_failure
       - runner_system_failure
       - stuck_or_timeout_failure
+
+# Runner에 남아 있는 작업 디렉터리나 부분 checkout을 사용하지 않고,
+# 모든 job이 동일한 깨끗한 Git 작업 트리에서 시작하도록 합니다.
+variables:
+  GIT_STRATEGY: clone
+  GIT_CLEAN_FLAGS: -ffdx
 
 # 파이프라인 자체를 생성할 조건입니다. 위에서부터 평가하며 하나라도 일치하면 생성됩니다.
 workflow:

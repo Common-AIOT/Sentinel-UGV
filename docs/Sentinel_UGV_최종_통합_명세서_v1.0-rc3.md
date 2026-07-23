@@ -1,9 +1,9 @@
 ---
 title: "재난 지역 자율 탐사 UGV - Sentinel UGV"
 team: "역삼역역무실관제센터"
-version: "v1.0-rc1"
+version: "v1.0-rc3"
 status: "통합 설계 검수본"
-date: "2026-07-22"
+date: "2026-07-23"
 ---
 
 # 재난 지역 자율 탐사 UGV - Sentinel UGV
@@ -13,9 +13,9 @@ date: "2026-07-22"
 | **항목**           | **내용**                                                 |
 |--------------------|----------------------------------------------------------|
 | **팀명**           | 역삼역역무실관제센터                                     |
-| **문서 버전**      | v1.0-rc1 - 1~38장 통합 설계 검수본                       |
-| **작성 기준일**    | 2026-07-22                                               |
-| **개발 종료 목표** | 2026-08-10                                          |
+| **문서 버전**      | v1.0-rc3 - 전체 대화 최신 결정 기준 재검수본              |
+| **작성 기준일**    | 2026-07-23                                               |
+| **개발 종료 목표** | 2026-08-07                                            |
 | **프로젝트 유형**  | 온디바이스 AIoT 기반 재난 탐사 무인 지상 차량(UGV)       |
 | **문서 상태**      | 시스템 구조 확정, 실제 부품 정격·배선·튜닝값은 As-Built 단계 TBD |
 
@@ -25,10 +25,12 @@ date: "2026-07-22"
 | **버전** | **일자**   | **상태**  | **주요 변경 내용**                                                    |
 |----------|------------|-----------|-----------------------------------------------------------------------|
 | v0.1     | 2026-07 초 | 아이디어  | 재난 지역 탐사 로봇 콘셉트 및 Jetson 중심 구조 검토                   |
-| v0.5     | 2026-07 중 | 설계      | 무한궤도, 짐벌, ROS2, SLAM, Nav2, AWS 관제 구조 결정                  |
+| v0.5     | 2026-07 중 | 설계      | 짐벌, ROS2, SLAM, Nav2, AWS 관제 구조 검토                            |
 | v0.8     | 2026-07-17 | 정책 확정 | 자율 탐사, 수동 조종, 스트리밍, 데이터 저장, 장애 대응 정책 확정      |
 | v0.9     | 2026-07-17 | 개발 착수 | 전체 프로젝트 종합 명세서 작성. 모터/전원/짐벌 세부 부품은 TBD로 관리 |
 | v1.0-rc1 | 2026-07-22 | 통합 검수 | 1~38장 통합, Jetson+STM32, 피해자 접근·음성·다중 인원, MQTT·이벤트 녹화·보안·인수 시험 반영 |
+| v1.0-rc2 | 2026-07-23 | 구동 정정 | 구동계 정정 시도. 실제 donor platform 반영은 rc3에서 재검수 |
+| v1.0-rc3 | 2026-07-23 | 대화 재검수 | BMW M7 베이스·RS540·추가 학습 YOLO·STT-LLM-TTS·실측 센서 상태 반영, 폐기 자료 의존 제거 |
 
 ## 결정 상태 표기
 | **표기**  | **의미**                    | **처리 원칙**                                   |
@@ -38,10 +40,20 @@ date: "2026-07-22"
 | TBD       | 부품 확인·측정·검증 후 결정 | 담당자와 확정 기한을 반드시 지정                |
 | 확장      | MVP 완료 후 추가            | 필수 기능 일정에 영향을 주지 않는 범위에서 수행 |
 
+## 검수 기준
+
+본 문서는 **2026-07-23까지 프로젝트 대화에서 확정되거나 실제 장비로 확인된 최신 결정**을 유일한 설계 기준으로 사용한다. 서로 다른 시점의 결정이 충돌하면 더 나중에 사용자가 직접 확정한 내용을 우선한다.
+
+- 차량은 **BMW M7 유아전동차의 구동 베이스를 활용**한다.
+- 고수준 컴퓨팅은 Jetson Orin Nano 8GB, 저수준 주행 제어는 STM32가 담당하며 Raspberry Pi 5는 차량에 탑재하지 않는다.
+- 실제 Jetson에서 확인한 `JetPack 6.2.1+b38`과 ROS 2 Humble을 소프트웨어 기준선으로 고정한다.
+- 부품 실측 전인 조향 기구·엔코더·모터 드라이버·전원·짐벌 상세값은 확정값처럼 쓰지 않고 TBD로 유지한다.
+- 추가 학습 YOLO26n Detect와 STT-LLM-TTS 피해자 상호작용을 목표 구조에 포함한다.
+
 # 목차
 - 1. 프로젝트 개요 및 배경
 - 2. 목표, 범위 및 성공 기준
-- 3. 기존 명세 대비 재설계 결정
+- 3. 최신 확정 구조와 설계 결정
 - 4. 사용자·시연 시나리오
 - 5. 전체 시스템 아키텍처
 - 6. 하드웨어 및 기구 설계
@@ -111,7 +123,18 @@ Sentinel UGV는 재난·사고 현장과 같이 사람이 즉시 진입하기 �
 - GPS: 실내 중심 프로젝트이므로 사용하지 않음
 
 ## 1.5 프로젝트 팀
-팀명은 “역삼역역무실관제센터”이며 총 6명으로 구성한다. 임베디드·ROS2 2명, AI 2명, 백엔드·프론트엔드 2명을 기본 배치하되, 백엔드·프론트엔드 인원 중 1명은 GitLab CI/CD와 통합 이슈를 함께 담당한다.
+팀명은 “역삼역역무실관제센터”이며 총 6명으로 구성한다.
+
+| 팀원 | 담당 영역 |
+|---|---|
+| 김호준 | AI·백엔드 |
+| 도영훈 | AI·프론트엔드·PM |
+| 이원빈 | 백엔드·프론트엔드 |
+| 박종화 | Embedded SW·ROS 2 |
+| 김민석 | Embedded SW·PM |
+| 박찬혁 | 백엔드·PM |
+
+역할은 주 담당 영역을 뜻하며, 통합 시험·문서화·GitLab 운영은 팀 공통 작업으로 관리한다.
 
 # 2. 목표, 범위 및 성공 기준 [확정]
 ## 2.1 최종 목표
@@ -124,7 +147,7 @@ Sentinel UGV는 재난·사고 현장과 같이 사람이 즉시 진입하기 �
 | **MVP-02** | YDLIDAR X4 Pro 기반 실시간 SLAM 지도 생성                     |
 | **MVP-03** | Nav2 기반 목표점 이동과 장애물 회피                           |
 | **MVP-04** | Frontier 기반 미지 영역 자동 탐사                             |
-| **MVP-05** | YOLO26n COCO 사전학습 모델을 활용한 person 탐지               |
+| **MVP-05** | 현장 데이터를 추가 학습한 YOLO26n Detect 기반 person 탐지      |
 | **MVP-06** | 사람을 추적·그룹화하고 지도 위치를 추정해 encounter 생성       |
 | **MVP-07** | 같은 로컬망에서 WebRTC 저지연 영상 스트리밍                   |
 | **MVP-08** | 게임패드 기반 수동 조종과 자율/수동 모드 전환                 |
@@ -133,8 +156,8 @@ Sentinel UGV는 재난·사고 현장과 같이 사람이 즉시 진입하기 �
 | **MVP-11** | PostgreSQL+TimescaleDB+S3 연계 저장                           |
 | **MVP-12** | 물리 E-Stop, Jetson·STM32 300ms watchdog, 센서 오류 안전 정지  |
 | **MVP-13** | 탐사 종료 또는 명령 시 출발 위치 자동 복귀                    |
-| **MVP-14** | GitLab CI/CD로 EC2 서비스 자동 배포                           |
-| **MVP-15** | 피해자 안전 접근·그룹 음성 확인·구조화 보고                   |
+| **MVP-14** | GitLab 제공 Runner로 lint·test·build 수행, EC2 배포는 수동 승인 |
+| **MVP-15** | 피해자 안전 접근·STT-LLM-TTS 상호작용·구조화 보고             |
 | **MVP-16** | 확정 전 3초+상호작용 전체+종료 후 3초 이벤트 영상 저장        |
 
 ## 2.3 선택 기능
@@ -156,7 +179,7 @@ Sentinel UGV는 재난·사고 현장과 같이 사람이 즉시 진입하기 �
 - 탐사 커버리지 최적화 및 정보 이득 기반 Frontier 점수화
 
 ## 2.5 MVP 제외 범위
-- 회원가입·소셜 로그인·복잡한 역할 권한
+- 회원가입·로그인·소셜 로그인·역할별 계정 관리
 - GPS 기반 실외 자율주행
 - 완전한 험지·자갈·계단 주행
 - 안전 인증 수준의 산업용 기능 안전
@@ -180,20 +203,21 @@ Sentinel UGV는 재난·사고 현장과 같이 사람이 즉시 진입하기 �
 | 로컬 핵심 장애     | LiDAR/모터 오류 시 안전 정지                     | 노드 종료·케이블 분리 테스트   |
 | 피해자 encounter   | 탐지·접근·질문·보고·영상 저장 흐름 완료          | 단일·다중 인원 반복 시나리오   |
 
-# 3. 기존 명세 대비 재설계 결정 [확정]
-아래 결정은 명세서를 무시하기 위한 변경이 아니라, 프로젝트의 재난 탐사 시나리오와 4주 내 통합 시연 가능성을 높이기 위한 구조 최적화이다.
+# 3. 최신 확정 구조와 설계 결정 [확정]
 
-| **항목**    | **기존 방식**                           | **변경안**                                           | **변경 이유**                                                         | **단점/위험**                              | **난이도** | **기간 가능성** | **현실적 선택**                    |
-|-------------|-----------------------------------------|------------------------------------------------------|-----------------------------------------------------------------------|--------------------------------------------|------------|-----------------|------------------------------------|
-| 컴퓨팅 역할 | Raspberry Pi 5 서버 + Jetson 클라이언트 | Jetson 고수준 컴퓨팅 + STM32 저수준 제어 + EC2 관제 | Linux 부하와 모터 폐루프·watchdog을 분리하고 영상·AI 데이터 이동 최소화 | STM32 펌웨어·직렬 프로토콜 추가 개발       | 중상       | 가능            | Jetson+STM32, Raspberry Pi 미사용   |
-| 관제 서버   | Raspberry Pi Flask                      | AWS EC2 Spring Boot + Next.js                        | 외부 접속, 이력 저장, 배포 자동화, 백엔드 포트폴리오 강화             | 인터넷·비용·보안 설정 필요                 | 중         | 가능            | EC2 단일 인스턴스 Docker Compose   |
-| 로봇 통신   | Raspberry Pi↔Jetson TCP 소켓            | ROS 2 내부 + USB CDC(STM32) + MQTT/REST/WSS 외부     | 데이터 성격별 QoS·재연결·멱등·로컬 안전 보장                          | 프로토콜이 여러 개로 나뉨                  | 중상       | 가능            | 역할별 프로토콜 분리               |
-| 주행 구조   | Ackermann 4륜                           | 좌우 독립 무한궤도 스키드 스티어                     | 좁은 공간 제자리 회전과 변형 바닥 주행 시연                           | 미끄럼으로 오도메트리 오차, 부품 추가 필요 | 상         | 조건부          | 엔코더 모터 2개 권장, 하드웨어 TBD |
-| 자율주행    | 객체 인식 기반 단순 주행                | SLAM Toolbox + Nav2 + Frontier Exploration           | 미지 공간 지도 생성과 체계적 탐사 가능                                | TF·오도메트리·튜닝 난이도                  | 상         | 조건부          | Nav2 기본 주행을 먼저 완성         |
-| AI          | YOLOv8 예제                             | YOLO26n COCO 사전학습 모델                           | person 포함 기본 객체 탐지 즉시 사용, 최신 모델 활용                  | Jetson 호환성·성능 검증 필요               | 중         | 가능            | 모델 파일·TensorRT 변환 검증       |
-| 영상        | Flask/MJPEG 중심                        | 로컬 WebRTC, 원격 EC2 MediaMTX                       | 저지연 수동 조종과 외부 관제 확장                                     | HTTPS/ICE/코덱 설정 난이도                 | 중상       | 가능            | 로컬 우선, 원격 확장               |
-| 데이터      | 단순 화면 출력                          | PostgreSQL + TimescaleDB + S3                        | 임무 관계 데이터, 시계열, 영상 파일을 목적에 맞게 분리                | 스키마·업로드 상태 관리 필요               | 중         | 가능            | 하나의 PostgreSQL에 Timescale 확장 |
-| 배포        | 수동 실행                               | GitLab CI/CD + Docker Compose + Jetson 배포 스크립트 | 반복 가능한 서버 배포와 환경 표준화                                   | Jetson 자동 배포는 안전 위험               | 중         | 가능            | EC2 자동, Jetson 수동 승인         |
+| **영역** | **최신 결정** | **확정 상태와 남은 확인** |
+|---|---|---|
+| 차체 | BMW M7 유아전동차 구동 베이스 활용 | 후륜 RS540 모터 확인. 조향 링크·감속기·차축 구조는 분해 확인 후 확정 |
+| 기구 | 기존 구동부를 살리고 차체 상부·센서 브래킷·카메라-LiDAR 짐벌을 3D 프린팅 | 센서 헤드 무게·서보 토크·진동 시험 필요 |
+| 컴퓨팅 | Jetson Orin Nano 8GB 고수준 컴퓨팅 + STM32 저수준 제어 | Raspberry Pi 5 차량 미사용 |
+| 저수준 제어 | STM32가 모터 PWM·조향·엔코더·300ms watchdog 담당 | 정확한 STM32 보드·엔코더·고전류 드라이버 모델은 TBD |
+| 관제 | AWS EC2의 Spring Boot·Next.js·PostgreSQL/TimescaleDB·S3 | Docker Compose 배포, 로그인 기능은 MVP 제외 |
+| 자율주행 | ROS 2 Humble·SLAM Toolbox·Nav2·Frontier Exploration | 엔코더·IMU·LiDAR 융합과 실제 조향 운동학 튜닝 필요 |
+| AI | YOLO26n Detect를 현장 데이터로 추가 학습해 person 탐지 | Detect가 MVP. Pose는 쓰러짐 분석이 필요할 때만 조건부 실행 |
+| 음성 | 마이크 입력 → STT → LLM → TTS → 스피커 응답 | 실행 위치·모델·오프라인 축소안은 성능 시험 후 확정 |
+| 영상 | Jetson GStreamer·MediaMTX → 동일 Wi-Fi 브라우저 WebRTC | 원격 EC2 중계는 확장 기능 |
+| 이벤트 저장 | 탐지 확정 전 3초 + 접근·상호작용 전체 + 종료 후 3초 | MP4·메타데이터를 S3·DB에 연결 |
+| 개발 운영 | GitLab 모노레포·GitLab CI/CD·Docker | 전체 clone 후 Jetson은 `jetson/` 중심, EC2는 `frontend/`·`backend/` 실행 |
 
 ## 3.1 핵심 설계 원칙
 - 영상·LiDAR·AI·주행 판단은 Jetson에서, 모터·엔코더·통신 watchdog은 STM32에서, 관제·명령·이력은 EC2에서 처리한다.
@@ -245,12 +269,14 @@ Sentinel UGV는 재난·사고 현장과 같이 사람이 즉시 진입하기 �
 ```mermaid
 flowchart TB
     subgraph field["현장 UGV"]
-        sensors["BRIO 100·2D LiDAR·IMU·온습도·배터리"] --> jetson["Jetson Orin Nano 8GB\nJetPack 6.2.1+b38·ROS 2 Humble"]
-        jetson --> autonomy["SLAM·Nav2·Frontier·YOLO·Mission Manager"]
-        autonomy <-->|"USB CDC·CRC·sequence"| stm32["STM32\n엔코더·100Hz 속도 제어·300ms watchdog"]
-        stm32 --> driver["모터 드라이버·좌우 트랙"]
+        sensors["BRIO 100·X4 Pro·IMU·온습도·배터리"] --> jetson["Jetson Orin Nano 8GB\nJetPack 6.2.1+b38·ROS 2 Humble"]
+        jetson --> autonomy["SLAM·Nav2·Frontier·추가 학습 YOLO·Mission Manager"]
+        audio["마이크·스피커"] <--> voice["STT·LLM·TTS"]
+        voice <--> jetson
+        autonomy <-->|"USB CDC·CRC·sequence"| stm32["STM32\n구동 속도·조향 제어·300ms watchdog"]
+        stm32 --> driver["고전류 구동 모터 드라이버·조향 액추에이터"]
         estop["물리 E-Stop"] --> driver
-        jetson --> gimbal["짐벌·카메라/센서 헤드"]
+        jetson --> gimbal["3D 프린팅 카메라·LiDAR 통합 짐벌"]
     end
     jetson <-->|"MQTT 5/TLS·HTTPS"| cloud["AWS EC2\nSpring Boot·Nginx·MediaMTX"]
     cloud --> db["PostgreSQL+TimescaleDB"]
@@ -262,16 +288,16 @@ flowchart TB
 데이터 흐름은 다음 네 경로로 분리한다.
 
 1. **자율주행 경로:** 센서 → Jetson SLAM·Nav2·Safety Gate → STM32 → 모터
-2. **사람 구조 경로:** 카메라 → YOLO·ByteTrack → 안전 접근 → 음성 확인 → encounter 보고
+2. **사람 구조 경로:** 카메라 → 추가 학습 YOLO·ByteTrack → 안전 접근 → STT·LLM·TTS → encounter 보고
 3. **관제 경로:** Jetson → MQTT → Spring Boot → WSS → Next.js
 4. **미디어 경로:** Jetson → 로컬 WebRTC → 브라우저, 이벤트 파일 → Presigned HTTPS → S3
 
 ## 5.2 장치별 책임
 | **구성요소**           | **주요 책임**                                                                     | **하지 않는 일**                               |
 |------------------------|-----------------------------------------------------------------------------------|------------------------------------------------|
-| Jetson Orin Nano       | 카메라·LiDAR 입력, AI, SLAM, Nav2, 탐사, 목표 속도·짐벌 명령, 로컬 안전, 스트리밍 | 직접 모터 PWM 생성, 회원 관리, 장기 데이터 조회 |
-| STM32                  | 엔코더 계수, 좌·우 속도 폐루프, PWM·방향·브레이크, 300ms watchdog, fault          | 경로 계획, 객체 인식, 클라우드 통신             |
-| 모터 드라이버          | 좌우 모터 전력 구동과 enable                                                     | 속도 계획, 안전 정책, 객체 인식                 |
+| Jetson Orin Nano       | 카메라·LiDAR 입력, AI, SLAM, Nav2, 탐사, 목표 속도·짐벌 명령, 음성 파이프라인 조정, 로컬 안전, 스트리밍 | 직접 모터 PWM 생성, 회원 관리, 장기 데이터 조회 |
+| STM32                  | 구동 엔코더 계수, 속도 폐루프, 조향 액추에이터 제어, 브레이크, 300ms watchdog, fault    | 경로 계획, 객체 인식, 클라우드 통신             |
+| 모터 드라이버          | 구동 모터 전력 제어와 enable                                                      | 속도 계획, 조향 제어, 안전 정책, 객체 인식      |
 | AWS EC2                | API, MQTT broker 연동, WSS 중계, 임무·이력, 원격 스트림                           | 실시간 충돌 회피, 최종 모터 제어                |
 | Next.js 브라우저       | 영상·지도·상태 표시, 게임패드 입력, 운영 명령, 과거 임무 조회                     | 로컬 주행 안전 판단                            |
 | PostgreSQL/TimescaleDB | 관계 데이터 및 시계열 저장·집계                                                   | 대용량 영상 원본 저장                          |
@@ -292,14 +318,15 @@ flowchart TB
 - 로컬 제어 안전은 서버 ACK와 무관하게 Jetson Safety Gate와 STM32 watchdog이 이중으로 보장한다.
 
 # 6. 하드웨어 및 기구 설계
-## 6.1 제공 부품 활용 계획 [확정]
+## 6.1 최신 부품 활용 상태
 | **부품**                       | **판정**        | **활용**                                    |
 |--------------------------------|-----------------|---------------------------------------------|
 | Jetson Orin Nano Developer Kit | 필수            | 차량 메인 컴퓨팅                            |
-| YDLIDAR X4 Pro                 | 필수            | 2D SLAM, Costmap, 장애물 거리               |
-| Logitech BRIO 100              | 필수            | 관제 영상, YOLO 입력, 이벤트 캡처           |
-| 오린카 금속/아크릴 프레임      | 재사용          | 차체 베이스 및 장착판                       |
-| 제공 DC 모터·기어·바퀴         | 초기 시험       | Ackermann 구동 검증 및 소프트웨어 병렬 개발 |
+| YDLIDAR X4 Pro                 | 실기기 확인     | `/dev/ttyUSB0`, 128000bps, ROS 2 `/scan` 약 11.03Hz |
+| Logitech BRIO 100              | 실기기 확인     | `/dev/video0`, 1280×720 MJPEG 약 29.93 FPS. ROS 2 연동은 다음 단계 |
+| BMW M7 유아전동차 구동 베이스  | 필수            | 기존 후륜 구동부와 바퀴 활용                 |
+| RS540 FD-12V RPM14000 DC 모터  | 실기기 확인     | 12V 후륜 구동 모터. 감속비·정지 전류는 추가 측정 |
+| 전륜 조향 기구·액추에이터      | 확인 필요       | 기존 링크 재사용 가능 여부와 제어 방식 분해 확인 |
 | Motor Driver HAT               | 초기 시험       | 정격 확인 전까지 최종 적용 보류             |
 | MG996R 및 소형 서보            | 짐벌 프로토타입 | 통합 센서 헤드 하중 시험                    |
 | 서보모터 드라이버              | 사용            | 짐벌 Roll/Pitch PWM 생성                    |
@@ -313,22 +340,28 @@ flowchart TB
 ## 6.2 추가 필요 부품 [TBD]
 | **우선순위** | **부품**                        | **필요 이유**                          | **선정 기준**                               |
 |--------------|---------------------------------|----------------------------------------|---------------------------------------------|
-| 필수         | 엔코더 기어드 DC 모터 2개       | 좌우 독립 무한궤도 구동 및 오도메트리  | 전압, 정격/정지 전류, 토크, RPM, 엔코더 PPR |
-| 필수         | 듀얼 모터 드라이버              | 좌우 정·역회전과 충분한 전류 공급      | 모터 정지 전류 이상, 제동, 보호, timeout    |
-| 필수         | 차체 IMU                        | 엔코더 미끄럼 보정과 자세 추정         | ROS2 드라이버, 자이로 안정성, I2C/USB       |
+| 필수         | 구동축 엔코더                    | 이동 거리·속도 기반 오도메트리         | RS540 구동계 장착 가능성, PPR, 2채널 quadrature |
+| 필수         | 고전류 구동 모터 드라이버       | RS540 정·역회전과 충분한 전류 공급     | 12V 정지 전류 이상, 제동, 보호, timeout     |
+| 필수         | 조향 액추에이터 및 링크         | 전륜 조향각 제어                       | 기존 기구 호환, 토크, 응답, 백래시, 한계, 전원 |
+| 권장         | 조향각 피드백 센서              | 명령각과 실제 조향각 차이 보정          | 포텐셔미터/엔코더, 장착성, 반복 정밀도      |
+| 필수         | 차체 IMU                        | 엔코더·조향 오차 보정과 자세 추정       | ROS2 드라이버, 자이로 안정성, I2C/USB       |
 | 필수         | 물리 E-Stop                     | 소프트웨어와 무관한 모터 전원 차단     | 래칭 스위치, 모터 전원 경로 차단            |
 | 필수         | DC-DC 및 퓨즈·스위치            | Jetson/모터/서보 전원 분리             | 입출력 전압, 최대 전류, 노이즈              |
-| 필수         | 무한궤도 벨트·스프로킷·아이들러 | 스키드 스티어 기구 구현                | 폭, 피치, 장력, 3D 프린팅 재질              |
 | 권장         | NVMe SSD 256GB 이상             | Docker, 모델, 이벤트 파일, rosbag 저장 | Jetson 호환 M.2 규격                        |
 | 권장         | 전압·전류 센서                  | 배터리 잔량·소비량 추정                | I2C, 측정 범위, 절연/분압                   |
 | 짐벌 시      | 짐벌 IMU·고토크 서보 추가       | 수평 유지와 실제 각도 피드백           | 총 하중, 토크 여유, 백래시                  |
 
-## 6.3 무한궤도 구동 구조 비교 [잠정 확정]
-| **안** | **구성**                           | **장점**                             | **단점**                               | **추천**               |
-|--------|------------------------------------|--------------------------------------|----------------------------------------|------------------------|
-| A      | 좌/우 엔코더 모터 각 1개           | 제어·배선 단순, ROS2 diff drive 적합 | 한 모터에 하중 집중                    | 최우선 추천            |
-| B      | 좌/우 앞뒤 총 4개 모터             | 구동력 분산                          | 모터 동기화·전류 편차·드라이버 복잡도  | 차량 중량이 큰 경우만  |
-| C      | 기존 단일 모터/조향 구조 최대 활용 | 비용 절감                            | 무한궤도 독립 조향 부적합, 엔코더 부재 | 초기 소프트웨어 시험만 |
+## 6.3 BMW M7 4륜 구동 구조 [부분 확정]
+
+BMW M7 유아전동차를 donor platform으로 사용하고, 확인된 **후륜 RS540 FD-12V RPM14000 DC 모터**를 유지한다. 상부 차체와 센서 장착 구조는 3D 프린팅으로 제작한다. 전륜 조향이 bicycle/Ackermann 모델로 제어 가능한지는 조향 링크와 기존 액추에이터를 분해한 뒤 확정한다. 따라서 현재 단계에서 `구동 모터 1개 + 조향 액추에이터 1개`를 확정 사양으로 단정하지 않는다.
+
+| 항목 | 적용 기준 | 확인할 값 |
+|---|---|---|
+| 구동 | 확인된 후륜 RS540 구동계 활용 | 감속비·바퀴 지름·정지 전류·엔코더 장착점 |
+| 조향 | 기존 전륜 링크와 액추에이터 조사 후 STM32 제어 | 액추에이터 종류·중앙값·좌우 한계·실제 조향각·백래시 |
+| 운동학 | 실측 결과가 전륜 조향이면 bicycle/Ackermann 모델 적용 | 휠베이스·윤거·최소 회전반경 |
+| 오도메트리 | 구동 엔코더+조향각+IMU+LiDAR SLAM | 거리 스케일·조향각 스케일·시간 지연 |
+| Nav2 | 실차 운동학과 최소 회전반경을 지키는 planner/controller | Smac Hybrid-A*·Regulated Pure Pursuit 우선 검증 |
 
 ## 6.4 짐벌 구성 비교 [잠정 확정]
 | **안** | **구성**                             | **장점**                              | **위험**                           | **프로젝트 적용**  |
@@ -352,7 +385,9 @@ flowchart TB
 [Jetson 전원 경로]
 배터리/전용 전원 → 정격 DC-DC 또는 Jetson 권장 입력 → Jetson
 [구동 전원 경로]
-모터용 배터리 → 퓨즈 → 물리 E-Stop → 모터 드라이버 → 좌/우 모터
+모터용 배터리 → 퓨즈 → 물리 E-Stop → 모터 드라이버 → 구동 모터
+[조향 전원 경로]
+배터리 → 별도 정격 DC-DC/BEC → 조향 액추에이터
 [서보 전원 경로]
 배터리 → 5~6V 고전류 DC-DC → 서보 드라이버 → Roll/Pitch 서보
 [센서 전원]
@@ -367,14 +402,15 @@ Jetson USB 또는 안정화된 5V 레일 → LiDAR/카메라/센서
 ## 6.7 하드웨어 TBD 목록
 | **ID**      | **항목**           | **확정 조건**                                    | **기한**  |
 |-------------|--------------------|--------------------------------------------------|-----------|
-| TBD-HW-001  | 최종 모터 모델     | 차량 예상 중량·스프로킷 반경·목표 속도·전압 확인 | 1주차 초  |
+| TBD-HW-001  | RS540 구동계 실측  | 감속비·바퀴 지름·정지 전류·목표 속도 확인        | 1주차 초  |
 | TBD-HW-002  | 모터 드라이버      | 모터 정지 전류와 채널 정격 비교                  | 1주차 초  |
 | TBD-HW-003  | 배터리·DC-DC       | Jetson/모터/서보 소비전력 산정                   | 1주차 중  |
 | TBD-HW-004  | 엔코더 PPR         | 선정 모터 사양과 최대 속도 계산                  | 1주차 중  |
 | TBD-HW-005  | 짐벌 서보·IMU      | 센서 헤드 실측 중량·토크 시험                    | 1주차 말  |
 | TBD-HW-006  | 최종 크기·중량     | 3D 모델과 부품 배치 완료                         | 2주차 초  |
 | TBD-HW-007  | E-Stop 부품        | 전원 구조 확정                                   | 1주차 중  |
-| TBD-CAM-001 | BRIO 100 출력 포맷 | v4l2-ctl 실측                                    | 개발 첫날 |
+| TBD-HW-008  | 전륜 조향 구조     | 링크·액추에이터·피드백 유무 분해 확인             | 1주차 초  |
+| TBD-CAM-001 | BRIO 100 ROS 2 연동 | 720p MJPEG 캡처와 X4 Pro 동시 구동 검증            | 개발 첫날 |
 
 # 7. 소프트웨어 기술 스택 및 실행 환경
 ## 7.1 Jetson 실행 환경 [확정]
@@ -382,7 +418,8 @@ Jetson USB 또는 안정화된 5V 레일 → LiDAR/카메라/센서
 |----------------|---------------------------------------|--------------------------------------------------|
 | OS/SDK         | JetPack `6.2.1+b38`, Jetson Linux 36.4.4, Ubuntu 22.04 | 실제 Jetson에서 확인한 기준선. 임의 업그레이드 금지 |
 | ROS 2          | Humble                                | Ubuntu 22.04 공식 deb 기준, SLAM·Nav2·센서 통합    |
-| AI             | Ultralytics YOLO26n, PyTorch/TensorRT | COCO person 탐지. TensorRT 변환은 성능 측정 후   |
+| AI             | 추가 학습 YOLO26n Detect, PyTorch/TensorRT | COCO 가중치에서 시작해 현장 person 데이터로 파인튜닝. Pose는 조건부 확장 |
+| Voice AI       | STT·LLM·TTS                          | 모델과 Jetson/EC2 실행 위치는 성능·네트워크 시험 후 동결 |
 | Vision         | OpenCV, GStreamer                     | 카메라 캡처, 프레임 분기, 이벤트 스냅샷          |
 | Streaming      | MediaMTX, WebRTC/WHEP                 | 로컬·원격 저지연 영상                            |
 | Device service | Python, systemd                       | ROS2 launch 및 텔레메트리/업로드 서비스          |
@@ -400,7 +437,7 @@ CUDA·TensorRT·cuDNN·PyTorch 세부 버전은 설치 이미지에 따라 실�
 | Object storage | AWS S3                   | 스냅샷, 이벤트 영상, 지도, rosbag                        |
 | Media relay    | MediaMTX                 | 원격 WebRTC 중계                                         |
 | Deployment     | Docker Compose on EC2    | 단일 EC2 MVP 구성                                        |
-| CI/CD          | GitLab CI/CD             | 테스트·이미지 빌드·레지스트리·EC2 자동 배포              |
+| CI/CD          | GitLab CI/CD             | 제공 Runner 기반 테스트·이미지 빌드, EC2 수동 승인 배포   |
 
 ## 7.3 성능 측정 우선 원칙
 - 카메라 입력 FPS
@@ -445,7 +482,7 @@ SLAM / 위치 추정
 ├─ speed limiter
 └─ watchdog
 ↓
-모터 드라이버 → 좌/우 무한궤도
+고전류 모터 드라이버·조향 액추에이터 → BMW M7 4륜 구동 베이스
 ```
 
 ## 8.2 ROS2 노드 구성
@@ -453,7 +490,7 @@ SLAM / 위치 추정
 |----------------------------|---------------------------------------------|----------------------------------|
 | **ydlidar_node**           | YDLIDAR 드라이버                            | /scan                            |
 | **camera_capture_node**    | BRIO 100 단일 캡처·프레임 분기              | /camera/image_raw, shared buffer |
-| **yolo_inference_node**    | person 및 COCO 객체 탐지                    | /detections                      |
+| **yolo_inference_node**    | 추가 학습 YOLO26n Detect 기반 person 탐지    | /detections                      |
 | **human_localizer_node**   | 카메라 방위각+LiDAR 거리+TF로 map 좌표 계산 | /human_observations              |
 | **wheel_driver_node**      | 모터 명령·엔코더 수집                       | /wheel_states, /odom_raw         |
 | **imu_node**               | 차체 자세·각속도                            | /imu/data                        |
@@ -465,8 +502,9 @@ SLAM / 위치 추정
 | **cmd_vel_mux**            | 자율/수동/정지 우선순위 처리                | /cmd_vel                         |
 | **mission_manager_node**   | 상태 머신·home pose·종료 조건               | /mission/status                  |
 | **gimbal_controller_node** | NAV_LOCK/OBSERVE 서보 제어                  | /gimbal/state                    |
-| **telemetry_bridge_node**  | ROS 상태를 EC2 WebSocket으로 전송           | 외부 WSS                         |
+| **telemetry_bridge_node**  | ROS 상태를 EC2 통신 게이트웨이로 전달       | MQTT/WSS 연계                    |
 | **media_recorder_node**    | 링 버퍼·스냅샷·S3 업로드 큐                 | 로컬 파일/S3                     |
+| **voice_interaction_node** | STT·LLM·TTS 단계 조정과 구조화 결과 생성    | /interaction/status              |
 
 ## 8.3 TF 트리
 ```text
@@ -475,8 +513,9 @@ map
 └─ base_link
 ├─ base_footprint
 ├─ imu_link
-├─ left_track_link
-├─ right_track_link
+├─ rear_drive_wheel_link
+├─ front_left_wheel_link
+├─ front_right_wheel_link
 └─ gimbal_roll_link
 └─ gimbal_pitch_link
 ├─ laser_frame
@@ -501,14 +540,14 @@ Frontier는 지도에서 이미 확인된 자유 공간과 아직 관측되지 �
 
 ## 8.5 탐사 종료와 복귀
 - 도달 가능한 Frontier가 10초간 발견되지 않으면 일시정지한다.
-- 제자리에서 천천히 360도 회전하며 LiDAR 재스캔을 수행한다.
+- 최소 회전반경을 지키는 저속 선회 또는 짧은 전·후진 재관측 기동으로 LiDAR 재스캔을 수행한다.
 - 재스캔 후에도 Frontier가 없으면 탐사 완료로 판단한다.
 - 최대 탐사 시간 7분, 사용자 종료, 배터리 20% 이하도 탐사 종료 조건이다.
 - 종료 시 mission_manager가 저장한 home pose를 Nav2 목표로 전송한다.
 - 복귀 경로 생성 실패 시 PAUSED로 전환하고 관제에 복구 요청을 표시한다.
 
-## 8.6 무한궤도 오도메트리와 보정
-무한궤도는 회전 시 바닥과 미끄러지는 스키드 스티어 방식이므로 순수 엔코더 오도메트리가 실제 회전량과 다를 수 있다. 좌우 엔코더와 IMU를 EKF로 융합하고, LiDAR SLAM의 map→odom 보정을 사용한다. ROS2 diff_drive_controller의 wheel_separation은 실제 궤도 중심 간격을 시작값으로 사용하되, 제자리 회전 실험을 통해 유효 간격을 보정한다.
+## 8.6 BMW M7 구동 베이스 오도메트리와 보정
+후륜 RS540 구동계에 엔코더를 추가해 이동 거리를 측정한다. 전륜 조향 구조가 bicycle/Ackermann 모델로 확인되면 실제 또는 추정 조향각을 wheel odometry에 적용하고, IMU yaw rate와 EKF로 융합한 뒤 LiDAR SLAM의 `map→odom` 보정으로 누적 오차를 줄인다. 조향 구조 확인 전에는 휠베이스·조향각·최소 회전반경을 확정값으로 사용하지 않는다.
 
 ## 8.7 모터 명령 안전 체인
 ```text
@@ -524,19 +563,18 @@ watchdog (명령 TTL/heartbeat)
 ↓
 stm32_bridge_node
 ↓
-STM32 100Hz 속도 제어·300ms watchdog
+STM32 100Hz 구동 속도·조향 제어·300ms watchdog
 ↓
-모터 드라이버
-↓
-좌/우 모터
+고전류 모터 드라이버·조향 액추에이터
 ```
 
 # 9. AI 인식 및 센서 융합 [확정]
 ## 9.1 AI 역할 분리
 | **기능**         | **주 담당**              | **설명**                               |
 |------------------|--------------------------|----------------------------------------|
-| 사람 탐지        | YOLO26n                  | 구조 대상 후보 탐지와 관제 표시        |
-| 일반 객체 분류   | YOLO COCO 클래스         | 의자·가방·상자 등 의미 정보 제공       |
+| 사람 탐지        | 추가 학습 YOLO26n Detect | 구조 대상 후보 탐지와 관제 표시        |
+| 자세 보조 판정   | YOLO26n Pose 조건부 실행 | 쓰러짐 분석을 확장할 때만 낮은 주기로 실행 |
+| 일반 객체 분류   | YOLO COCO 클래스         | 핵심 MVP가 아니며 필요 클래스만 유지   |
 | 물리 장애물 회피 | LiDAR/Nav2               | COCO에 없는 물체도 거리 기반으로 처리  |
 | 급정지           | Collision Monitor/초음파 | AI 추론 실패와 무관하게 로컬 안전 확보 |
 | 사람 위치 계산   | YOLO+LiDAR+TF            | 영상 Bounding Box 방향과 거리 결합     |
@@ -577,11 +615,11 @@ Bounding Box 중심 x좌표와 카메라 수평 시야각을 이용해 카메라
 ## 9.5 AI 성능 목표와 최적화
 | **항목**         | **초기값**              | **최적화 방향**             |
 |------------------|-------------------------|-----------------------------|
-| 카메라 입력      | 1280×720, 30FPS         | 실제 v4l2 포맷 확인         |
+| 카메라 입력      | 1280×720 MJPEG, 29.93FPS 확인 | ROS 2·LiDAR 동시 구동 검증 |
 | 추론 입력        | 640 계열                | 필요 시 512/416으로 축소    |
 | 추론 주기        | 매 프레임 또는 10~15FPS | 주행 부하에 따라 frame skip |
 | 관제 영상        | 720p, 15~30FPS          | CPU 부하 시 15FPS 우선      |
-| 모델             | YOLO26n 기본 가중치     | TensorRT 엔진 변환 후 비교  |
+| 모델             | 추가 학습 YOLO26n Detect | 학습 가중치와 TensorRT 엔진 비교 |
 | 신뢰도 threshold | 실험으로 결정           | 복도 오탐/미탐 균형         |
 
 ## 9.6 카메라 단일 오픈 원칙
@@ -596,7 +634,7 @@ v4l2-ctl --list-devices
 v4l2-ctl --device=/dev/video0 --list-formats-ext
 ```
 
-H.264 출력이 가능하면 패스스루 또는 최소 변환을 우선한다. MJPEG만 가능하면 디코딩 후 WebRTC용 H.264 인코딩 부하를 측정한다. YUYV만 사용할 경우 대역폭과 CPU 부하가 커질 수 있으므로 해상도·FPS를 낮춘다.
+실기기에서 `/dev/video0`, 1280×720 MJPEG, 약 29.93 FPS 캡처를 확인했다. 다음 검증은 ROS 2 카메라 토픽과 X4 Pro `/scan`을 동시에 실행한 상태에서 프레임 드롭·CPU/GPU·USB 안정성을 측정하는 것이다. WebRTC용 H.264 인코딩 부하는 이 동시 구동 시험에서 함께 기록한다.
 
 ## 10.2 스트리밍 경로
 | **구분** | **발행**                       | **수신**                 | **사용 시점**             |
@@ -669,7 +707,7 @@ S3 업로드 또는 로컬 pending 저장
 | **입력**       | **기능**         | **안전 동작**               |
 |----------------|------------------|-----------------------------|
 | 왼쪽 스틱 상하 | 전진/후진        | deadzone·최대 속도 제한     |
-| 왼쪽 스틱 좌우 | 좌/우 회전       | 제자리 회전 속도 제한       |
+| 왼쪽 스틱 좌우 | 좌/우 조향       | 조향각·조향 변화율 제한     |
 | LB             | 데드맨 스위치    | 누르고 있을 때만 DRIVE 전송 |
 | B              | 일반 정지        | 즉시 0 속도                 |
 | Start          | 출발지 복귀 요청 | 확인 후 RETURNING           |
@@ -691,8 +729,8 @@ S3 업로드 또는 로컬 pending 저장
 | E-Stop      | 항상                       | ESTOP                      |
 | E-Stop 해제 | 정지·오류 해소·운영자 확인 | SAFE_IDLE/PAUSED           |
 
-## 11.6 인증 범위
-회원가입, 비밀번호 찾기, 복잡한 다중 역할은 MVP에서 제외한다. 관제 웹은 최소 단일 운영자 계정 또는 PIN 인증을 사용하고, 제어 명령·E-Stop 해제·설정 변경은 인증 세션과 control lease가 모두 있어야 한다. S3 객체는 공개하지 않고 단기 Presigned URL로만 조회한다.
+## 11.6 MVP 접근 범위
+MVP에는 회원가입과 로그인 화면을 구현하지 않는다. 시연은 한 명의 운영자가 통제된 관제 PC에서 수행하며, 연결된 게임패드와 하나의 control lease를 가진 브라우저 세션만 DRIVE 명령을 보낼 수 있다. 외부 EC2 접근은 Security Group 허용 IP 또는 배포 환경 토큰으로 제한하고, 이를 사용자 계정 기능으로 확장하지 않는다. S3 객체는 공개하지 않고 단기 Presigned URL로만 조회한다.
 
 # 12. 통신 프로토콜 및 API [확정]
 ## 12.1 통신 채널
@@ -947,12 +985,11 @@ ESTOP ──안전확인/해제──▶ SAFE_IDLE 또는 PAUSED
 ## 15.1 모노레포 구조
 ```text
 sentinel-ugv/
-├─ firmware/
-│ └─ stm32/
-│   ├─ Core/
-│   ├─ Drivers/
-│   ├─ protocol/
-│   └─ tests/
+├─ stm32/
+│ ├─ Core/
+│ ├─ Drivers/
+│ ├─ protocol/
+│ └─ tests/
 ├─ jetson/
 │ ├─ ros2_ws/src/
 │ │ ├─ sentinel_bringup/
@@ -979,6 +1016,7 @@ sentinel-ugv/
 │ ├─ schemas/
 │ └─ samples/
 ├─ deploy/
+│ ├─ jetson/
 │ ├─ ec2/docker-compose.yml
 │ ├─ nginx/
 │ └─ mediamtx/
@@ -996,6 +1034,8 @@ sentinel-ugv/
 └─ README.md
 ```
 
+모노레포는 장치마다 같은 저장소를 clone하므로 Jetson에도 `frontend/`와 `backend/` 파일이 존재할 수 있다. 다만 Jetson에서는 `jetson/`과 필요한 `common/`·`deploy/jetson/`만 설치·실행하고, EC2에서는 `frontend/`·`backend/`·`deploy/ec2/`를 실행한다.
+
 ## 15.2 브랜치 전략
 | **브랜치** | **용도**                  |
 |------------|---------------------------|
@@ -1009,23 +1049,25 @@ sentinel-ugv/
 - 모터·E-Stop·전원 변경은 최소 1명의 임베디드 담당 리뷰를 필수로 한다.
 
 ## 15.3 GitLab CI/CD 파이프라인
+팀 공용 PC가 없으므로 자체 호스팅 Runner를 필수 전제로 두지 않는다. SSAFY GitLab 제공 Runner에서 가능한 lint·test·build를 우선 사용하고, 배포는 수동 승인 경계를 유지한다.
+
 ```yaml
 stages:
 1. lint
 2. test
 3. build
 4. package
-5. deploy_ec2
+5. deploy_ec2_manual
 6. smoke_test
 7. deploy_jetson_manual (확장)
 ```
 
 | **대상**       | **자동 검사**                              | **배포**                   |
 |----------------|--------------------------------------------|----------------------------|
-| Backend        | Gradle test, static analysis, Docker build | main 병합 시 EC2 자동      |
-| Frontend       | lint, typecheck, test, build               | main 병합 시 EC2 자동      |
-| DB migration   | Flyway validate                            | EC2 배포 시 적용           |
-| MediaMTX/Nginx | 설정 파일 검증                             | Docker Compose             |
+| Backend        | Gradle test, static analysis, Docker build | 수동 승인 Job 또는 문서화된 수동 배포 |
+| Frontend       | lint, typecheck, test, build               | 수동 승인 Job 또는 문서화된 수동 배포 |
+| DB migration   | Flyway validate                            | 승인된 EC2 배포 시 적용    |
+| MediaMTX/Nginx | 설정 파일 검증                             | 승인 후 Docker Compose     |
 | Jetson ROS2    | Python lint, unit test, config validation  | deploy_jetson.sh 수동 승인 |
 | STM32 firmware | host protocol test, CRC vector, build      | 실기기 flash 수동 승인     |
 | AI model       | 파일/해시/입력 테스트                      | 모델 교체 스크립트 수동    |
@@ -1036,7 +1078,8 @@ main merge
 → GitLab Runner 테스트
 → Backend/Frontend Docker 이미지 빌드
 → GitLab Container Registry push
-→ EC2 SSH 또는 배포 Runner
+→ 운영자 수동 승인
+→ EC2 SSH 기반 배포 Job 또는 문서화된 수동 명령
 → docker compose pull
 → Flyway migration
 → docker compose up -d
@@ -1062,7 +1105,7 @@ main merge
 ## 15.6 시크릿 관리
 - AWS 키를 Jetson 코드나 저장소에 직접 저장하지 않는다.
 - S3는 Presigned URL 방식으로 업로드하고 버킷을 private으로 유지한다.
-- EC2의 DB 비밀번호·JWT/PIN·도메인 인증서는 GitLab CI 변수 또는 .env 배포 파일로 관리한다.
+- EC2의 DB 비밀번호·배포 환경 접근 토큰·도메인 인증서는 GitLab CI 변수 또는 `.env` 배포 파일로 관리한다.
 - .env, 모델 라이선스 파일, SSH 키는 Git에 커밋하지 않는다.
 
 # 16. 테스트 및 검증 계획 [확정]
@@ -1071,7 +1114,7 @@ main merge
 |---------------------|--------------------------------|------------------------------------------|
 | 단위 테스트         | 알고리즘·변환·API 로직 검증    | Frontier 점수, 좌표 변환, 배터리 계산    |
 | 컴포넌트 테스트     | 노드/서비스 단독 검증          | YOLO 노드, MQTT bridge, S3 uploader      |
-| 벤치 테스트         | 차량을 띄운 상태에서 구동 검증 | 좌우 모터 방향, watchdog, E-Stop         |
+| 벤치 테스트         | 구동 바퀴를 띄운 상태에서 검증 | 구동 방향·조향 범위, watchdog, E-Stop    |
 | 시뮬레이션/리플레이 | 실물 없이 반복 검증            | rosbag, 가짜 텔레메트리, 녹화 영상       |
 | 통합 테스트         | ROS2-AI-서버-웹 연결           | 탐지 이벤트와 지도 표시                  |
 | 장애 주입 테스트    | 안전·복구 확인                 | Wi-Fi 차단, LiDAR 종료, 게임패드 분리    |
@@ -1080,7 +1123,7 @@ main merge
 
 ## 16.2 하드웨어 테스트 체크리스트
 - □ 차량 바닥에서 띄우기
-- □ 모터 방향과 좌/우 채널 확인
+- □ 구동 모터 방향과 조향 액추에이터 중앙·좌우 한계 확인
 - □ STM32 부팅 시 PWM 0·enable LOW, USB 분리 후 300ms 이내 정지
 - □ E-Stop 누르면 모터 전원 차단
 - □ 프로그램 종료 시 정지
@@ -1095,7 +1138,7 @@ main merge
 | NAV-01 | 수동 지도 생성     | 복도 벽이 연속적으로 표현       |
 | NAV-02 | 정적 목표 주행     | 목표점 도달 또는 안전한 실패    |
 | NAV-03 | 장애물 우회        | 충돌 없이 재계획                |
-| NAV-04 | 제자리 회전        | 지도 파손 최소화                |
+| NAV-04 | 최소 반경 선회     | 경로 이탈·지도 왜곡 없이 선회   |
 | NAV-05 | Frontier 자동 선택 | 사용자 목표 없이 다음 영역 이동 |
 | NAV-06 | Frontier 소진      | 재스캔 후 종료·복귀             |
 | NAV-07 | home 복귀          | 출발점 허용 오차 내 도달        |
@@ -1161,8 +1204,8 @@ state, error_code
 # 18. 위험 관리와 대체안 [확정]
 | **ID** | **위험**                     | **발생** | **영향** | **대응/대체안**                                                      | **담당**    |
 |--------|------------------------------|----------|----------|----------------------------------------------------------------------|-------------|
-| R-01   | 무한궤도 부품 선정·제작 지연 | 높음     | 높음     | 기존 오린카 차체로 ROS2·AI·관제 개발 선행, 무한궤도는 독립 기구 트랙 | 임베디드    |
-| R-02   | 엔코더/오도메트리 부정확     | 높음     | 높음     | IMU·LiDAR SLAM 융합, 유효 wheel separation 보정, 속도 제한           | ROS2        |
+| R-01   | BMW M7 조향 구조 미확정·백래시·최소 회전반경 | 높음 | 높음 | 조향 기구 분해 확인, 영점·한계 실측, 실차 운동학에 맞는 planner 선정 | 임베디드/ROS2 |
+| R-02   | 엔코더/조향 기반 오도메트리 부정확 | 높음  | 높음     | IMU·LiDAR SLAM 융합, 바퀴 거리·휠베이스·조향각 보정, 속도 제한       | ROS2        |
 | R-03   | 통합 짐벌이 SLAM 왜곡        | 중       | 높음     | NAV_LOCK 고정, Yaw 금지, 카메라만 짐벌 대체                          | 기구/ROS2   |
 | R-04   | Jetson 영상 인코딩 부하      | 중       | 높음     | 720p 15FPS, 단일 인코딩, 오버레이 메타데이터, TensorRT               | AI/스트리밍 |
 | R-05   | Frontier 패키지 불안정       | 중       | 높음     | 가까운 Frontier 단순 구현, 수동 지도 클릭 목표 fallback              | ROS2        |
@@ -1172,7 +1215,7 @@ state, error_code
 | R-09   | 배터리 부족·전압 강하        | 높음     | 높음     | 전원 분리, 퓨즈, 전류 측정, 유선 개발, 저전압 복귀                   | 임베디드    |
 | R-10   | 일정 부족                    | 높음     | 높음     | MVP 우선, 선택 기능 feature flag, 3주차 전체 시나리오 확보           | 전원        |
 | R-11   | Jetson-STM32 프로토콜 오류    | 중       | 높음     | CRC·sequence·host test·300ms watchdog·버전 handshake                 | 임베디드    |
-| R-12   | 음성 인식 소음·무응답         | 높음     | 중       | 고정 질문, VAD, 재시도, 버튼/운영자 기록 fallback                    | AI/FE       |
+| R-12   | STT·LLM·TTS 지연·소음·무응답 | 높음     | 중       | VAD, schema 검증, 재시도, 사전 질문·키워드 fallback, 운영자 확인      | AI/FE       |
 
 ## 18.1 기능 축소 우선순위
 | **축소 순서** | **제거/단순화**           | **유지할 핵심**         |
@@ -1229,8 +1272,8 @@ state, error_code
 ## 20.1 Definition of Done
 | **영역**  | **완료 기준**                                               |
 |-----------|-------------------------------------------------------------|
-| 하드웨어  | 무한궤도/구동부가 반복 주행하고 배선·전원이 안전하게 고정됨 |
-| STM32     | 엔코더 PID·CRC·sequence·300ms watchdog·부팅 안전값 검증    |
+| 하드웨어  | BMW M7 후륜 구동·전륜 조향부가 반복 주행하고 배선·전원이 안전하게 고정됨 |
+| STM32     | 구동 엔코더 PID·조향 제어·CRC·sequence·300ms watchdog·부팅 안전값 검증 |
 | ROS2      | 한 개 launch로 센서·SLAM·Nav2·탐사·안전 노드 실행           |
 | AI        | person 탐지·ByteTrack·다중 인원 encounter가 실시간 동작      |
 | 센서 융합 | 탐지 위치가 지도에 표시되고 실패 상태도 처리                |
@@ -1238,7 +1281,7 @@ state, error_code
 | 수동 제어 | 게임패드 연결·deadman·해제 정지·제어권 동작                 |
 | 관제      | 실시간 상태, 제어, 지도, 이벤트 알림 표시                   |
 | 데이터    | 임무·시계열·S3 미디어가 과거 페이지에서 조회                |
-| 상호작용  | 안전 접근·고정 질문·무응답 처리·구조화 보고가 동작          |
+| 상호작용  | 안전 접근·STT-LLM-TTS·무응답 처리·구조화 보고가 동작       |
 | 안전      | E-Stop·watchdog·센서 장애 정지 검증                         |
 | 배포      | EC2 재배포와 Jetson 배포 스크립트 문서화                    |
 | 문서      | README, 실행법, 회로/기구, API, 테스트 결과, 변경 이력 완료 |
@@ -1280,8 +1323,10 @@ state, error_code
 flowchart TB
     sensors["카메라·2D LiDAR·IMU·온습도"] --> jetson["Jetson Orin Nano 8GB"]
     jetson <-->|"USB CDC: 명령·엔코더·상태"| stm32["STM32 제어기"]
-    stm32 --> driver["듀얼 모터 드라이버"]
-    driver --> motors["좌·우 엔코더 모터"]
+    stm32 --> driver["구동 모터 드라이버"]
+    driver --> motor["BMW M7 후륜 RS540 모터"]
+    encoder["추가 구동축 엔코더"] --> stm32
+    stm32 --> steering["전륜 조향 액추에이터\n구조 TBD"]
     estop["물리 E-Stop"] --> power["모터 전원 차단 계층"]
     power --> driver
     jetson --> gimbal["짐벌 제어기·서보"]
@@ -1290,7 +1335,7 @@ flowchart TB
 | 계층 | 장치 | 책임 | 고장 시 기본 동작 |
 |---|---|---|---|
 | 고수준 | Jetson Orin Nano | ROS 2, SLAM, Nav2, YOLO, Mission Manager, 영상, 서버 통신 | STM32 명령 중단, 주행 자동 재개 금지 |
-| 저수준 | STM32 | 엔코더 계수, 100Hz 속도 제어, PWM·방향, 통신 watchdog | PWM 0, driver disable 또는 제동 |
+| 저수준 | STM32 | 구동 엔코더 계수, 100Hz 속도 제어, 조향 액추에이터 제어, 통신 watchdog | 구동 PWM 0, driver disable 또는 제동 |
 | 구동 | 모터 드라이버 | 모터 전력 스위칭 | enable LOW 시 출력 차단 |
 | 독립 안전 | 물리 E-Stop | 모터 구동 전원 직접 차단 | 소프트웨어 상태와 무관하게 정지 |
 | 보조 구동 | 짐벌 서보 | 센서 헤드 자세 안정화 | 중앙 또는 기계적 안전각 유지 |
@@ -1299,14 +1344,15 @@ flowchart TB
 
 | 연결 | 권장 인터페이스 | 데이터 | 주의사항 |
 |---|---|---|---|
-| Jetson ↔ STM32 | USB CDC 우선 | 좌·우 목표 속도, 엔코더, fault, E-Stop | udev 별칭 `/dev/sentinel_mcu`, 케이블 고정 |
-| Jetson ↔ LiDAR | USB Serial | `/scan` | 장치명 고정, 모터 전원선과 분리 |
-| Jetson ↔ 카메라 | USB 3.x | 영상 프레임 | 단일 프로세스만 장치 open |
+| Jetson ↔ STM32 | USB CDC 우선 | 구동 속도·조향각 목표, 엔코더, fault, E-Stop | udev 별칭 `/dev/sentinel_mcu`, 케이블 고정 |
+| Jetson ↔ LiDAR | USB Serial | `/scan` 약 11.03Hz 확인 | 실측 `/dev/ttyUSB0`, udev 별칭 사용, 모터 전원선과 분리 |
+| Jetson ↔ 카메라 | USB 3.x | 720p MJPEG 약 29.93 FPS 확인 | 실측 `/dev/video0`, 단일 프로세스만 장치 open |
 | Jetson ↔ IMU | USB 또는 I2C | 각속도·가속도 | 3.3V 논리 확인, 축 방향 기록 |
 | Jetson ↔ 온습도 | I2C/USB | 온도·습도 | 실패해도 주행은 DEGRADED 허용 |
 | Jetson ↔ 짐벌 | PWM 제어기 또는 MCU | 목표 pitch/roll | 모터 노이즈와 전원 분리 권장 |
-| STM32 ↔ 엔코더 | Timer Encoder/Interrupt | 좌·우 tick | 5V 출력이면 레벨 변환 필요 |
+| STM32 ↔ 구동 엔코더 | Timer Encoder/Interrupt | 구동축 tick | 5V 출력이면 레벨 변환 필요 |
 | STM32 ↔ 드라이버 | PWM, DIR, ENABLE | 구동 신호 | 외부 pull-down으로 부팅 시 OFF |
+| STM32 ↔ 조향 액추에이터 | PWM/DIR/릴레이 등 TBD, 선택적 angle feedback | 목표 조향각 또는 조향 상태 | 실물 분해 후 전압·전류·제어 방식 확정 |
 
 핀 번호는 보드와 부품 모델 확정 전 단정하지 않는다. 부록 J의 핀맵은 데이터시트와 실제 도통 시험을 통과한 값만 기록한다.
 
@@ -1315,10 +1361,10 @@ flowchart TB
 ```text
 배터리
 ├─ 퓨즈·메인 스위치
-│  ├─ E-Stop·모터 전원 차단 → 모터 드라이버 → 좌·우 모터
+│  ├─ E-Stop·모터 전원 차단 → 모터 드라이버 → 구동 모터
 │  ├─ DC-DC A → Jetson 전원
 │  ├─ DC-DC B → STM32·센서
-│  └─ DC-DC C → 짐벌 서보
+│  └─ DC-DC C → 조향·짐벌 서보
 └─ 전압·전류 센서 → STM32 또는 Jetson → 관제
 ```
 
@@ -1326,14 +1372,15 @@ flowchart TB
 - 모터·서보 전원과 컴퓨팅 전원은 분리하되 신호 기준 GND는 설계에 맞게 공통화한다.
 - 배터리, DC-DC, 퓨즈, 배선 굵기는 평균 전류가 아니라 **모터 정지 전류와 동시 기동 피크**를 기준으로 선정한다.
 - E-Stop은 Jetson 전원을 끄는 버튼이 아니라 모터 구동 에너지를 빠르게 제거하는 회로로 설계한다.
-- 첫 구동 시험은 궤도를 바닥에서 띄운 상태에서 수행한다.
+- 첫 구동 시험은 구동 바퀴를 바닥에서 띄운 상태에서 수행한다.
 
 ## 21.5 전력 예산 산정
 
 | 항목 | 입력 전압 | 평균 전력 | 피크 전력 | 측정 방법 | 상태 |
 |---|---:|---:|---:|---|---|
 | Jetson Orin Nano | TBD | TBD | TBD | 전력 모드별 실측 | TBD |
-| 좌·우 모터 | TBD | TBD | 정지 전류×2 | 전류계·데이터시트 | TBD |
+| 구동 모터 | 12V | TBD | RS540 정지 전류 기준 | 전류계·데이터시트 | 모델 확인·전류 TBD |
+| 조향 액추에이터 | TBD | TBD | stall 전류 기준 | 전류계·데이터시트 | TBD |
 | LiDAR·카메라·IMU | 5V 계열 | TBD | TBD | USB 전력 측정 | TBD |
 | 짐벌 서보 | TBD | TBD | 동시 stall 고려 | 전류계 | TBD |
 | STM32·보조 센서 | 3.3/5V | TBD | TBD | 벤치 전원 | TBD |
@@ -1358,10 +1405,10 @@ SLAM, 사람 위치 추정, 영상 이벤트를 같은 사건으로 연결하려
 
 | 센서 | ROS 2 출력 | 권장 주기 | 핵심 검증 | 실패 영향 |
 |---|---|---:|---|---|
-| 2D LiDAR | `/scan` | 장치 최대 안정 주기 | 각도·거리·frame_id·drop | 자율주행 중단 |
-| 카메라 | `/camera/image_raw` 또는 공유 프레임 버스 | 15~30 FPS | 포맷·지연·노출·단일 open | 사람 탐지·수동 영상 제한 |
+| 2D LiDAR | `/scan` | 약 11.03Hz 실측 | X4 Pro, 128000bps, 약 1222~1231 points/scan, `laser_frame`, 0.1~12.0m, drop | 자율주행 중단 |
+| 카메라 | `/camera/image_raw` 또는 공유 프레임 버스 | 29.93 FPS 캡처 실측 | 1280×720 MJPEG, ROS 2 동시 구동·지연·단일 open | 사람 탐지·수동 영상 제한 |
 | IMU | `/imu/data_raw` | 50~100Hz | 축, 단위, bias, timestamp | 오도메트리 품질 저하 |
-| 엔코더 | `/wheel/odometry` | 50Hz 이상 | 부호·tick·overflow·좌우 | 위치 추정 실패 |
+| 구동 엔코더·조향각 | `/wheel/odometry`, `/steering/state` | 50Hz 이상 | 부호·tick·overflow·조향 중앙/한계 | 위치 추정 실패 |
 | 온습도 | `/environment` | 0.2~1Hz | 범위·센서 끊김 | 경고만 발생 |
 | 배터리 | `/battery_state` | 1~2Hz | 전압·전류·잔량 산식 | 복귀 판단 제한 |
 
@@ -1427,13 +1474,13 @@ flowchart LR
 
 ## 23.2 위치 추정 단계
 
-1. STM32가 좌·우 엔코더 tick과 속도를 제공한다.
-2. Jetson이 무한궤도 차동 구동 모델로 wheel odometry를 계산한다.
+1. STM32가 구동축 엔코더 tick·속도와 조향 상태를 제공한다.
+2. 조향 구조 확인 후 Jetson이 실차 운동학과 엔코더·조향 상태를 사용해 wheel odometry를 계산한다.
 3. EKF가 wheel odometry와 IMU yaw rate를 융합한다.
 4. SLAM Toolbox가 LiDAR scan matching으로 누적 오차를 보정한다.
 5. Mission Manager는 TF 연속성과 covariance를 감시한다.
 
-무한궤도는 회전 중 미끄럼이 크므로 이론 트랙 폭을 그대로 신뢰하지 않는다. 직선 거리 스케일과 제자리 회전의 유효 트랙 폭을 별도로 실측해 보정한다.
+명령한 조향 상태와 실제 바퀴 조향각은 백래시와 링크 기하 때문에 일치하지 않을 수 있다. 액추에이터 방식 확인 후 직선 거리 스케일, 휠베이스, 조향 중앙값, 좌·우 조향각 스케일과 최소 회전반경을 실측해 보정한다. 조향각 센서가 없으면 명령각 또는 명령 상태를 사용하되 covariance를 보수적으로 설정한다.
 
 ## 23.3 Frontier 선택
 
@@ -1469,7 +1516,7 @@ score = 정보이득 가중치 × 예상 신규 면적
 | 실패 | 1차 처리 | 2차 처리 | 최종 처리 |
 |---|---|---|---|
 | 목표 경로 생성 실패 | 후보 재샘플링 | 다른 Frontier 선택 | 운영자 목표점 |
-| local planner 정체 | Nav2 recovery | 후진·회전 제한 복구 | PAUSED |
+| local planner 정체 | Nav2 recovery | 아커만 가능한 전·후진 선회 복구 | PAUSED |
 | 지도 중복·왜곡 | 정지 후 scan/TF 점검 | 저속 재시도 | 수동 모드 |
 | localization lost | 즉시 정지 | 최근 신뢰 pose 재초기화 | ERROR |
 
@@ -1489,6 +1536,8 @@ flowchart TB
 ```
 
 자동·수동 명령은 모두 Safety Gate를 통과한다. E-Stop, watchdog, 센서 실패, 오래된 명령은 어떤 모드보다 우선한다.
+
+BMW M7 전륜 조향 구조가 확인되면 global planner는 최소 회전반경을 고려하는 Smac Hybrid-A*를 우선 검증하고, local controller는 Regulated Pure Pursuit를 기본 후보로 사용한다. 회전 제자리 정렬을 요구하는 rotation shim은 기본 비활성화하고, 경로와 recovery는 전·후진 선회가 가능한지 실차에서 확인한다.
 
 ## 24.2 기본 속도 정책
 
@@ -1552,7 +1601,7 @@ flowchart LR
 - 카메라 timestamp와 TF를 조회할 수 있다.
 - 이미 활성 encounter에 포함된 track 또는 공간 중복인지 검사한다.
 
-정확한 confidence와 관측 횟수는 시연 환경 검증셋으로 조정한다. COCO 사전학습 모델이 실제 복장·조명에서 부족하면 제한된 현장 데이터를 추가 학습하되, 데이터셋 제작이 핵심 통합 일정을 늦추지 않게 한다.
+COCO 가중치를 초기값으로 사용하되, 실제 시연 복장·조명·거리의 person 데이터를 수집해 YOLO26n Detect를 추가 학습한다. confidence와 관측 횟수는 학습 데이터와 분리한 시연 환경 검증셋으로 조정하며, 학습 가중치·데이터셋 버전·평가 결과를 함께 고정한다.
 
 ## 25.3 거리·지도 위치 추정
 
@@ -1913,7 +1962,7 @@ encounter는 다음 중 하나로 종료한다.
 
 ### 30.6.1 기존 요구사항 변경
 
-Sub PJT 2의 기존 요구사항은 카메라 영상을 1분 단위로 지속 저장하는 방식이다. Sentinel UGV에서는 재난 탐사 목적과 저장 효율을 고려하여 다음과 같이 변경한다.
+Sentinel UGV는 일반 주행 영상을 장시간 연속 저장하지 않고, 사람 발견과 상호작용을 중심으로 이벤트 영상을 저장한다.
 
 > Jetson은 카메라 영상을 상시 H.264로 인코딩하면서 최근 3초를 순환 버퍼에 유지한다. 사람 탐지가 확정되면 탐지 이전 3초부터 녹화를 시작하고, 피해자 접근 및 음성 상호작용을 계속 기록한다. 상호작용 종료 후 3초를 추가 녹화한 뒤 하나의 이벤트 클립으로 저장한다.
 
@@ -2150,7 +2199,7 @@ Sentinel UGV의 통신은 하나의 프로토콜로 통합하지 않고 데이�
 | Next.js ↔ Spring Boot | STOMP over WSS | 실시간 상태·이벤트 수신, 조이스틱 명령 전달 |
 | Jetson ↔ 브라우저 | WebRTC | 저지연 실시간 영상·음성 |
 | Jetson 내부 | ROS 2 DDS | SLAM, Nav2, YOLO, Mission Manager 노드 통신 |
-| Jetson ↔ STM32 | USB CDC 우선 | 좌·우 트랙 목표 속도, 엔코더·오류·E-Stop 상태 |
+| Jetson ↔ STM32 | USB CDC 우선 | 구동 속도·조향각 목표, 엔코더·조향·오류·E-Stop 상태 |
 
 ROS 2 DDS를 인터넷 구간까지 직접 확장하지 않는다. ROS 토픽은 크기와 주기가 다양하고 네트워크 설정이 복잡하므로, Jetson의 `cloud_bridge_node`가 관제에 필요한 데이터만 JSON 메시지로 변환한다.
 
@@ -2167,13 +2216,7 @@ flowchart TD
 
 ---
 
-## 31-2. 기존 명세서와 변경안 비교
-
-### 기존 명세서 방식
-
-Sub PJT 3은 Raspberry Pi를 TCP 서버, Jetson을 TCP 클라이언트로 두는 단일 소켓 통신 예제를 제시한다. 이 방식은 소켓의 기본 원리를 학습하기에는 적합하지만 Sentinel의 차량·관제·웹·파일 전송 전체를 담당하기에는 부족하다.
-
-### 변경 이유
+## 31-2. 통신 방식 선택 근거
 
 - 재연결 후 구독 복구와 여러 종류의 메시지 분배가 필요하다.
 - 차량 명령, 센서 상태, 사람 탐지 이벤트의 신뢰도 요구가 서로 다르다.
@@ -2596,7 +2639,7 @@ commands.command_id UNIQUE
 - Spring Boot 서비스 계정만 모든 차량 토픽에 접근한다.
 - REST와 WebSocket은 HTTPS/WSS만 사용한다.
 - EC2 환경 변수와 Secret 파일에 비밀번호를 저장하고 Git에 올리지 않는다.
-- 회원가입·프로필 기능은 제외하더라도, 인터넷에 공개되는 조종 API에는 최소한 운영자 PIN 또는 짧은 수명의 토큰 인증을 둔다.
+- 로그인 기능은 제외하되, 인터넷 구간의 조종 API는 허용 IP·짧은 배포 환경 토큰·Control Lease로 제한한다.
 - Presigned URL은 짧은 시간만 유효하게 발급하고 `object_key`와 파일 종류를 서버가 결정한다.
 
 ---
@@ -2726,11 +2769,8 @@ Python과 Java가 같은 JSON 계약을 사용하도록 `common/schemas`에 JSON
 
 ---
 
-## 참고 근거
+## 기술 참고
 
-- SSAFY Sub PJT 2, p.115: 1분 영상 지속 저장 요구
-- SSAFY Sub PJT 3, p.18: Raspberry Pi-Jetson TCP 소켓 통신 예제
-- SSAFY Sub PJT 3, p.72: 주행 경로와 탐지 객체 위치의 웹 서버 전송 요구
 - OASIS MQTT 5.0: https://docs.oasis-open.org/mqtt/mqtt/v5.0/mqtt-v5.0.html
 - Eclipse Paho Python Client: https://eclipse.dev/paho/files/paho.mqtt.python/html/
 - Spring Framework STOMP over WebSocket: https://docs.spring.io/spring-framework/reference/web/websocket/stomp.html
@@ -2776,9 +2816,7 @@ flowchart TD
 
 ---
 
-## 32-2. 기존 명세서 방식과 변경 이유
-
-Sub PJT 2는 카메라 영상을 1분 단위로 지속 저장하도록 제시한다. Sentinel은 이를 다음 이유로 변경한다.
+## 32-2. 이벤트 녹화 방식 선택 이유
 
 - 피해자 발견 전후의 근거 영상이 핵심이며 일반 주행 전체 영상은 우선순위가 낮다.
 - 이벤트 단위 파일은 과거 이력에서 즉시 조회하기 쉽다.
@@ -2786,7 +2824,7 @@ Sub PJT 2는 카메라 영상을 1분 단위로 지속 저장하도록 제시한
 - 탐지 이전 3초를 명시적으로 보장할 수 있다.
 - 여러 사람이 동시에 보여도 같은 장면을 한 파일로 관리할 수 있다.
 
-변경의 단점은 링 버퍼와 이벤트 종료 상태를 별도로 구현해야 하고, 오탐도 영상 파일을 만든다는 점이다. 단일 탐지 프레임이 아니라 1초간 반복 탐지로 이벤트를 확정하고, 오탐 판정 파일은 관제자가 삭제할 수 있게 하여 보완한다.
+링 버퍼와 이벤트 종료 상태를 별도로 구현해야 하고 오탐도 영상 파일을 만들 수 있다. 단일 탐지 프레임이 아니라 1초간 반복 탐지로 이벤트를 확정하고, 오탐 판정 파일은 관제자가 삭제할 수 있게 하여 보완한다.
 
 ---
 
@@ -3078,27 +3116,29 @@ streaming:
 
 ## 33-1. 범위와 추천 결론
 
-MVP의 음성 기능은 자유 대화형 AI가 아니라 **정해진 질문을 순서대로 재생하고, 응답 유무와 핵심 선택값을 구조화하는 상태 머신**으로 구현한다.
+피해자 음성 기능은 사용자가 확정한 **STT → LLM → TTS** 파이프라인으로 구현한다. LLM은 자유롭게 주행을 명령하거나 의료 판단을 내리지 않고, 피해자 응답을 정해진 구조로 정리하고 다음 질문·안내 문장을 생성하는 제한된 대화 계층으로 사용한다.
 
 ```mermaid
 flowchart TD
-    stop["사람 앞 안전 정지"] --> greet["사전 녹음 안내 재생"]
+    stop["사람 앞 안전 정지"] --> greet["TTS 안내 재생"]
     greet --> vad["VAD로 응답 구간 검출"]
     vad --> stt["정차 중 STT"]
-    stt --> parse["예·아니오·숫자·긴급어 파싱"]
-    parse --> next{"다음 질문?"}
-    next -->|예| greet
-    next -->|아니오| report["구조화 보고·관제 전송"]
+    stt --> llm["LLM 구조화 해석·다음 응답 생성"]
+    llm --> done{"대화 완료?"}
+    done -->|아니오| tts["TTS 음성 합성"]
+    tts --> vad
+    done -->|예| report["구조화 보고·관제 전송"]
     vad -->|무응답| retry["1회 재질문"]
     retry -->|무응답| report
 ```
 
 추천 구현은 다음과 같다.
 
-- 질문 음성은 사전에 생성한 WAV 파일을 사용한다. 런타임 TTS 장애를 제거한다.
 - 음성 활동 감지(VAD)는 로컬에서 수행한다.
 - STT는 로봇이 정지한 상호작용 구간에만 실행한다.
-- 초기 모델은 한국어를 지원하는 경량 `faster-whisper` base급을 시험하고, Jetson 부하가 크면 서버 STT 또는 키워드 입력으로 축소한다.
+- STT 텍스트는 LLM에 전달하고, LLM은 사전에 정의한 JSON 스키마 안에서 응답 상태·이동 가능 여부·긴급 키워드·다음 질문을 반환한다.
+- LLM이 만든 안내 문장은 TTS로 합성해 스피커로 전달한다.
+- STT·LLM·TTS를 Jetson과 EC2 중 어디에서 실행할지는 확정하지 않는다. Jetson 8GB 부하, 응답 지연, 네트워크 단절 시험 후 배치한다.
 - STT 실패가 사람의 무응답을 의미하지 않도록 `음성 감지 여부`와 `문장 해석 성공 여부`를 분리한다.
 - 다중 인원은 그룹 단위로 질문하고 개별 화자 자동 식별을 하지 않는다.
 
@@ -3121,11 +3161,14 @@ USB 마이크
 → VAD
 → 응답 WAV 임시 파일
 → STT
-→ 응답 파서
-
-사전 생성 prompt WAV
+→ 제한된 LLM 구조화 해석
+→ 다음 질문·안내 문장
+→ TTS
 → ALSA 출력
 → 스피커
+
+LLM 또는 네트워크 실패
+→ 사전 정의 질문·키워드 파서 fallback
 ```
 
 MVP에서는 반이중 방식으로 운용한다. 질문을 재생하는 동안 STT 입력을 열지 않고, 재생 종료 후 300ms 뒤부터 응답을 듣는다. 이는 완전한 에코 제거보다 구현이 단순하고 시연 안정성이 높다.
@@ -3145,19 +3188,19 @@ MVP에서는 반이중 방식으로 운용한다. 질문을 재생하는 동안 
 
 ---
 
-## 33-3. 질문 상태 머신
+## 33-3. 대화 상태 머신
 
 ### 질문 순서
 
 | 단계 | 안내 문구 예시 | 저장 필드 | 실패 시 |
 |---|---|---|---|
-| `INTRO` | “탐사 로봇입니다. 대답할 수 있는 분은 예라고 말씀해 주세요.” | `anyResponseDetected` | 1회 반복 후 무응답 표시 |
+| `INTRO` | “탐사 로봇입니다. 대답할 수 있는 분은 말씀해 주세요.” | `anyResponseDetected` | 1회 반복 후 무응답 표시 |
 | `COUNT` | “현재 응답 가능한 인원 수를 숫자로 말씀해 주세요.” | `reportedResponsiveCount` | `UNKNOWN` |
 | `MOBILITY` | “스스로 이동할 수 있습니까? 예 또는 아니오로 답해 주세요.” | `mobilityStatus` | `UNKNOWN` |
 | `URGENT` | “심한 출혈이나 호흡 곤란이 있습니까?” | `urgentConditionReported` | `UNKNOWN` |
 | `CLOSING` | “정보를 관제실에 전달했습니다. 구조 요청을 기다려 주세요.” | 종료 시각 | 항상 재생 시도 |
 
-질문의 목적은 정형화된 보고를 만들기 위한 것이며, 부상 정도를 자동 진단하지 않는다. 긴급 응답은 화면에 우선 경고를 표시하지만 로봇이 의학적 결정을 내리지는 않는다.
+질문 순서는 안전한 최소 정보 수집을 위한 기본 흐름이다. LLM은 문장을 자연스럽게 이어 주되 질문 목적과 출력 필드를 바꾸지 않는다. 부상 정도를 자동 진단하지 않으며, 긴급 표현은 화면에 우선 경고만 표시한다.
 
 ### 상태
 
@@ -3166,7 +3209,8 @@ NOT_STARTED
 → PROMPTING
 → LISTENING
 → TRANSCRIBING
-→ CONFIRMING 또는 RETRYING
+→ LLM_INTERPRETING
+→ TTS_RESPONDING 또는 RETRYING
 → COMPLETED
 
 어느 상태에서든
@@ -3179,8 +3223,8 @@ NOT_STARTED
 |---|---|---|
 | 음성 없음 | 실행 안 함 | `NO_VOICE_DETECTED` |
 | 음성 있음 | 텍스트 없음 | `VOICE_DETECTED_STT_FAILED` |
-| 음성 있음 | 텍스트 있으나 해석 실패 | `RESPONSE_UNRECOGNIZED` |
-| 음성 있음 | 키워드 해석 성공 | `ANSWER_PARSED` |
+| 음성 있음 | 텍스트 있으나 LLM/파서 해석 실패 | `RESPONSE_UNRECOGNIZED` |
+| 음성 있음 | LLM schema 검증 성공 | `ANSWER_STRUCTURED` |
 
 `VOICE_DETECTED_STT_FAILED`를 무의식 또는 무응답으로 기록하면 안 된다. 관제 화면에는 음성 파형·재생 버튼과 함께 확인 필요 상태로 표시한다.
 
@@ -3207,26 +3251,31 @@ UNKNOWN
 
 ---
 
-## 33-5. STT·응답 파싱 정책
+## 33-5. STT·LLM·TTS 정책
 
-STT 입력은 한 질문당 짧은 발화만 처리한다. 자유 문장을 그대로 자동 요약하기보다 허용 키워드를 먼저 판정한다.
+STT 입력은 짧은 발화 단위로 처리한다. LLM은 다음 스키마 외의 행동을 출력하지 않으며, 주행 명령·의료 진단·구조 우선순위 결정을 생성할 수 없다.
 
 ```text
-긍정: 예, 네, 가능, 괜찮아
-부정: 아니오, 아니, 못 움직여, 불가능
-긴급: 출혈, 피, 숨, 호흡, 아파, 갇힘
-숫자: 한 명~열 명, 1~10
+responseStatus: RESPONSIVE | NO_RESPONSE | UNCERTAIN
+reportedResponsiveCount: integer | null
+mobilityStatus: YES | NO | UNKNOWN
+urgentKeywords: string[]
+operatorReviewRequired: boolean
+nextPrompt: string
+conversationDone: boolean
 ```
 
-충돌하는 키워드가 함께 나오거나 STT confidence가 기준보다 낮으면 자동 확정하지 않는다. 원문 텍스트와 오디오 구간을 관제자에게 보여주고 `REVIEW_REQUIRED`로 둔다.
+JSON 스키마 검증 실패, 충돌하는 응답, 낮은 STT 신뢰도, LLM timeout은 자동 확정하지 않는다. 원문 텍스트와 오디오 구간을 관제자에게 보여주고 `REVIEW_REQUIRED`로 둔다. LLM을 사용할 수 없을 때는 예·아니오·숫자·긴급어 키워드 파서를 fallback으로 사용한다.
 
 Jetson 자원 경쟁을 줄이기 위해 상호작용 중 다음 정책을 적용한다.
 
 - 차량은 정지 상태를 유지한다.
 - SLAM과 장애물 감지는 유지한다.
 - YOLO는 그룹 이탈 감시를 위해 5 FPS 수준으로 낮출 수 있다.
-- STT는 발화 종료 후 한 번씩 실행하고 계속 스트리밍 추론하지 않는다.
-- CUDA 메모리 부족 시 STT를 CPU 또는 서버 방식으로 전환하고, 영상·주행 안전 기능을 우선한다.
+- STT·LLM·TTS는 발화 단위로 실행하고 계속 스트리밍 추론하지 않는다.
+- CUDA 메모리 부족 시 음성 AI를 축소하거나 서버 방식으로 전환하고, 영상·주행 안전 기능을 우선한다.
+- LLM 응답은 반드시 JSON schema 검증과 금지 행동 검사를 통과한 뒤 TTS에 전달한다.
+- TTS 문장 길이와 상호작용 총 시간을 제한한다.
 
 ---
 
@@ -3263,8 +3312,11 @@ listening_started_at      TIMESTAMPTZ
 voice_detected             BOOLEAN
 transcript                TEXT NULL
 stt_confidence            REAL NULL
+llm_model_version         VARCHAR NULL
+llm_schema_valid          BOOLEAN
 parsed_value              VARCHAR NULL
 parse_status              VARCHAR
+tts_text                  TEXT NULL
 retry_count               INTEGER
 audio_media_id            UUID NULL
 ```
@@ -3324,12 +3376,14 @@ PERSON_CONFIRMED
 | VAD 오탐 | 질문 중 입력 무시, 최소 발화 길이 적용 |
 | STT 지연 | 5초 초과 시 `STT_TIMEOUT`, 원본 응답 보존 |
 | STT 실패 | 음성 감지 사실만 보고, 관제자 재생 확인 |
+| LLM 지연·schema 실패 | 키워드 파서와 사전 정의 질문으로 전환, `REVIEW_REQUIRED` |
+| TTS 실패 | 사전 생성 비상 안내 음원 재생 또는 관제자 확인 요청 |
 | 주변 소음 | 1회 재질문, 입력 gain·VAD 임계값 현장 프로파일 사용 |
-| GPU 메모리 부족 | STT CPU/서버 fallback 또는 키워드 기능 비활성화 |
-| 네트워크 단절 | 로컬 질문·VAD 계속, 보고서는 Outbox에 보관 |
+| GPU 메모리 부족 | 음성 모델 축소·서버 배치 또는 키워드 fallback, 주행·영상 우선 |
+| 네트워크 단절 | 로컬 배치 모델이 없으면 사전 질문·키워드 fallback, 보고서는 Outbox에 보관 |
 | 사람이 화면에서 사라짐 | LiDAR 안전 확인 후 상호작용 종료, `PERSON_LOST` 기록 |
 
-MVP 축소 순서는 `자유 문장 요약 제거 → STT 서버 fallback 제거 → 키워드 해석 제거 → VAD 기반 응답 유무만 유지`다. 질문 재생과 음성 녹음은 가능한 한 유지한다.
+MVP 축소 순서는 `LLM 자연어 응답 축소 → 사전 정의 질문+키워드 파서 → VAD 기반 응답 유무만 유지`다. STT-LLM-TTS 정상 경로와 축소 경로를 모두 상태에 명시한다.
 
 ---
 
@@ -3342,16 +3396,17 @@ MVP 축소 순서는 `자유 문장 요약 제거 → STT 서버 fallback 제거
 | VOI-03 | 무응답 | 1회 재질문 후 `NO_VOICE_DETECTED`로 종료 |
 | VOI-04 | 음성은 있으나 STT 실패 | 무응답으로 오분류하지 않고 `REVIEW_REQUIRED` 표시 |
 | VOI-05 | 화면 내 3명 | `responseScope=GROUP`, 개인별 발화 자동 귀속 없음 |
-| VOI-06 | Wi-Fi 차단 | 로컬 상호작용 완료·보고서 Outbox 저장 |
+| VOI-06 | Wi-Fi 차단 | 로컬 모델 또는 사전 질문 fallback으로 종료·보고서 Outbox 저장 |
 | VOI-07 | 스피커 재생 중 마이크 입력 | 자기 질문을 피해자 응답으로 저장하지 않음 |
 | VOI-08 | 상호작용 전체 | 이벤트 영상에 질문·응답·종료 후 3초 포함 |
 | VOI-09 | 전체 소요 시간 | 정상 4단계 질문이 60초 이내 완료 |
+| VOI-10 | LLM 비정형·금지 출력 | JSON schema에서 거부되고 주행·의료 판단으로 전달되지 않음 |
 
 ---
 
 ## 33장 최종 확정안
 
-> 피해자 음성 상호작용은 사전 녹음 질문, 로컬 VAD, 정차 중 단문 STT, 규칙 기반 응답 파싱으로 구성한다. 음성 감지와 STT 성공을 분리하여 인식 실패를 무응답으로 오판하지 않으며, 다중 인원은 그룹 단위로 보고하고 개인별 화자 귀속은 하지 않는다. 네트워크가 끊겨도 질문·녹음·구조화 보고를 로컬에서 완료하고, 결과는 encounter 이벤트 영상과 함께 연결 복구 후 관제 서버에 전송한다.
+> 피해자 음성 상호작용은 정차 상태에서 VAD·STT로 발화를 받고, 제한된 LLM이 구조화 해석과 다음 안내를 생성하며, TTS가 스피커로 응답하는 흐름으로 구성한다. LLM 출력은 JSON schema와 금지 행동 검사를 통과해야 하며 주행 명령이나 의료 판단으로 연결하지 않는다. 실행 위치와 모델은 성능 시험 후 동결하고, 실패 시 사전 질문·키워드 파서로 축소한다. 결과는 encounter 이벤트 영상과 연결해 관제 서버에 전송한다.
 
 ---
 
@@ -3368,9 +3423,11 @@ flowchart TD
     mux --> collision["Collision Monitor·속도 제한"]
     collision --> bridge["STM32 Bridge 50Hz"]
     bridge <-->|"USB CDC·CRC·sequence"| stm["STM32"]
-    stm --> pid["좌·우 속도 PID 100Hz"]
-    pid --> driver["듀얼 모터 드라이버"]
-    enc["좌·우 엔코더"] --> stm
+    stm --> pid["구동 속도 PID 100Hz"]
+    pid --> driver["구동 모터 드라이버"]
+    stm --> steer["조향 액추에이터 제어\n방식 TBD"]
+    enc["구동축 엔코더"] --> stm
+    angle["조향각 피드백(선택)"] --> stm
     estop["물리 E-Stop"] --> driver
     estop --> stm
 ```
@@ -3378,7 +3435,7 @@ flowchart TD
 | 구성 요소 | 최종 책임 |
 |---|---|
 | Jetson | SLAM·Nav2·YOLO·임무 상태, 수동/AUTO 명령 선택, 장애물 안전 제한, 목표 `v/ω` 생성 |
-| STM32 | 엔코더 계수, 좌·우 트랙 속도 폐루프, PWM·방향·브레이크, 통신 watchdog, 오류 시 출력 차단 |
+| STM32 | 구동축 엔코더 계수, 구동 속도 폐루프, 조향 액추에이터 제어·한계, 브레이크, 통신 watchdog, 오류 시 출력 차단 |
 | 모터 드라이버 | 모터 전력 구동, 과전류·과열 보호, enable/brake 입력 |
 | 물리 E-Stop | 소프트웨어 상태와 무관하게 모터 전원 또는 드라이버 enable을 하드웨어로 차단 |
 
@@ -3386,18 +3443,18 @@ flowchart TD
 
 ---
 
-## 34-2. 무한궤도 제어 용어 기준
+## 34-2. 목표 차량 인터페이스와 운동학 확정 절차
 
-무한궤도는 자동차식 조향각이 아니라 좌·우 트랙 속도 차이로 회전한다. 전체 통신·제어 문서에서 다음 필드를 사용한다.
+관제와 Nav2 구간에서는 표준 Twist의 선속도 `v`와 각속도 `ω`를 사용한다. BMW M7의 전륜 조향 구조가 bicycle/Ackermann 방식으로 확인되면 Jetson의 차량 운동학 변환 계층에서 STM32용 **목표 구동 속도와 목표 조향각**으로 변환한다. 조향 액추에이터의 실제 신호가 PWM, 릴레이/모터 방향 제어, 별도 제어기 중 무엇인지는 분해 확인 후 결정한다.
 
-| 사용하지 않는 표현 | 최종 표현 |
+| 구간 | 최종 표현 |
 |---|---|
-| `steering` | `angular` 또는 `targetAngularVelocityRadps` |
-| `steeringAngleDeg` | `angularVelocityRadps` |
-| 목표 속도·조향각 | 선속도 `v`·각속도 `ω`, 또는 좌·우 목표 속도 |
-| `mcuConnected` | 유지 가능. 구체 장치는 STM32 |
+| 관제·ROS 2 | `linearVelocityMps`, `angularVelocityRadps` |
+| Jetson → STM32 | `targetDriveSpeedMmps`, `targetSteeringAngleMdeg` |
+| STM32 상태 | 엔코더 속도, 적용 구동 PWM, 목표/측정 조향각 또는 조향 상태, fault |
+| 차량 기하 | 실물 확인 후 휠베이스 `L`, 조향각 `δ`, 최소 회전반경 `R_min` |
 
-관제 명령은 정규화된 `linear`, `angular`를 보내고 Jetson이 차량 제한값으로 변환한다.
+관제 명령은 정규화된 `linear`, `angular`를 보내고 Jetson이 차량 한계값으로 변환한다.
 
 ```json
 {
@@ -3408,14 +3465,15 @@ flowchart TD
 }
 ```
 
-STM32에는 물리 단위의 좌·우 목표 속도를 전달한다.
+STM32에는 물리 단위의 구동 속도와 조향각을 전달한다.
 
 ```text
-v_left  = v - ω × B_eff / 2
-v_right = v + ω × B_eff / 2
+δ = atan(L × ω / max(|v|, v_epsilon))
+target_drive_speed = v
+target_steering_angle = clamp(δ, δ_min, δ_max)
 ```
 
-여기서 `B_eff`는 실제 트랙 중심 간 거리와 바닥 미끄럼을 포함해 35장에서 실험적으로 구한 유효 트랙 폭이다.
+위 식은 전륜 조향 구조 확인 후 적용하는 기준식이다. `L`은 실측 휠베이스를 사용한다. `|v|`가 거의 0인데 `ω`만 존재하는 명령은 제자리 회전으로 보내지 않는다. Nav2가 실차에서 실행 가능한 곡률을 생성하도록 설정하고, 안전 변환 계층은 비현실적인 조향 요구를 제한하거나 정지시킨다.
 
 ---
 
@@ -3432,7 +3490,7 @@ v_right = v + ω × B_eff / 2
 6. 수동 deadman·TTL 검사
 7. AUTO/MANUAL 명령 선택
 8. 속도·가속도 제한
-9. STM32 목표 속도 전송
+9. STM32 구동 속도·조향각 목표 전송
 ```
 
 Jetson의 ROS2 노드 흐름:
@@ -3524,9 +3582,10 @@ UART 대안을 사용할 때는 Jetson과 STM32 모두 **3.3V 논리 레벨**인
 ```text
 mode                  u8   # SAFE_IDLE=0, MANUAL=1, AUTO=2
 flags                 u8   # ENABLE, BRAKE, CLEARABLE_STOP
-target_left_mmps      i16
-target_right_mmps     i16
+target_drive_mmps     i16
+target_steering_mdeg  i16
 max_accel_mmps2       u16
+max_steering_rate_mdps u16
 command_timeout_ms    u16  # 최대 300
 ```
 
@@ -3536,12 +3595,12 @@ command_timeout_ms    u16  # 최대 300
 applied_sequence      u16
 state                 u8
 fault_flags           u16
-left_encoder_ticks    i32
-right_encoder_ticks   i32
-left_speed_mmps       i16
-right_speed_mmps      i16
-left_pwm_permille     i16
-right_pwm_permille    i16
+drive_encoder_ticks   i32
+drive_speed_mmps      i16
+drive_pwm_permille    i16
+target_steering_mdeg  i16
+measured_steering_mdeg i16 # 센서가 없으면 INVALID sentinel
+steering_actuator_cmd i16 # 실물 확인 후 normalized/PWM/DIR 상태 의미를 프로토콜 버전에 명시
 estop_active          u8
 driver_enabled        u8
 ```
@@ -3606,14 +3665,15 @@ STM32의 권장 주기:
 
 | 작업 | 주기 |
 |---|---:|
-| 엔코더 하드웨어 카운터 읽기 | 1kHz 또는 타이머 연속 계수 |
-| 좌·우 속도 추정·PID | 100Hz |
+| 구동 엔코더 하드웨어 카운터 읽기 | 1kHz 또는 타이머 연속 계수 |
+| 구동 속도 추정·PID | 100Hz |
+| 조향 목표·변화율·한계 적용 | 100Hz |
 | Jetson 명령 적용 | 50Hz |
 | `DRIVE_STATE` 송신 | 50Hz |
 | 전류·전압·온도 진단 | 5~10Hz |
 | watchdog 검사 | 1kHz task 또는 메인 루프 |
 
-좌·우 트랙은 독립 PID를 사용한다. 초기에는 P 또는 PI 제어부터 시작하고, 공중 무부하 값이 아니라 바닥에 놓은 저속 직진 시험으로 조정한다.
+구동 모터는 엔코더 기반 속도 PID를 사용한다. 초기에는 P 또는 PI 제어부터 시작하고, 공중 무부하 값이 아니라 바닥에 놓은 저속 직진 시험으로 조정한다. 조향 액추에이터는 실물 확인 후 목표 조향각 또는 좌·중앙·우 상태를 실제 제어 신호에 매핑한다. 액추에이터 종류와 무관하게 좌·우 끝단, 최대 변화율과 기계 충돌 방지 한계를 적용하고, 조향각 피드백 센서가 있으면 명령과 측정 차이가 지속될 때 fault를 발생시킨다.
 
 ```text
 error = target_speed - measured_speed
@@ -3626,7 +3686,7 @@ u = clamp(u, -max_pwm, +max_pwm)
 - 목표 속도 포화 제한
 - PWM 변화율 제한
 - 엔코더 무응답인데 PWM만 큰 상태 감지
-- 좌·우 속도 편차 지속 경고
+- 조향 목표·실제각 편차 또는 서보 무응답 경고
 - 모터 드라이버 fault 입력 즉시 차단
 - 전류 센서가 있다면 stall 전류 지속 시 정지
 - 방향 전환 전 짧은 중립·감속 구간
@@ -3654,8 +3714,8 @@ FAULT_LATCHED
 |---:|---|---|
 | 0 | `COMM_TIMEOUT` | Jetson 명령 300ms 초과 |
 | 1 | `CRC_ERROR_RATE_HIGH` | 직렬 프레임 오류율 초과 |
-| 2 | `LEFT_ENCODER_FAULT` | 좌측 엔코더 무응답·비정상 |
-| 3 | `RIGHT_ENCODER_FAULT` | 우측 엔코더 무응답·비정상 |
+| 2 | `DRIVE_ENCODER_FAULT` | 구동 엔코더 무응답·비정상 |
+| 3 | `STEERING_FAULT` | 조향 액추에이터·각도 피드백 무응답 또는 한계 초과 |
 | 4 | `DRIVER_FAULT` | 모터 드라이버 fault 입력 |
 | 5 | `OVERCURRENT` | 전류 임계값 초과 |
 | 6 | `UNDERVOLTAGE` | 구동 전원 저전압 |
@@ -3663,7 +3723,7 @@ FAULT_LATCHED
 | 8 | `CONFIG_INVALID` | PPR·PID·한계값 오류 |
 | 9 | `INTERNAL_WATCHDOG_RESET` | IWDG 재부팅 이력 |
 
-엔코더 하나가 고장 나면 자동 주행을 중지한다. 수동 강제 이동이 필요하면 운영자가 위험을 확인한 `RECOVERY_MANUAL` 모드에서 매우 낮은 속도로만 허용하며 시연 기본 기능에는 포함하지 않는다.
+구동 엔코더 또는 조향 계통에 치명적 오류가 생기면 자동 주행을 중지한다. 수동 강제 이동이 필요하면 운영자가 위험을 확인한 `RECOVERY_MANUAL` 모드에서 매우 낮은 속도로만 허용하며 시연 기본 기능에는 포함하지 않는다.
 
 ---
 
@@ -3674,7 +3734,11 @@ FAULT_LATCHED
 → 퓨즈
 → 래칭형 NC E-Stop
 → 모터 드라이버 전원/contactor
-→ 좌·우 모터
+→ 구동 모터
+
+조향 액추에이터 전원
+→ 별도 BEC/DC-DC
+→ 비상 정지 정책에 따라 유지 또는 안전 차단
 
 Jetson·STM32 논리 전원은 유지 가능
 → E-Stop 상태와 오류를 관제에 보고
@@ -3685,7 +3749,7 @@ Jetson·STM32 논리 전원은 유지 가능
 - driver enable에는 외부 pull-down을 두어 MCU 핀이 부유해도 모터가 켜지지 않게 한다.
 - E-Stop 부품은 모터의 최대 전류를 직접 감당하거나 적절한 contactor/relay를 제어해야 한다.
 - 퓨즈와 배선 굵기는 모터 정지 전류와 드라이버 정격을 확인한 뒤 확정한다.
-- 모터 시험은 트랙을 바닥에서 띄운 상태에서 시작하고 E-Stop 시험을 가장 먼저 수행한다.
+- 모터 시험은 구동 바퀴를 바닥에서 띄운 상태에서 시작하고 E-Stop 시험을 가장 먼저 수행한다.
 
 ---
 
@@ -3703,7 +3767,7 @@ jetson/ros2_ws/src/
    ├─ packet_codec
    └─ diagnostics
 
-firmware/stm32/
+stm32/
 ├─ Core/
 ├─ Drivers/
 ├─ App/
@@ -3736,13 +3800,15 @@ common/protocol/
 | CTRL-04 | STM32 main loop 고의 정지 | IWDG reset 후 모터 출력 안전값 |
 | CTRL-05 | CRC 오류 패킷 100개 | 잘못된 명령 실행 0회 |
 | CTRL-06 | 오래된 sequence 재전송 | 실행 거부·진단 카운터 증가 |
-| CTRL-07 | 좌우 엔코더 방향 | 전진 시 두 누적값의 정의된 부호 일치 |
+| CTRL-07 | 구동 엔코더·조향 방향 | 전진 tick 부호와 좌·우 조향 명령 방향이 정의와 일치 |
 | CTRL-08 | 물리 E-Stop | Jetson·STM32 상태와 무관하게 모터 전력 차단 |
 | CTRL-09 | E-Stop 해제 | 자동 재출발하지 않고 SAFE_IDLE 유지 |
 | CTRL-10 | 20분 저속 주행 | 통신 끊김·비정상 reset 없음, 온도·전류 한계 이내 |
 | CTRL-11 | 엔코더 분리 | 자동 주행 정지와 정확한 fault 보고 |
 | CTRL-12 | AUTO/MANUAL 동시 입력 | 상태 우선순위에 따라 하나만 실행 |
 | CTRL-13 | 전진 중 즉시 후진 명령 | 가속 제한·중립 구간 적용, 드라이버 fault·과전류 없음 |
+| CTRL-14 | 조향 한계 초과 명령 | 설정된 기계 한계에서 포화되고 링크 충돌·서보 과부하 없음 |
+| CTRL-15 | 0m/s+각속도 명령 | 제자리 회전을 시도하지 않고 안전하게 거부 또는 정지 |
 
 정지 시간은 명령 생성 시각, STM32 수신 시각, PWM 0 시각을 로직 애널라이저 또는 STM32 로그 핀으로 측정한다. 화면상의 관제 표시만으로 300ms를 판정하지 않는다.
 
@@ -3750,7 +3816,7 @@ common/protocol/
 
 ## 34장 최종 확정안
 
-> Sentinel UGV는 Jetson이 생성한 선속도·각속도를 좌·우 트랙 목표 속도로 변환해 USB CDC로 STM32에 50Hz 전송한다. STM32는 엔코더 기반 100Hz 속도 제어, PWM·방향·브레이크, 통신 및 내부 watchdog을 담당한다. 유효 명령이 300ms 동안 없으면 STM32가 서버나 Jetson 프로세스와 무관하게 모터를 정지하며, 물리 E-Stop은 모든 소프트웨어와 독립적으로 구동 전원을 차단한다.
+> Sentinel UGV는 Jetson이 생성한 선속도·각속도를 BMW M7 실차 운동학에 맞는 구동 속도·조향 명령으로 변환해 USB CDC로 STM32에 50Hz 전송한다. STM32는 구동 엔코더 기반 100Hz 속도 제어, 조향 액추에이터 제어·한계, 브레이크, 통신 및 내부 watchdog을 담당한다. 정확한 조향 신호와 피드백 방식은 실물 확인 전 TBD다. 유효 명령이 300ms 동안 없으면 STM32가 서버나 Jetson 프로세스와 무관하게 구동 모터를 정지하며, 물리 E-Stop은 모든 소프트웨어와 독립적으로 구동 전원을 차단한다.
 
 ---
 
@@ -3763,7 +3829,8 @@ common/protocol/
 ```text
 전원·모터 방향
 → 엔코더 방향·PPR
-→ 트랙 이동 거리·유효 폭
+→ 바퀴 이동 거리·휠베이스
+→ 조향 영점·조향각·최소 회전반경
 → 차체 IMU
 → LiDAR·카메라·차체 TF
 → 짐벌 영점·동적 TF
@@ -3773,7 +3840,7 @@ common/protocol/
 → 전체 시나리오
 ```
 
-앞 단계가 틀린 상태에서 Nav2 파라미터를 먼저 만지면 원인을 구분할 수 없다. 모든 결과는 날짜·장소·차량 중량·타이어/트랙 상태와 함께 YAML과 측정표로 남긴다.
+앞 단계가 틀린 상태에서 Nav2 파라미터를 먼저 만지면 원인을 구분할 수 없다. 모든 결과는 날짜·장소·차량 중량·타이어 상태·조향 링크 상태와 함께 YAML과 측정표로 남긴다.
 
 ---
 
@@ -3787,8 +3854,9 @@ map
    └─ base_link
       ├─ base_footprint
       ├─ imu_link
-      ├─ left_track_link
-      ├─ right_track_link
+      ├─ rear_drive_wheel_link
+      ├─ front_left_wheel_link
+      ├─ front_right_wheel_link
       └─ gimbal_base_link
          ├─ gimbal_roll_link
          │  └─ gimbal_pitch_link
@@ -3810,15 +3878,15 @@ Yaw: +Z축 기준 반시계 방향
 
 ---
 
-## 35-3. 엔코더와 트랙 보정
+## 35-3. 엔코더·바퀴·BMW M7 조향 보정
 
 ### 방향·PPR 확인
 
-1. 차량을 바닥에서 띄운다.
-2. 좌·우 트랙을 각각 낮은 PWM으로 전진시킨다.
-3. 전진 시 두 엔코더 누적값이 정의된 양의 방향인지 확인한다.
-4. 모터축 1회전 또는 출력축 1회전당 tick을 측정한다.
-5. 데이터시트의 CPR/PPR과 x1·x2·x4 계수 방식을 구분한다.
+1. 구동 바퀴를 바닥에서 띄운다.
+2. 구동 모터를 낮은 PWM으로 전진시킨다.
+3. 전진 시 엔코더 누적값이 정의된 양의 방향인지 확인한다.
+4. 모터축·출력축·구동 바퀴 1회전당 tick을 측정한다.
+5. 데이터시트의 CPR/PPR과 x1·x2·x4 계수 방식, 감속비를 구분한다.
 
 출력축 1회전당 유효 tick:
 
@@ -3831,7 +3899,7 @@ ticks_per_output_rev
 
 ### 거리 스케일
 
-트랙 구동 스프로킷의 이론 이동 거리는 피치와 이 수로 구하지만, 실제 바닥에서는 눌림과 미끄럼이 발생한다. 3m 직진 시험을 5회 수행하여 다음 스케일을 구한다.
+바퀴의 이론 이동 거리는 유효 지름과 원주로 구하지만 실제 하중에서는 타이어 눌림과 미끄럼이 발생한다. 3m 직진 시험을 5회 수행하여 다음 스케일을 구한다.
 
 ```text
 distance_scale = actual_distance / odom_distance
@@ -3839,27 +3907,32 @@ effective_meters_per_tick
 = nominal_meters_per_tick × distance_scale
 ```
 
-좌·우 스케일은 별도로 측정하고 차이가 크면 기계 장력, 모터, 엔코더 방향, PID부터 점검한다.
+정방향과 역방향 스케일을 비교하고 차이가 크면 타이어, 구동계 백래시, 엔코더 방향, PID부터 점검한다.
 
-### 유효 트랙 폭 `B_eff`
+### 휠베이스·조향 영점·최소 회전반경
 
-제자리 360° 회전을 좌·우 각 5회 실시한다.
+1. 앞바퀴를 기계적으로 직진에 맞추고 조향 액추에이터의 중앙 명령값을 기록한다.
+2. 좌·우 끝단 직전의 안전 PWM과 실제 내측·외측 바퀴 각도를 측정한다.
+3. 서로 다른 조향 명령으로 일정한 원을 저속 주행해 실제 회전반경을 좌·우 각 5회 측정한다.
+4. 명령 조향각과 실제 곡률의 매핑을 테이블 또는 보정식으로 저장한다.
 
 ```text
-B_eff = (distance_right - distance_left) / measured_yaw_rad
+R_measured = traveled_distance / measured_yaw_rad
+δ_effective = atan(wheelbase / R_measured)
 ```
 
-무한궤도는 회전 중 미끄러지므로 자로 잰 트랙 중심 간 거리보다 `B_eff`가 크게 나올 수 있다. 좌회전·우회전 결과의 중앙값을 초기값으로 사용하고 SLAM의 회전 오차를 보며 미세 조정한다.
+전륜 조향 구조가 확인된 뒤 좌·우 회전반경이 다르면 링크 비대칭, 액추에이터 중앙, 타이어 간섭과 백래시를 먼저 점검한다. 제자리 회전 시험은 하지 않으며, Nav2의 `minimum_turning_radius`에는 실측한 가장 보수적인 값을 사용한다.
 
 합격 기준:
 
 - 3m 직진 5회 평균 거리 오차 ±5% 이내
-- 360° 회전 평균 yaw 오차 ±10° 이내
+- 일정 반경 원주행 종료 시 yaw 오차 ±10° 이내
+- 조향 중앙 복귀 후 직진 3m 횡방향 이탈 15cm 이내
 - 같은 조건 반복 결과 표준편차가 평균의 5% 이내
 
 ---
 
-## 35-4. STM32 속도 PID 튜닝
+## 35-4. STM32 구동 속도·조향 튜닝
 
 튜닝 전 배터리 전압과 차량 중량을 기록한다.
 
@@ -3867,7 +3940,7 @@ B_eff = (distance_right - distance_left) / measured_yaw_rad
 2. 0.05, 0.10, 0.20m/s 계단 입력을 준다.
 3. 목표에 느리게 못 미치면 `Kp`를 올린다.
 4. 지속 오차가 남을 때만 `Ki`를 조금 추가한다.
-5. 진동·소음·좌우 헌팅이 생기면 gain과 가속 제한을 낮춘다.
+5. 진동·소음·속도 헌팅이 생기면 gain과 가속 제한을 낮춘다.
 6. 정방향과 역방향 deadband가 다르면 feedforward 표를 별도 관리한다.
 
 측정 항목:
@@ -3875,9 +3948,10 @@ B_eff = (distance_right - distance_left) / measured_yaw_rad
 - rise time
 - overshoot
 - steady-state error
-- 좌·우 속도 차이
 - PWM·전류·배터리 전압
 - 명령 0 이후 정지 거리
+- 조향 중앙 오차·좌우 한계·명령-실제각 오차
+- 조향 변화율과 서보 전류·온도
 
 재난 탐사 MVP는 빠른 응답보다 저속 안정성과 정지 거리를 우선한다.
 
@@ -3931,7 +4005,7 @@ YOLO 바운딩 박스 중심을 LiDAR 방향과 결합하려면 카메라 내부
 
 - 평평한 바닥에서 센서 헤드를 NAV_LOCK 중앙에 둔다.
 - RViz에서 긴 평면 벽이 휘거나 두 겹으로 보이지 않는지 확인한다.
-- 제자리 회전 후 같은 벽과 코너가 겹치는지 확인한다.
+- 최소 반경 저속 선회 후 같은 벽과 코너가 겹치는지 확인한다.
 - 짐벌이 움직일 때 `scan` timestamp와 동적 TF 시각이 일치하는지 확인한다.
 
 ### 카메라-LiDAR 검증
@@ -3996,13 +4070,13 @@ fallback 발생 시 즉시 `CENTER_LOCK`으로 전환하고, 계속 불안정하
 | 항목 | 보수적 초기값 | 확정 방법 |
 |---|---:|---|
 | 최대 선속도 | 0.25m/s | 정지 거리·영상 안정성 |
-| 최대 각속도 | 0.6rad/s | 트랙 미끄럼·SLAM 품질 |
+| 최대 각속도 | 0.6rad/s | 최소 회전반경·조향 한계·SLAM 품질 |
 | 선가속도 | 0.25m/s² | 전류·기구 흔들림 |
 | 각가속도 | 0.6rad/s² | 회전 overshoot |
 | 사람 접근 속도 | 0.10m/s 이하 | 안전거리 시험 |
 | 목표 사람 정지거리 | 1.5~2.0m | LiDAR·카메라 시야 |
 
-정확한 footprint는 가장 바깥 트랙과 돌출 센서·범퍼를 포함한다. `robot_radius`로 대충 대신하지 말고 다각형 footprint를 사용한다.
+정확한 footprint는 조향된 앞바퀴의 최대 돌출 범위와 센서·범퍼를 포함한다. `robot_radius`로 대충 대신하지 말고 다각형 footprint를 사용한다.
 
 Collision Monitor 구역은 최소 두 단계로 둔다.
 
@@ -4061,10 +4135,10 @@ config/
 
 ```json
 {
-  "configVersion": "sentinel-config-2026.07.22.1",
+  "configVersion": "sentinel-config-2026.07.23.1",
   "firmwareVersion": "stm32-0.3.0",
   "modelVersion": "yolo26n-person-trt-001",
-  "calibrationDate": "2026-07-22",
+  "calibrationDate": "2026-07-23",
   "vehicleMassKg": null
 }
 ```
@@ -4078,16 +4152,17 @@ config/
 | ID | 항목 | 합격 기준 |
 |---|---|---|
 | CAL-01 | 엔코더 거리 | 3m 평균 오차 ±5% 이내 |
-| CAL-02 | 제자리 회전 | 360° 평균 오차 ±10° 이내 |
+| CAL-02 | 일정 반경 선회 | 원주행 종료 yaw 오차 ±10° 이내 |
 | CAL-03 | 직진성 | 3m에서 횡방향 이탈 15cm 이내 |
-| CAL-04 | IMU 정지 안정성 | 10초 측정 bias 재현, 비정상 spike 없음 |
-| CAL-05 | TF | RViz frame jump·끊김 없음 |
-| CAL-06 | 카메라-LiDAR | 2m 표적 10cm 또는 20px 이내 |
-| CAL-07 | 짐벌 중앙 복귀 | 10회 후 실제 각도 오차 ±2° 이내 목표 |
-| CAL-08 | NAV_LOCK 지도 | CENTER_LOCK 대비 지도 품질이 악화되지 않음 |
-| CAL-09 | Nav2 정지 | STOP zone 침범 전 정지, 충돌 0회 |
-| CAL-10 | 사람 접근 | 1.5~2.0m 범위 정지 5회 중 5회 |
-| CAL-11 | 다중 인원 | 3명을 개별 track으로 유지하고 encounter 1개 생성 |
+| CAL-04 | 조향 영점·한계·최소 반경 | 중앙 복귀 직진성과 좌우 안전 한계, 실측 `R_min` 기록 |
+| CAL-05 | IMU 정지 안정성 | 10초 측정 bias 재현, 비정상 spike 없음 |
+| CAL-06 | TF | RViz frame jump·끊김 없음 |
+| CAL-07 | 카메라-LiDAR | 2m 표적 10cm 또는 20px 이내 |
+| CAL-08 | 짐벌 중앙 복귀 | 10회 후 실제 각도 오차 ±2° 이내 목표 |
+| CAL-09 | NAV_LOCK 지도 | CENTER_LOCK 대비 지도 품질이 악화되지 않음 |
+| CAL-10 | Nav2 정지 | STOP zone 침범 전 정지, 충돌 0회 |
+| CAL-11 | 사람 접근 | 1.5~2.0m 범위 정지 5회 중 5회 |
+| CAL-12 | 다중 인원 | 3명을 개별 track으로 유지하고 encounter 1개 생성 |
 
 기구 백래시나 저가 서보로 ±2°를 달성하지 못하면 실측 한계를 기록하고 `CENTER_LOCK`을 MVP 기준으로 선택한다.
 
@@ -4095,7 +4170,7 @@ config/
 
 ## 35장 최종 확정안
 
-> 캘리브레이션은 STM32 엔코더·좌우 속도 제어부터 시작해 차체 IMU, 센서 TF, 짐벌, SLAM, Nav2, YOLO 순서로 진행한다. 무한궤도의 이동 스케일과 유효 트랙 폭은 실험값으로 보정하고, 짐벌은 Yaw를 고정한 NAV_LOCK을 목표로 하되 지도 품질이 악화되면 CENTER_LOCK으로 전환한다. 모든 보정값은 버전이 있는 YAML로 관리하고 각 임무에 펌웨어·모델·캘리브레이션 버전을 함께 저장한다.
+> 캘리브레이션은 STM32 구동 엔코더·속도 제어와 조향 영점·한계부터 시작해 차체 IMU, 센서 TF, 짐벌, SLAM, Nav2, YOLO 순서로 진행한다. 바퀴 이동 스케일, 휠베이스, 조향각 매핑과 최소 회전반경은 실험값으로 보정하고, 짐벌은 Yaw를 고정한 NAV_LOCK을 목표로 하되 지도 품질이 악화되면 CENTER_LOCK으로 전환한다. 모든 보정값은 버전이 있는 YAML로 관리하고 각 임무에 펌웨어·모델·캘리브레이션 버전을 함께 저장한다.
 
 ---
 
@@ -4112,7 +4187,7 @@ Sentinel은 사람의 얼굴·음성·위치·부상 관련 응답을 저장할 
 3. 인터넷 구간은 TLS로 보호한다.
 4. S3 객체는 공개하지 않는다.
 5. Jetson에 장기 AWS Access Key를 저장하지 않는다.
-6. 회원가입·다중 사용자 관리 기능은 제외하되, 조종 API는 인증 없이 공개하지 않는다.
+6. 회원가입·로그인 기능은 제외하되, 조종 API는 허용 네트워크·배포 환경 토큰·Control Lease 없이 공개하지 않는다.
 7. 시연 종료 후 보존 기간에 따라 영상·음성을 삭제한다.
 8. 비밀번호·토큰·Presigned URL·원문 음성을 일반 로그에 남기지 않는다.
 
@@ -4122,7 +4197,7 @@ Sentinel은 사람의 얼굴·음성·위치·부상 관련 응답을 저장할 
 
 | 등급 | 데이터 | 예시 | 보호 정책 |
 |---|---|---|---|
-| `SENSITIVE` | 얼굴·음성·부상 응답·정확한 위치 | 이벤트 MP4, transcript, victim report | 인증 사용자만, 비공개 S3, 최소 보존 |
+| `SENSITIVE` | 얼굴·음성·부상 응답·정확한 위치 | 이벤트 MP4, transcript, victim report | 통제된 관제 환경만, 비공개 S3, 최소 보존 |
 | `INTERNAL` | 임무·지도·경로·오류 | map, encounter metadata, safety event | 팀 내부 접근, DB 직접 공개 금지 |
 | `OPERATIONAL` | 장치 상태·성능 | CPU/GPU, 온도, 배터리 | 관제·운영 목적, 식별정보 최소화 |
 | `PUBLIC` | 발표용 익명 통계 | 평균 지연, FPS, 성공률 | 얼굴·음성·위치 제거 후 공개 가능 |
@@ -4135,7 +4210,7 @@ Sentinel은 사람의 얼굴·음성·위치·부상 관련 응답을 저장할 
 
 | 위협 | 영향 | 핵심 대응 |
 |---|---|---|
-| 인증되지 않은 웹 조종 | 충돌·안전사고 | 전체 사이트 인증, Control Lease, 명령 TTL |
+| 허용되지 않은 웹 조종 | 충돌·안전사고 | 네트워크 제한·배포 환경 토큰·Control Lease·명령 TTL |
 | 과거 명령 재전송 | 갑작스러운 주행 | `commandId`, sequence, TTL, Retain 금지 |
 | MQTT 계정 탈취 | 상태 위조·명령 주입 | TLS, 차량별 계정·ACL, 키 교체 |
 | S3 URL 노출 | 영상 무단 접근 | 짧은 만료, 비공개 버킷, 로그 마스킹 |
@@ -4148,31 +4223,29 @@ Sentinel은 사람의 얼굴·음성·위치·부상 관련 응답을 저장할 
 
 ---
 
-## 36-4. 운영자 인증과 권한
+## 36-4. MVP 접근 보호와 제어권
 
-MVP에서는 회원가입, 프로필, 비밀번호 찾기, 다중 역할 관리 기능을 구현하지 않는다. 대신 다음 최소 인증을 적용한다.
+MVP에서는 회원가입, 로그인, 프로필, 비밀번호 찾기, 다중 역할 관리 기능을 구현하지 않는다. 접근 보호와 실제 차량 제어권은 다음처럼 분리한다.
 
 ```text
 관제 사이트 전체
 → Nginx HTTPS
-→ 단일 운영자 자격 증명 또는 PIN 인증
-→ 인증 성공 세션만 REST/WSS 접근
-→ 별도 Control Lease를 획득한 세션만 주행 명령
+→ 시연 허용 IP 또는 배포 환경 토큰 확인
+→ REST/WSS 연결
+→ 연결된 게임패드가 있는 하나의 브라우저 세션만 Control Lease 획득
+→ Control Lease와 유효 TTL이 있는 명령만 주행
 ```
 
-권장 MVP:
+MVP 적용:
 
-- Nginx 또는 Spring Security의 단일 운영자 계정
-- 비밀번호 원문 저장 금지, 강한 해시 사용
-- 세션 cookie는 `Secure`, `HttpOnly`, `SameSite` 설정
-- 상태 변경 REST 요청은 CSRF token 또는 엄격한 Origin 검증
-- WebSocket handshake의 Origin과 인증 세션 검증
+- UI 로그인 화면과 사용자 테이블을 만들지 않는다.
+- EC2 Security Group은 시연 장소의 허용 IP로 제한한다.
+- 외부 접속이 필요하면 사용자 계정 대신 배포 환경의 짧은 접근 토큰을 Nginx/Spring에서 검증한다.
+- WebSocket handshake의 Origin과 접근 토큰을 검증한다.
 - 15분 이상 비활성 시 제어 세션 만료
-- 로그아웃·브라우저 종료·네트워크 단절 시 Control Lease 해제 및 STOP
+- 브라우저 종료·네트워크 단절·게임패드 해제 시 Control Lease 해제 및 STOP
 
-관제 화면 조회 권한과 차량 조종 권한은 같은 계정이어도 Control Lease로 한 번 더 분리한다. 인증됐다는 이유만으로 모든 브라우저가 조종할 수 있으면 안 된다.
-
-EC2를 공개 인터넷에 열기 어렵다면 시연 당일 Security Group에서 허용 IP를 제한한다. IP 제한만으로 조종 인증을 대체하지는 않는다.
+추후 다중 사용자 서비스로 확장할 때만 계정·로그인·역할 권한을 별도 설계한다.
 
 ---
 
@@ -4194,7 +4267,7 @@ Jetson cloud_bridge
 - Spring Boot 계정과 차량 계정 분리
 - `cmd/*` Retain 금지
 - TLS 인증서 만료일 모니터링
-- 실패 로그인과 ACL 거부 로그 수집
+- 접근 토큰 검증 실패와 ACL 거부 로그 수집
 
 예시 ACL 의미:
 
@@ -4219,9 +4292,9 @@ backend service
 - 외부 공개는 Nginx 443만 사용한다.
 - Spring Boot, PostgreSQL, TimescaleDB의 내부 포트는 외부에 직접 열지 않는다.
 - 입력 JSON은 schema, 길이, 범위, enum을 검증한다.
-- 명령 요청에는 인증 세션, Control Lease, `commandId`, TTL을 검증한다.
+- 명령 요청에는 접근 토큰, Control Lease, `commandId`, TTL을 검증한다.
 - 오류 응답에 stack trace, DB 쿼리, 내부 IP를 노출하지 않는다.
-- 요청 rate limit을 두되 E-Stop은 정상 인증 사용자가 제한 때문에 누락되지 않게 별도 정책을 적용한다.
+- 요청 rate limit을 두되 E-Stop은 유효한 Control Lease 세션이 제한 때문에 누락되지 않게 별도 정책을 적용한다.
 
 ### WebRTC
 
@@ -4348,7 +4421,7 @@ DELETE_REQUESTED
 비밀값 또는 장치 분실 시:
 
 1. 해당 Jetson MQTT 계정 비활성화
-2. 운영자 비밀번호·PIN 교체
+2. 배포 환경 접근 토큰 교체
 3. 노출된 인증서와 token 폐기
 4. Presigned URL은 만료 확인, 필요 시 발급 권한 차단
 5. S3·Nginx·Mosquitto 접근 로그 확인
@@ -4364,7 +4437,7 @@ Jetson에는 정적 AWS 키를 두지 않으므로 분실 시 S3 전체 권한�
 
 | ID | 시험 | 합격 기준 |
 |---|---|---|
-| SEC-01 | 비로그인 REST/WSS 접근 | 401/403, 제어 명령 실행 0회 |
+| SEC-01 | 허용 IP·접근 토큰 없는 REST/WSS 접근 | 401/403 또는 네트워크 차단, 제어 명령 실행 0회 |
 | SEC-02 | 두 브라우저 조종 시도 | 하나의 Control Lease만 유효 |
 | SEC-03 | MQTT 익명·다른 차량 토픽 접근 | broker가 거부 |
 | SEC-04 | MQTT 1883 외부 접근 | 연결 불가 |
@@ -4372,7 +4445,7 @@ Jetson에는 정적 AWS 키를 두지 않으므로 분실 시 S3 전체 권한�
 | SEC-06 | 만료된 Presigned URL | 업로드·조회 거부 |
 | SEC-07 | 잘못된 object key·크기·checksum | 완료 처리 거부 |
 | SEC-08 | Git secret scan | 실제 비밀번호·private key 검출 0건 |
-| SEC-09 | 로그 점검 | token·PIN·Presigned URL·음성 원문 노출 0건 |
+| SEC-09 | 로그 점검 | 접근 token·Presigned URL·음성 원문 노출 0건 |
 | SEC-10 | 임무 삭제 | DB와 S3 대상이 모두 삭제 또는 명시적 실패 상태 |
 | SEC-11 | WebSocket Origin 위조 | handshake 거부 |
 | SEC-12 | Jetson 계정 폐기 | 폐기 후 MQTT 재연결 불가 |
@@ -4381,7 +4454,7 @@ Jetson에는 정적 AWS 키를 두지 않으므로 분실 시 S3 전체 권한�
 
 ## 36장 최종 확정안
 
-> Sentinel의 얼굴·음성·위치·부상 응답은 민감 데이터로 분류하고 비공개 S3와 제한된 DB에 저장한다. 회원가입 기능은 제외하지만 전체 관제 사이트와 조종 API에는 단일 운영자 인증, HTTPS/WSS, Control Lease를 적용한다. MQTT는 TLS·차량별 계정·ACL을 사용하고, Jetson은 AWS 키 대신 짧은 Presigned URL만 사용한다. 이벤트 데이터는 기본 30일 후 삭제하며 시연 참가자에게 수집 목적과 보존 기간을 사전 고지한다.
+> Sentinel의 얼굴·음성·위치·부상 응답은 민감 데이터로 분류하고 비공개 S3와 제한된 DB에 저장한다. MVP에는 회원가입·로그인 기능을 넣지 않으며, 허용 IP 또는 배포 환경 토큰, HTTPS/WSS, 단일 Control Lease로 시연 접근과 조종 권한을 제한한다. MQTT는 TLS·차량별 계정·ACL을 사용하고, Jetson은 AWS 키 대신 짧은 Presigned URL만 사용한다. 이벤트 데이터는 기본 30일 후 삭제하며 시연 참가자에게 수집 목적과 보존 기간을 사전 고지한다.
 
 ---
 
@@ -4579,9 +4652,9 @@ ESTOP       = 물리/소프트웨어 E-Stop latch
 
 로그에 넣지 않는 값:
 
-- 비밀번호·PIN
+- DB·MQTT 비밀번호
 - MQTT credential
-- JWT/session token
+- 배포 환경 접근 token
 - Presigned URL 전체
 - 피해자 음성 원문
 - transcript 전체 문장
@@ -4692,7 +4765,7 @@ PENDING → SENDING → ACKED
 
 - ROS2 package, Python venv, MediaMTX binary, config version을 release 단위로 묶는다.
 - 현재 동작 버전과 이전 정상 버전을 각각 유지한다.
-- 배포 중 모터는 SAFE_IDLE, 트랙은 바닥에서 띄운다.
+- 배포 중 모터는 SAFE_IDLE로 두고 구동 바퀴를 바닥에서 띄운다.
 - STM32 firmware와 Jetson protocol version 호환표를 확인한다.
 - firmware update 실패 시 ST-Link 등 유선 복구 경로를 문서화한다.
 
@@ -4771,7 +4844,7 @@ FAILED
 
 ## 38-2. 최신 기능 요구사항 기준선
 
-기존 v0.9의 FR-007과 FR-008은 다음 내용으로 대체한다.
+최신 대화에서 확정된 이벤트·피해자 대응 요구사항은 다음과 같다.
 
 ```text
 FR-007
@@ -4787,7 +4860,7 @@ FR-008
 
 | ID | 요구사항 | 등급 |
 |---|---|---|
-| `FR-021` | 정해진 질문을 음성으로 재생하고 응답 유무·핵심 응답을 구조화해야 한다. | 필수 |
+| `FR-021` | STT-LLM-TTS로 피해자 응답을 해석하고 제한된 안내·구조화 보고를 생성해야 한다. | 필수 |
 | `FR-022` | 한 화면의 여러 사람을 개별 추적하되 하나의 encounter로 관리해야 한다. | 필수 |
 | `FR-023` | Jetson과 STM32를 분리하고 STM32가 저수준 모터·엔코더·watchdog을 담당해야 한다. | 필수 |
 | `FR-024` | 짐벌은 NAV_LOCK과 CENTER_LOCK을 제공하고 SLAM 악화 시 fallback해야 한다. | 선택에 가까운 필수 |
@@ -4804,11 +4877,11 @@ FR-008
 
 | ID | 핵심 구현 모듈 | 연결 시험 | 합격 기준 | 증빙 |
 |---|---|---|---|---|
-| FR-001 | Mission API, Mission Manager | MIS-01 | 인증된 관제에서 임무 생성·시작 ACK·상태 전환 | API 로그·화면 |
+| FR-001 | Mission API, Mission Manager | MIS-01 | 허용된 관제 세션에서 임무 생성·시작 ACK·상태 전환 | API 로그·화면 |
 | FR-002 | SLAM bringup, map manager | NAV-01 | 새 map ID와 home pose 생성·저장 | rosbag·DB |
 | FR-003 | frontier_explorer | NAV-02 | 목표 입력 없이 frontier 3개 이상 순차 선택 | 지도 영상·로그 |
 | FR-004 | Nav2, costmap, Collision Monitor | NAV-03 | 지정 장애물과 충돌 0회, 우회 또는 안전 정지 | 시험 영상 |
-| FR-005 | YOLO26n, TensorRT | AI-01 | 시험 세트 사람 출현 10회 중 9회 이상 2초 내 확정 | 탐지 로그·영상 |
+| FR-005 | 추가 학습 YOLO26n Detect, TensorRT | AI-01 | 분리된 시험 세트 사람 출현 10회 중 9회 이상 2초 내 확정 | 데이터셋 버전·탐지 로그·영상 |
 | FR-006 | human_localizer, event manager | AI-02 | 사람 위치가 지도에 표시되고 timestamp·confidence 저장 | RViz·DB |
 | FR-007 | ring writer, recording manager | VID-03/04 | 사전 3초 이상+상호작용 전체+사후 3초 포함 | MP4·manifest |
 | FR-008 | Mission Manager, interaction FSM | SCN-01 | 탐사 일시정지→접근→대화→보고→안전 시 재개 | 전체 시연 영상 |
@@ -4824,11 +4897,11 @@ FR-008
 | FR-018 | local Mission Manager | NET-01 | EC2 단절 시 AUTO 정책 유지 또는 안전 PAUSED, 수동은 정지 | 장애 주입 영상 |
 | FR-019 | MQTT TTL, local safety | CTRL-03 | 제어 연결 단절 후 300ms 이내 정지 | STM32 로그 |
 | FR-020 | home pose, NavigateToPose | NAV-04 | 탐사 종료 후 home 허용 반경 도착 또는 명시적 fallback | 지도·action 로그 |
-| FR-021 | prompt/VAD/STT/parser | VOI-01~09 | 안내·응답 분류·보고가 정의된 기준 통과 | 오디오·DB·영상 |
+| FR-021 | VAD/STT/LLM/TTS/schema validator | VOI-01~10 | 안내·구조화 해석·금지 출력 차단·보고가 정의된 기준 통과 | 오디오·DB·영상 |
 | FR-022 | ByteTrack, encounter manager | VID-05/AI-04 | 3명 개별 track, encounter 1개, 영상 1개 | DB·MP4 |
 | FR-023 | STM32 firmware, bridge | CTRL-01~12 | 100Hz 제어와 300ms watchdog·E-Stop 시험 통과 | 펌웨어 로그·영상 |
 | FR-024 | gimbal controller, dynamic TF | CAL-07/08 | 중앙 복귀와 SLAM 비교 통과, 실패 시 CENTER_LOCK | RViz·측정표 |
-| FR-025 | Nginx, Spring Security, MQTT ACL, S3 | SEC-01~12 | 인증 우회·공개 객체·평문 MQTT 없음 | 보안 시험표 |
+| FR-025 | Nginx 접근 제한, Control Lease, MQTT ACL, S3 | SEC-01~12 | 허용되지 않은 제어·공개 객체·평문 MQTT 없음 | 보안 시험표 |
 | FR-026 | SQLite Outbox, uploader | NET-02 | 5분 단절 후 누락·중복 없이 중요 이벤트 복구 | Outbox·DB·S3 |
 | FR-027 | encounter schema/API | DATA-01 | 다중 피해자·대화·미디어 관계가 한 조회로 반환 | API 응답·ERD |
 | FR-028 | Mission Manager, STM32 handshake | OPS-01/02/03 | reboot·reconnect 후 SAFE_IDLE, 자동 이동 0회 | 부팅 영상·로그 |
@@ -4873,7 +4946,7 @@ FR-008
 | SR-011 | 과열·저전압 보호 | THM-01/PWR-01 | 임계값에서 감속·PAUSED·정지 정책 실행 |
 | SR-012 | 방향 전환 보호 | CTRL-13 | 전진↔후진 전 중립·감속, 과전류 없음 |
 
-안전 시험은 트랙을 띄운 벤치 시험에서 시작하고, 낮은 속도의 바닥 시험, 실제 시나리오 순으로 올린다.
+안전 시험은 구동 바퀴를 띄운 벤치 시험에서 시작하고, 낮은 속도의 바닥 시험, 실제 시나리오 순으로 올린다.
 
 ---
 
@@ -4881,7 +4954,7 @@ FR-008
 
 ### 환경 E1 - 벤치
 
-- 트랙이 바닥에서 떠 있는 상태
+- 구동 바퀴가 바닥에서 떠 있고 조향 링크가 장애물과 간섭하지 않는 상태
 - 전류 제한 전원 또는 퓨즈 적용
 - 로직 애널라이저·멀티미터 사용 가능
 - STM32 watchdog·PWM·엔코더·E-Stop 시험
@@ -5007,7 +5080,7 @@ READY
 
 - 코드·펌웨어 변경
 - Nav2·PID·YOLO·짐벌 파라미터 변경
-- 배선·센서 위치·트랙 장력 변경
+- 배선·센서 위치·타이어·조향 링크·액추에이터 결합부 변경
 - 카메라 해상도·FPS·비트레이트 변경
 - 네트워크 구조·인증서·서버 image 변경
 
@@ -5069,7 +5142,8 @@ Critical·High 결함 수정 후에는 관련 단위 시험뿐 아니라 SCN-03�
 - 실제 붕괴 현장용 안전·방수·방진·의료 인증 장비가 아니다.
 - 실내 복도와 경미한 변형 바닥을 대상으로 하며 계단·큰 잔해·자갈·침수 환경은 제외한다.
 - 2D LiDAR는 스캔면 위·아래 장애물을 놓칠 수 있다.
-- 무한궤도 오도메트리는 회전 미끄럼에 민감하다.
+- BMW M7 전륜 조향 베이스는 제자리 회전이 불가능할 가능성이 높으며, 조향 구조 확인 후 최소 회전반경 제약을 확정해야 한다.
+- 조향 액추에이터 백래시와 실제 조향각 오차가 오도메트리·경로 추종 품질에 영향을 준다.
 - 능동 짐벌이 LiDAR scan과 TF를 흔들면 CENTER_LOCK fallback이 필요하다.
 - USB 마이크 한 개로 다중 화자를 구분하지 않는다.
 - STT 결과는 의료 진단이나 구조 우선순위 결정에 사용하지 않는다.
@@ -5133,7 +5207,7 @@ Critical·High 결함 수정 후에는 관련 단위 시험뿐 아니라 SCN-03�
 | **FR-002** | 임무 시작 시 새 SLAM 지도와 home pose를 생성해야 한다.     | 필수     |
 | **FR-003** | 시스템은 사용자 목표 없이 Frontier를 선택해 탐사해야 한다. | 필수     |
 | **FR-004** | Nav2는 정적 장애물을 우회하거나 안전하게 정지해야 한다.    | 필수     |
-| **FR-005** | YOLO는 person을 실시간 탐지해야 한다.                      | 필수     |
+| **FR-005** | 추가 학습 YOLO26n Detect는 person을 실시간 탐지해야 한다.    | 필수     |
 | **FR-006** | 사람별 위치·신뢰도·시간을 encounter 관측으로 생성해야 한다. | 필수     |
 | **FR-007** | 확정 전 3초+상호작용 전체+종료 후 3초 영상을 저장해야 한다. | 필수     |
 | **FR-008** | 사람 발견 시 접근·음성·보고 후 안전할 때만 탐사를 재개해야 한다. | 필수  |
@@ -5149,11 +5223,11 @@ Critical·High 결함 수정 후에는 관련 단위 시험뿐 아니라 SCN-03�
 | **FR-018** | EC2 단절 시 안전 조건에 따라 로컬 AUTO를 유지하거나 PAUSED해야 한다. | 필수 |
 | **FR-019** | 수동 제어 연결 단절 시 정지해야 한다.                      | 필수     |
 | **FR-020** | 탐사 종료 시 home pose로 복귀해야 한다.                    | 필수     |
-| **FR-021** | 고정 질문을 재생하고 응답을 구조화해야 한다.               | 필수     |
+| **FR-021** | STT-LLM-TTS로 피해자 응답을 구조화하고 제한된 안내를 생성해야 한다. | 필수 |
 | **FR-022** | 여러 사람을 개별 추적하되 한 encounter로 관리해야 한다.    | 필수     |
 | **FR-023** | STM32가 모터·엔코더·300ms watchdog을 담당해야 한다.        | 필수     |
 | **FR-024** | 짐벌은 NAV_LOCK/CENTER_LOCK과 fallback을 제공해야 한다.     | 선택     |
-| **FR-025** | 관제·MQTT·S3에 인증·암호화를 적용해야 한다.                | 필수     |
+| **FR-025** | 관제·MQTT·S3에 접근 제한과 암호화를 적용해야 한다.          | 필수     |
 | **FR-026** | 단절 중 이벤트를 로컬 보관하고 멱등 재전송해야 한다.        | 필수     |
 | **FR-027** | 대화·피해자·미디어를 encounter 중심으로 조회해야 한다.      | 필수     |
 | **FR-028** | 부팅·재연결 후 차량은 자동 주행을 재개하지 않아야 한다.     | 필수     |
@@ -5293,15 +5367,17 @@ TBD 항목이 확정되면 문서 버전을 v1.0으로 올리고, 선택 근거�
 
 | **ID**      | **미확정 항목** | **결정 시 기록할 값**                           |
 |-------------|-----------------|-------------------------------------------------|
-| TBD-HW-001  | 모터            | 모델, 전압, 토크, RPM, 전류, 엔코더             |
+| TBD-HW-001  | RS540 구동계·엔코더 | 감속비, 정지 전류, 차축 구조, 엔코더 장착·PPR   |
 | TBD-HW-002  | 모터 드라이버   | 모델, 채널, 연속/피크 전류, 인터페이스          |
 | TBD-HW-003  | 전원            | 배터리 종류, 셀 수, 용량, DC-DC, 예상 운용 시간 |
+| TBD-HW-004  | 조향 계통       | 액추에이터 종류, 링크, 제어 신호, 각도 한계, 피드백 유무 |
 | TBD-HW-005  | 짐벌            | 총 하중, 서보, IMU, 각도 범위, 보정 속도        |
-| TBD-CAM-001 | 카메라 포맷     | H264/MJPG/YUYV별 해상도·FPS                     |
-| TBD-SW-001  | YOLO26n 배포    | 모델 파일, 라이선스, PyTorch/TensorRT FPS       |
+| TBD-CAM-001 | 카메라 ROS 2 통합 | 확인된 720p MJPEG와 X4 Pro 동시 구동 안정성      |
+| TBD-SW-001  | 추가 학습 YOLO26n 배포 | 데이터셋·가중치 해시, 라이선스, PyTorch/TensorRT FPS |
 | TBD-NAV-001 | Frontier 구현   | 패키지 또는 자체 노드, 파라미터                 |
 | TBD-AUD-001 | 마이크·스피커    | 모델, 연결 방식, 지향성, 출력, 소음 환경         |
-| TBD-CAL-001 | 최종 주행값      | PID, 유효 트랙 폭, 속도·가속도, 정지거리         |
+| TBD-AUD-002 | STT·LLM·TTS 배치 | 각 모델, Jetson/EC2 실행 위치, 지연, 오프라인 fallback |
+| TBD-CAL-001 | 최종 주행값      | PID, 휠베이스, 조향각 매핑, 최소 회전반경, 속도·가속도, 정지거리 |
 
 # 부록 I. 최종 BOM·전력 예산 템플릿
 
@@ -5309,10 +5385,14 @@ TBD 항목이 확정되면 문서 버전을 v1.0으로 올리고, 선택 근거�
 |---|---|---:|---|---|---|
 | 컴퓨팅 | Jetson Orin Nano 8GB | 1 | JetPack 6.2.1+b38 | 제공 | 확정 |
 | 제어 | STM32 보드 | 1 | 정확한 보드명·I/O TBD | 제공/구매 | 모델 기록 필요 |
-| 센서 | YDLIDAR X4 Pro | 1 | USB Serial | 제공 | 잠정 확정 |
-| 센서 | Logitech BRIO 100 | 1 | USB, 포맷 실측 | 제공 | 잠정 확정 |
-| 구동 | 엔코더 DC 모터 | 2 | 전압·RPM·토크·stall current | TBD | 미확정 |
-| 구동 | 듀얼 모터 드라이버 | 1 | 연속·피크 전류 | TBD | 미확정 |
+| 차체 | BMW M7 유아전동차 구동 베이스 | 1 | 4륜·후륜 구동, 상부 3D 프린팅 | 보유 | 확정 |
+| 센서 | YDLIDAR X4 Pro | 1 | USB Serial, 128000bps, 약 11.03Hz | 제공 | 동작 확인 |
+| 센서 | Logitech BRIO 100 | 1 | USB, 720p MJPEG 약 29.93 FPS | 제공 | 캡처 확인 |
+| 구동 | RS540 FD-12V RPM14000 DC 모터 | 1 | 12V 후륜 구동, 감속비·stall current TBD | BMW M7 기존 | 모델 확인 |
+| 구동 | 구동축 엔코더 | 1식 | 2채널 quadrature 권장, PPR TBD | 구매/제작 | 확인 필요 |
+| 구동 | 고전류 모터 드라이버 | 1 | 12V, 연속·피크·stall current 기준 | 구매/TBD | 확인 필요 |
+| 조향 | 전륜 조향 액추에이터·링크 | 1식 | 종류·전압·제어 신호·각도 TBD | BMW M7 기존/추가 | 분해 확인 필요 |
+| 조향 | 조향각 센서 | 1 | 포텐셔미터/엔코더 | TBD | 권장 |
 | 전원 | 배터리·퓨즈·DC-DC | 각 1 | 전압·용량·효율 | TBD | 미확정 |
 | 안전 | 물리 E-Stop | 1 | 모터 전원 차단 정격 | TBD | 미확정 |
 | 음성 | 마이크·스피커 | 각 1 | USB/아날로그·출력 | TBD | 미확정 |
@@ -5324,9 +5404,10 @@ TBD 항목이 확정되면 문서 버전을 v1.0으로 올리고, 선택 근거�
 | From | To | 신호/전원 | 커넥터·핀 | 전압 | 검증자·일자 |
 |---|---|---|---|---:|---|
 | Jetson | STM32 | USB CDC | `/dev/sentinel_mcu` | USB | TBD |
-| STM32 | 좌 엔코더 | A/B | TBD | TBD | TBD |
-| STM32 | 우 엔코더 | A/B | TBD | TBD | TBD |
+| STM32 | 구동축 엔코더 | A/B | TBD | TBD | TBD |
 | STM32 | 모터 드라이버 | PWM/DIR/ENABLE | TBD | 3.3V 논리 확인 | TBD |
+| STM32 | 조향 액추에이터 | PWM/DIR/릴레이 등 TBD | TBD | 실물 전압·전류·신호 확인 | TBD |
+| 조향각 센서 | STM32 | ADC/Encoder | TBD | TBD | TBD |
 | E-Stop | 모터 전원 계층 | 전력 차단 | TBD | 배터리 전압 | TBD |
 | DC-DC | Jetson | 전원 | 공식 전원 입력 | TBD | TBD |
 | DC-DC | 서보 | 전원 | 별도 분기 | TBD | TBD |
@@ -5344,7 +5425,7 @@ TBD 항목이 확정되면 문서 버전을 v1.0으로 올리고, 선택 근거�
 | CUDA | 실기기 값 기록 | `nvcc --version` 또는 `dpkg-query` |
 | TensorRT | 실기기 값 기록 | `dpkg-query -W '*nvinfer*'` |
 | PyTorch·Ultralytics | lockfile·이미지 태그 기록 | `pip freeze` |
-| YOLO | `yolo26n.pt` 또는 변환 engine의 SHA-256 | 모델 파일 해시 |
+| YOLO | 추가 학습 `yolo26n` 가중치·데이터셋 버전·변환 engine SHA-256 | 학습 산출물 해시 |
 | STM32 firmware | Git commit·protocol version | HELLO_ACK·release manifest |
 | Backend·Frontend | Git tag·Docker digest | release manifest |
 | PostgreSQL·TimescaleDB·MediaMTX | Docker image digest | `docker inspect` |
@@ -5362,21 +5443,21 @@ TBD 항목이 확정되면 문서 버전을 v1.0으로 올리고, 선택 근거�
 | 영상 | encounter post-buffer | 3s | 3s | VID-03 |
 | 주행 | 최대 자율 선속도 | 0.25m/s | TBD | NAV-03 |
 | 접근 | 최대 접근 선속도 | 0.10m/s | TBD | SCN-01 |
-| 차체 | 엔코더 PPR·거리 스케일 | TBD | TBD | CAL-01~03 |
-| 차체 | 유효 트랙 폭 | TBD | TBD | CAL-04 |
+| 차체 | 엔코더 PPR·바퀴 거리 스케일 | TBD | TBD | CAL-01~03 |
+| 차체 | 휠베이스·조향 중앙·좌우 한계 | TBD | TBD | CAL-04 |
+| 차체 | 최소 회전반경 | TBD | TBD | CAL-04/NAV-04 |
 | AI | person confidence·안정 관측 시간 | TBD·약 1s | TBD | AI-01~04 |
 | Nav2 | inflation·collision distance | TBD | TBD | NAV-03 |
 | 짐벌 | 영점·각도 제한·mode | TBD | TBD | CAL-07~08 |
 
 # 참고 자료
-- SSAFY 온디바이스 AIoT Sub PJT I: Raspberry Pi 5 기반 AIoT 시스템 구축 - 센서·웹 서버·하드웨어 제어 참고
-- SSAFY 온디바이스 AIoT Sub PJT II: Jetson 보드 기반 인공지능 신경망 구축 - 카메라·YOLO·1분 영상 과제 참고
-- SSAFY 온디바이스 AIoT Sub PJT III: AIoT 무인 주행 통합 시스템 개발 - TCP, 웹 제어, 경로·객체 위치 매핑 요구 참고
 - [NVIDIA JetPack 6.2.1 / Jetson Linux 36.4.4](https://forums.developer.nvidia.com/t/jetpack-6-2-1-jetson-linux-36-4-4-is-now-live/337335)
 - [NVIDIA JetPack Archive](https://developer.nvidia.com/embedded/jetpack-archive)
 - [ROS 2 Humble Ubuntu 22.04 설치](https://docs.ros.org/en/humble/Installation/Ubuntu-Install-Debs.html)
 - [Ultralytics YOLO26](https://docs.ultralytics.com/models/yolo26/)
 - [Nav2 공식 문서](https://docs.nav2.org/)
+- [Nav2 알고리즘 선택 - Ackermann 지원](https://docs.nav2.org/setup_guides/algorithm/select_algorithm.html)
+- [ROS 2 Control Humble - Wheeled Mobile Robot Kinematics](https://control.ros.org/humble/doc/ros2_controllers/doc/mobile_robot_kinematics.html)
 - [MediaMTX 공식 문서](https://mediamtx.org/docs/kickoff/introduction)
 - [MQTT 5.0 OASIS 표준](https://docs.oasis-open.org/mqtt/mqtt/v5.0/mqtt-v5.0.html)
 - [AWS S3 보안 모범 사례](https://docs.aws.amazon.com/AmazonS3/latest/userguide/security-best-practices.html)

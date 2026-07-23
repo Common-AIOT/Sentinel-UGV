@@ -1005,7 +1005,10 @@ sentinel-ugv/
 ├─ backend/
 │ ├─ src/
 │ ├─ db/migration/
-│ └─ tests/
+│ ├─ tests/
+│ ├─ Dockerfile
+│ ├─ compose.local.yaml
+│ └─ compose.prod.yaml
 ├─ frontend/
 │ ├─ app/
 │ ├─ components/
@@ -1015,11 +1018,6 @@ sentinel-ugv/
 │ ├─ protocol/
 │ ├─ schemas/
 │ └─ samples/
-├─ deploy/
-│ ├─ jetson/
-│ ├─ ec2/docker-compose.yml
-│ ├─ nginx/
-│ └─ mediamtx/
 ├─ scripts/
 │ ├─ setup_jetson.sh
 │ ├─ deploy_jetson.sh
@@ -1034,7 +1032,7 @@ sentinel-ugv/
 └─ README.md
 ```
 
-모노레포는 장치마다 같은 저장소를 clone하므로 Jetson에도 `frontend/`와 `backend/` 파일이 존재할 수 있다. 다만 Jetson에서는 `jetson/`과 필요한 `common/`·`deploy/jetson/`만 설치·실행하고, EC2에서는 `frontend/`·`backend/`·`deploy/ec2/`를 실행한다.
+배포 구성은 각 모듈이 자체 디렉터리의 Docker Compose 파일로 관리한다. 백엔드는 `backend/compose.local.yaml`(로컬 개발용)과 `backend/compose.prod.yaml`(EC2 배포용)을 제공하며, 프런트엔드·Jetson 등 다른 모듈의 배포 구성은 각 모듈이 추가한다. 모노레포는 장치마다 같은 저장소를 clone하므로 Jetson에도 `frontend/`와 `backend/` 파일이 존재할 수 있으나, Jetson에서는 `jetson/`과 필요한 `common/`만, EC2에서는 `frontend/`와 `backend/`를 실행한다.
 
 ## 15.2 브랜치 전략
 | **브랜치** | **용도**                  |

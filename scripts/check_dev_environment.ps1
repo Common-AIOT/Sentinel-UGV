@@ -60,22 +60,20 @@ if ($failureCount -eq 0) {
     Push-Location $repositoryDirectory
     try {
         docker compose `
-            --env-file .env.example `
-            --file deploy/local/docker-compose.yml `
+            --file backend/compose.local.yaml `
             config --quiet
         if ($LASTEXITCODE -ne 0) {
-            throw 'Local Docker Compose configuration validation failed.'
+            throw 'Backend local Docker Compose configuration validation failed.'
         }
-        Write-Output '[ok] Local Docker Compose configuration'
+        Write-Output '[ok] Backend local Docker Compose configuration'
 
         docker compose `
-            --env-file deploy/ec2/.env.example `
-            --file deploy/ec2/docker-compose.yml `
+            --file backend/compose.prod.yaml `
             config --quiet
         if ($LASTEXITCODE -ne 0) {
-            throw 'Docker Compose configuration validation failed.'
+            throw 'Backend production Docker Compose configuration validation failed.'
         }
-        Write-Output '[ok] EC2 Docker Compose configuration'
+        Write-Output '[ok] Backend production Docker Compose configuration'
     }
     finally {
         Pop-Location

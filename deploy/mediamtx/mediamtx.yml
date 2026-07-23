@@ -1,8 +1,0 @@
-logLevel: info
-
-webrtc: yes
-webrtcAddress: :8889
-webrtcLocalUDPAddress: :8189
-
-paths:
-  all_others:

@@ -4,3 +4,8 @@ repositories:
     url: https://github.com/YDLIDAR/ydlidar_ros2_driver.git
     # Release 전에 검증한 commit hash로 교체한다.
     version: humble
+  usb_cam:
+    type: git
+    url: https://github.com/ros-drivers/usb_cam.git
+    # import 후 patches/usb_cam-0.8.1-raw-mjpeg-passthrough.patch를 적용한다.
+    version: 0.8.1

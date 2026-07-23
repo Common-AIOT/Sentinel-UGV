@@ -1,0 +1,92 @@
+diff --git a/include/usb_cam/usb_cam.hpp b/include/usb_cam/usb_cam.hpp
+index 1663e0f..8ac8e1c 100644
+--- a/include/usb_cam/usb_cam.hpp
++++ b/include/usb_cam/usb_cam.hpp
+@@ -141,6 +141,9 @@ typedef struct
+   size_t number_of_pixels;
+   size_t bytes_per_line;
+   size_t size_in_bytes;
++  // actual bytes filled for the most recent frame (from V4L2 bytesused for
++  // passthrough formats; equals size_in_bytes for converted formats)
++  size_t bytes_used;
+   v4l2_format v4l2_fmt;
+   struct timespec stamp;
+ 
+@@ -221,6 +224,11 @@ public:
+     return m_image.size_in_bytes;
+   }
+ 
++  inline size_t get_image_bytes_used()
++  {
++    return m_image.bytes_used;
++  }
++
+   inline size_t get_image_size_in_pixels()
+   {
+     return m_image.number_of_pixels;
+diff --git a/src/ros2/usb_cam_node.cpp b/src/ros2/usb_cam_node.cpp
+index f8e8ded..7663825 100644
+--- a/src/ros2/usb_cam_node.cpp
++++ b/src/ros2/usb_cam_node.cpp
+@@ -169,9 +169,9 @@ void UsbCamNode::init()
+     return;
+   }
+ 
+-  // if pixel format is equal to 'mjpeg', i.e. raw mjpeg stream, initialize compressed image message
+-  // and publisher
+-  if (m_parameters.pixel_format_name == "mjpeg") {
++  // if pixel format is equal to 'raw_mjpeg', i.e. raw mjpeg stream, initialize compressed image
++  // message and publisher
++  if (m_parameters.pixel_format_name == "raw_mjpeg") {
+     m_compressed_img_msg.reset(new sensor_msgs::msg::CompressedImage());
+     m_compressed_img_msg->header.frame_id = m_parameters.frame_id;
+     m_compressed_image_publisher =
+@@ -383,14 +383,14 @@ bool UsbCamNode::take_and_send_image()
+ 
+ bool UsbCamNode::take_and_send_image_mjpeg()
+ {
+-  // Only resize if required
+-  if (sizeof(m_compressed_img_msg->data) != m_camera->get_image_size_in_bytes()) {
+-    m_compressed_img_msg->format = "jpeg";
+-    m_compressed_img_msg->data.resize(m_camera->get_image_size_in_bytes());
+-  }
++  // Make room for the largest possible frame, then shrink to the actual
++  // JPEG size reported by the driver so subscribers only receive real data
++  m_compressed_img_msg->format = "jpeg";
++  m_compressed_img_msg->data.resize(m_camera->get_image_size_in_bytes());
+ 
+   // grab the image, pass image msg buffer to fill
+   m_camera->get_image(reinterpret_cast<char *>(&m_compressed_img_msg->data[0]));
++  m_compressed_img_msg->data.resize(m_camera->get_image_bytes_used());
+ 
+   auto stamp = m_camera->get_image_timestamp();
+   m_compressed_img_msg->header.stamp.sec = stamp.tv_sec;
+@@ -423,7 +423,7 @@ void UsbCamNode::update()
+     // If the camera exposure longer higher than the framerate period
+     // then that caps the framerate.
+     // auto t0 = now();
+-    bool isSuccessful = (m_parameters.pixel_format_name == "mjpeg") ?
++    bool isSuccessful = (m_parameters.pixel_format_name == "raw_mjpeg") ?
+       take_and_send_image_mjpeg() :
+       take_and_send_image();
+     if (!isSuccessful) {
+diff --git a/src/usb_cam.cpp b/src/usb_cam.cpp
+index b82cdf6..79936d6 100644
+--- a/src/usb_cam.cpp
++++ b/src/usb_cam.cpp
+@@ -82,9 +82,14 @@ void UsbCam::process_image(const char * src, char * & dest, const int & bytes_us
+   // TODO(flynneva): could we skip the copy here somehow?
+   // If no conversion required, just copy the image from V4L2 buffer
+   if (m_image.pixel_format->requires_conversion() == false) {
+-    memcpy(dest, src, m_image.size_in_bytes);
++    // Copy only the bytes the driver actually filled (for compressed formats
++    // like MJPEG this is far smaller than the allocated buffer size)
++    m_image.bytes_used = static_cast<size_t>(bytes_used) < m_image.size_in_bytes ?
++      static_cast<size_t>(bytes_used) : m_image.size_in_bytes;
++    memcpy(dest, src, m_image.bytes_used);
+   } else {
+     m_image.pixel_format->convert(src, dest, bytes_used);
++    m_image.bytes_used = m_image.size_in_bytes;
+   }
+ }
+ 

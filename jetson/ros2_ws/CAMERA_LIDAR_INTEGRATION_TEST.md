@@ -18,10 +18,11 @@ udevadm info --query=all --name=/dev/video0 | grep -E 'ID_SERIAL|ID_V4L_CAPABILI
 ```bash
 sudo apt update
 sudo apt install -y python3-vcstool v4l-utils \
-  ros-humble-usb-cam ros-humble-image-transport-plugins
+  ros-humble-image-transport-plugins
 sudo usermod -aG dialout "$USER"
 cd ~/projects/S15P11A301/jetson/ros2_ws
 vcs import src < sentinel.repos
+git -C src/usb_cam apply "$(pwd)/patches/usb_cam-0.8.1-raw-mjpeg-passthrough.patch"
 source /opt/ros/humble/setup.bash
 rosdep install --from-paths src --ignore-src -r -y
 colcon build --symlink-install
@@ -59,5 +60,5 @@ RViz 2의 Fixed Frame은 `base_link`로 설정하고 `/scan`을 LaserScan, `/cam
 ## 제약사항
 
 - YUYV는 MJPG보다 USB 대역폭 사용량이 커 프레임 드롭을 함께 점검한다.
-- `usb_cam`은 apt 버전 대신 `src/usb_cam/`(0.8.1 벤더링, raw_mjpeg 패스스루 버그 패치)을 빌드해 사용한다.
+- `usb_cam`은 apt 버전 대신 `sentinel.repos`로 받은 0.8.1 소스에 `patches/usb_cam-0.8.1-raw-mjpeg-passthrough.patch`(raw_mjpeg 패스스루 버그 수정)를 적용해 빌드한다.
 - `/dev/video0`, `/dev/ttyUSB0`는 재연결 시 바뀔 수 있으므로 운영 환경에서는 udev 규칙으로 고정한다.

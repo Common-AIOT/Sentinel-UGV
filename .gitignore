@@ -52,6 +52,7 @@ venv/
 jetson/ros2_ws/build/
 jetson/ros2_ws/install/
 jetson/ros2_ws/log/
+jetson/ros2_ws/src/ydlidar_ros2_driver/
 
 # AI models and generated media
 *.engine

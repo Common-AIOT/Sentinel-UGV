@@ -22,7 +22,7 @@ git -C src/usb_cam apply "$(pwd)/patches/usb_cam-0.8.1-raw-mjpeg-passthrough.pat
 |---|---|
 | 대상 | ros-drivers/usb_cam `0.8.1` 태그 |
 | Jira | S15P11A301-66 (발견·수정), S15P11A301-70 (추적) |
-| 업스트림 이슈 | (제출 후 링크 기입) |
+| 업스트림 이슈 | 미제출 — 버전 업그레이드 시 수정 여부를 직접 확인한다 |
 | 제거 조건 | 업스트림 릴리스에 수정이 포함되고 `sentinel.repos`의 버전을 해당 릴리스로 올린 뒤 |
 
 **문제**: `pixel_format: raw_mjpeg`(MJPEG 패스스루) 사용 시 노드가 포맷 이름을 `"mjpeg"`와 비교해(실제 이름은 `"raw_mjpeg"`) 패스스루 발행 경로가 전혀 동작하지 않는다. 그 결과 `/camera/image_raw`에 MJPEG 비트스트림이 `yuv422`로 잘못 라벨링되어 발행되고, `/camera/image_raw/compressed`는 image_transport가 그 깨진 데이터를 재인코딩한 결과가 된다. 2026-07-23 기준 업스트림 `main`(0.8.1 이후 31커밋)에서도 미수정 상태를 확인했다.

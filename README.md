@@ -20,10 +20,9 @@
 │  ├─ models/               # 모델 메타데이터(가중치는 Git 제외)
 │  ├─ config/               # 로봇 공통 설정
 │  └─ tests/                # 온보드 단위·통합 테스트
-├─ backend/                 # Spring Boot 관제 API
+├─ backend/                 # Spring Boot 관제 API (모듈별 Dockerfile·compose 포함)
 ├─ frontend/                # Next.js 관제 웹
 ├─ common/                  # 공유 프로토콜·스키마·샘플
-├─ deploy/                  # EC2, Nginx, MediaMTX 배포 설정
 ├─ scripts/                 # 설치·배포·점검·백업 스크립트
 ├─ hardware/                # CAD, 배선, BOM 산출물
 ├─ docs/                    # 최종 통합 명세서 단일 문서

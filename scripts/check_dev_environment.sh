@@ -52,15 +52,13 @@ done
 if [ "${failures}" -eq 0 ]; then
   cd "${repository_dir}"
   docker compose \
-    --env-file .env.example \
-    --file deploy/local/docker-compose.yml \
+    --file backend/compose.local.yaml \
     config --quiet
-  echo "[ok] Local Docker Compose configuration"
+  echo "[ok] Backend local Docker Compose configuration"
   docker compose \
-    --env-file deploy/ec2/.env.example \
-    --file deploy/ec2/docker-compose.yml \
+    --file backend/compose.prod.yaml \
     config --quiet
-  echo "[ok] EC2 Docker Compose configuration"
+  echo "[ok] Backend production Docker Compose configuration"
   echo "Development environment check passed."
   exit 0
 fi

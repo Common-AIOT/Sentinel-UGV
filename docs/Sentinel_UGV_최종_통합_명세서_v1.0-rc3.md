@@ -179,7 +179,7 @@ Sentinel UGV는 재난·사고 현장과 같이 사람이 즉시 진입하기 �
 - 탐사 커버리지 최적화 및 정보 이득 기반 Frontier 점수화
 
 ## 2.5 MVP 제외 범위
-- 회원가입·로그인·소셜 로그인·역할별 계정 관리
+- 회원가입·소셜 로그인·프로필·비밀번호 찾기·역할 세분화 관리 (관리자가 사전 등록하는 운영자 로그인은 구현)
 - GPS 기반 실외 자율주행
 - 완전한 험지·자갈·계단 주행
 - 안전 인증 수준의 산업용 기능 안전
@@ -211,7 +211,7 @@ Sentinel UGV는 재난·사고 현장과 같이 사람이 즉시 진입하기 �
 | 기구 | 기존 구동부를 살리고 차체 상부·센서 브래킷·카메라-LiDAR 짐벌을 3D 프린팅 | 센서 헤드 무게·서보 토크·진동 시험 필요 |
 | 컴퓨팅 | Jetson Orin Nano 8GB 고수준 컴퓨팅 + STM32 저수준 제어 | Raspberry Pi 5 차량 미사용 |
 | 저수준 제어 | STM32가 모터 PWM·조향·엔코더·300ms watchdog 담당 | 정확한 STM32 보드·엔코더·고전류 드라이버 모델은 TBD |
-| 관제 | AWS EC2의 Spring Boot·Next.js·PostgreSQL/TimescaleDB·S3 | Docker Compose 배포, 로그인 기능은 MVP 제외 |
+| 관제 | AWS EC2의 Spring Boot·Next.js·PostgreSQL/TimescaleDB·S3 | Docker Compose 배포, 운영자 로그인 구현(회원가입·소셜 로그인 제외) |
 | 자율주행 | ROS 2 Humble·SLAM Toolbox·Nav2·Frontier Exploration | 엔코더·IMU·LiDAR 융합과 실제 조향 운동학 튜닝 필요 |
 | AI | YOLO26n Detect를 현장 데이터로 추가 학습해 person 탐지 | Detect가 MVP. Pose는 쓰러짐 분석이 필요할 때만 조건부 실행 |
 | 음성 | 마이크 입력 → STT → LLM → TTS → 스피커 응답 | 실행 위치·모델·오프라인 축소안은 성능 시험 후 확정 |
@@ -656,7 +656,7 @@ v4l2-ctl --device=/dev/video0 --list-formats-ext
 ↓ encounter 확정 / E-Stop / 급정지 이벤트
 확정 전 3초 잠금 + 접근·상호작용 전체 + 종료 후 3초 수집
 ↓
-MP4 remux + snapshot.jpg
+MP4 remux + thumbnail.jpg
 ↓
 S3 업로드 또는 로컬 pending 저장
 ```
@@ -730,7 +730,7 @@ S3 업로드 또는 로컬 pending 저장
 | E-Stop 해제 | 정지·오류 해소·운영자 확인 | SAFE_IDLE/PAUSED           |
 
 ## 11.6 MVP 접근 범위
-MVP에는 회원가입과 로그인 화면을 구현하지 않는다. 시연은 한 명의 운영자가 통제된 관제 PC에서 수행하며, 연결된 게임패드와 하나의 control lease를 가진 브라우저 세션만 DRIVE 명령을 보낼 수 있다. 외부 EC2 접근은 Security Group 허용 IP 또는 배포 환경 토큰으로 제한하고, 이를 사용자 계정 기능으로 확장하지 않는다. S3 객체는 공개하지 않고 단기 Presigned URL로만 조회한다.
+MVP에는 관리자가 사전 등록한 운영자 로그인 화면을 구현하되 회원가입·소셜 로그인은 구현하지 않는다. 시연은 한 명의 운영자가 통제된 관제 PC에서 수행하며, 연결된 게임패드와 하나의 control lease를 가진 브라우저 세션만 DRIVE 명령을 보낼 수 있다. 외부 EC2 접근은 Security Group 허용 IP 또는 배포 환경 토큰으로 제한하고, 이를 사용자 계정 기능으로 확장하지 않는다. S3 객체는 공개하지 않고 단기 Presigned URL로만 조회한다.
 
 # 12. 통신 프로토콜 및 API [확정]
 ## 12.1 통신 채널
@@ -831,19 +831,26 @@ TimescaleDB는 PostgreSQL과 별도 제품을 이중 운영하는 방식이 아�
 ## 13.2 PostgreSQL 일반 테이블
 | **테이블**       | **주요 필드**                                                         | **용도**                |
 |------------------|-----------------------------------------------------------------------|-------------------------|
+| users            | id, username, password_hash, display_name, role, last_login_at, created_at | 관제 운영자 계정·인증   |
 | robots           | id, name, status, last_seen_at                                        | 로봇 등록과 현재 상태   |
-| missions         | id, robot_id, status, started_at, ended_at, home_pose, end_reason     | 임무 생명주기           |
+| missions         | id, robot_id, created_by_user_id, status, started_at, ended_at, home_pose, end_reason | 임무 생명주기           |
 | mission_results  | mission_id, duration, distance, coverage, detection_count             | 임무 요약               |
-| events           | id, mission_id, type, severity, occurred_at, payload_json              | E-Stop·오류·일반 이벤트 |
-| encounters       | id, mission_id, status, started_at, ended_at, group_x, group_y         | 사람 그룹 발견 단위     |
+| events           | id, mission_id, message_id, type, severity, occurred_at, payload_json  | E-Stop·오류·일반 이벤트 |
+| encounters       | id, mission_id, map_id, status, map_x, map_y, map_yaw, detected/responsive/unresponsive_person_count, interaction_summary, started_at, interaction_started_at, interaction_ended_at, ended_at, termination_reason | 사람 그룹 발견 단위     |
 | victims          | id, latest_status, first_seen_at                                       | 피해자 후보             |
-| encounter_victims| encounter_id, victim_id, track_id, response_status                     | encounter-피해자 연결   |
-| interaction_sessions | id, encounter_id, status, started_at, ended_at                    | 음성 상호작용 세션      |
-| interaction_turns| id, session_id, question_code, transcript, parsed_response             | 질문·응답 기록          |
-| control_commands | id, mission_id, type, requested_at, result, sequence                  | 제어 감사 로그          |
+| detections       | id, mission_id, encounter_id, victim_id, track_id, class, confidence, map_x, map_y, position_quality, observed_at | AI 관측 원본            |
+| encounter_victims| encounter_id, victim_id, track_id, response_status, first_seen_at, last_seen_at | encounter-피해자 연결   |
+| interaction_sessions | id, encounter_id(UNIQUE), status, response_scope, any_response_detected, reported_responsive_count, count_confidence, mobility_status, urgent_condition_reported, operator_review_required, started_at, ended_at, termination_reason, summary | 음성 상호작용 세션      |
+| interaction_turns| id, session_id, turn_index, question_code, transcript, stt_confidence, llm_schema_valid, parsed_value, parse_status, tts_text, retry_count, audio_media_id | 질문·응답 기록          |
+| control_commands | id, mission_id, issued_by_user_id, command_id, type, requested_at, result, sequence | 제어 감사 로그          |
 | maps             | id, mission_id, s3_key_pgm, s3_key_yaml, created_at                   | 저장 지도               |
-| media_assets     | id, mission_id, encounter_id, type, s3_key, status, duration_ms       | S3 미디어 메타데이터    |
-| control_leases   | robot_id, session_id, expires_at                                      | 단일 제어권             |
+| media_assets     | id, mission_id, encounter_id, type, s3_key, status, duration_ms, triggered_at, interaction_started_at, interaction_ended_at, pre_buffer_sec, post_buffer_sec, termination_reason | S3 미디어 메타데이터    |
+| control_leases   | robot_id, user_id, session_id, expires_at                             | 단일 제어권             |
+
+- 모든 일반 테이블의 PK는 UUID를 사용한다. `encounters`·`media_assets` 필드 상세 정의는 30.6.4, `interaction_sessions`·`interaction_turns`는 33-6을 따른다.
+- `interaction_sessions.encounter_id`는 UNIQUE이며, encounter당 음성 세션은 0..1개다(32-6 참조).
+- `users`는 관제 운영자 계정 테이블이다. `role`은 `ADMIN`·`OPERATOR`이며 `password_hash`는 단방향 해시로 저장한다. 제어권과 제어 명령은 `control_leases.user_id`·`control_commands.issued_by_user_id`로 조작 주체를 식별한다.
+- `detections`는 매 프레임 시계열이 아니라 encounter 판정에 사용되는 선별 관측 로그이므로 hypertable이 아닌 일반 테이블로 둔다. Jetson이 생성한 UUID를 `id`(PK)로 사용해 QoS 1 중복을 멱등 처리하고, `encounter_id`·`victim_id`로 상위 발견 단위와 연결한다. 관측 시각은 `observed_at`으로 저장한다.
 
 ## 13.3 TimescaleDB hypertable
 | **테이블**             | **주기**    | **주요 필드**                                                  | **용도**         |
@@ -852,7 +859,6 @@ TimescaleDB는 PostgreSQL과 별도 제품을 이중 운영하는 방식이 아�
 | robot_metrics          | 1Hz         | battery, voltage, cpu, gpu, memory, jetson_temp, state         | 시스템 상태      |
 | environment_metrics    | 0.2~0.5Hz   | temperature, humidity                                          | 환경 이력        |
 | network_metrics        | 1Hz         | latency_ms, packet_loss, connection_state, stream_mode         | 통신 품질        |
-| detection_observations | 이벤트/샘플 | track_id, class, confidence, map_x, map_y                      | AI 관측 원본     |
 | safety_events          | 이벤트      | min_distance, cmd_vel, stop_reason                             | 안전 정지 분석   |
 
 ## 13.4 TimescaleDB 활용 포인트
@@ -867,8 +873,9 @@ TimescaleDB는 PostgreSQL과 별도 제품을 이중 운영하는 방식이 아�
 s3://sentinel-ugv-assets/
 └─ missions/{missionId}/
 ├─ encounters/{encounterId}/
-│ ├─ snapshot.jpg
-│ └─ clip.mp4
+│ ├─ thumbnail.jpg
+│ ├─ event.mp4
+│ └─ transcript.json
 ├─ maps/
 │ ├─ map.pgm
 │ └─ map.yaml
@@ -1841,13 +1848,20 @@ TimescaleDB는 별도 DB 서버가 아니라 PostgreSQL 인스턴스에 설치�
 
 ```mermaid
 erDiagram
+    USER ||--o{ MISSION : creates
+    USER ||--o{ CONTROL_COMMAND : issues
+    USER ||--o| CONTROL_LEASE : holds
     ROBOT ||--o{ MISSION : performs
+    ROBOT ||--o| CONTROL_LEASE : controlled_via
+    MISSION ||--o{ CONTROL_COMMAND : audits
     MISSION ||--o{ ENCOUNTER : contains
     ENCOUNTER ||--o{ ENCOUNTER_VICTIM : links
     VICTIM ||--o{ ENCOUNTER_VICTIM : appears
     ENCOUNTER ||--o{ MEDIA_ASSET : records
-    ENCOUNTER ||--o{ INTERACTION_SESSION : has
+    ENCOUNTER ||--o| INTERACTION_SESSION : has
 ```
+
+`USER`는 관제 운영자 계정이며, 조작 주체는 `MISSION.created_by_user_id`(임무 생성자), `CONTROL_COMMAND.issued_by_user_id`(명령 발행자), `CONTROL_LEASE.user_id`(제어권 보유자)로 식별한다. `CONTROL_LEASE`는 로봇 1대당 활성 1건으로 현재 제어권 보유자를 나타낸다.
 
 시계열 행은 `mission_id`, `robot_id`, `time`을 공통으로 가지며, 임무 종료 후 요약 테이블을 계산한다.
 
@@ -1890,9 +1904,9 @@ erDiagram
 
 ```text
 missions/{missionId}/
-├─ encounters/{encounterId}/snapshot.jpg
-├─ encounters/{encounterId}/clip.mp4
-├─ encounters/{encounterId}/audio-or-transcript.json
+├─ encounters/{encounterId}/thumbnail.jpg
+├─ encounters/{encounterId}/event.mp4
+├─ encounters/{encounterId}/transcript.json
 ├─ maps/map.pgm
 ├─ maps/map.yaml
 └─ reports/summary.json
@@ -2592,11 +2606,11 @@ flowchart TD
 MQTT QoS 1은 같은 메시지가 중복 전달될 수 있으므로 서버는 다음 규칙을 적용한다.
 
 ```text
-mission_events.message_id UNIQUE
-detections.detection_id UNIQUE
-encounters.encounter_id UNIQUE
-media_assets.media_id UNIQUE
-commands.command_id UNIQUE
+events.message_id UNIQUE
+detections.id UNIQUE
+encounters.id UNIQUE
+media_assets.id UNIQUE
+control_commands.command_id UNIQUE
 ```
 
 동일 ID가 다시 도착하면 새 행을 만들지 않고 기존 처리 결과를 ACK한다.
@@ -2637,7 +2651,7 @@ commands.command_id UNIQUE
 - Spring Boot 서비스 계정만 모든 차량 토픽에 접근한다.
 - REST와 WebSocket은 HTTPS/WSS만 사용한다.
 - EC2 환경 변수와 Secret 파일에 비밀번호를 저장하고 Git에 올리지 않는다.
-- 로그인 기능은 제외하되, 인터넷 구간의 조종 API는 허용 IP·짧은 배포 환경 토큰·Control Lease로 제한한다.
+- 운영자 로그인은 구현하되(회원가입 제외), 인터넷 구간의 조종 API는 허용 IP·짧은 배포 환경 토큰·Control Lease로 추가 제한한다.
 - Presigned URL은 짧은 시간만 유효하게 발급하고 `object_key`와 파일 종류를 서버가 결정한다.
 
 ---
@@ -4185,7 +4199,7 @@ Sentinel은 사람의 얼굴·음성·위치·부상 관련 응답을 저장할 
 3. 인터넷 구간은 TLS로 보호한다.
 4. S3 객체는 공개하지 않는다.
 5. Jetson에 장기 AWS Access Key를 저장하지 않는다.
-6. 회원가입·로그인 기능은 제외하되, 조종 API는 허용 네트워크·배포 환경 토큰·Control Lease 없이 공개하지 않는다.
+6. 회원가입은 제외하고 관리자가 사전 등록한 운영자 로그인은 구현하며, 조종 API는 허용 네트워크·배포 환경 토큰·Control Lease 없이 공개하지 않는다.
 7. 시연 종료 후 보존 기간에 따라 영상·음성을 삭제한다.
 8. 비밀번호·토큰·Presigned URL·원문 음성을 일반 로그에 남기지 않는다.
 
@@ -4223,7 +4237,7 @@ Sentinel은 사람의 얼굴·음성·위치·부상 관련 응답을 저장할 
 
 ## 36-4. MVP 접근 보호와 제어권
 
-MVP에서는 회원가입, 로그인, 프로필, 비밀번호 찾기, 다중 역할 관리 기능을 구현하지 않는다. 접근 보호와 실제 차량 제어권은 다음처럼 분리한다.
+MVP에서는 관리자가 사전 등록한 운영자 로그인은 구현하되, 회원가입·프로필·비밀번호 찾기·다중 역할 세분화 관리는 구현하지 않는다. 접근 보호와 실제 차량 제어권은 다음처럼 분리한다.
 
 ```text
 관제 사이트 전체
@@ -4236,14 +4250,14 @@ MVP에서는 회원가입, 로그인, 프로필, 비밀번호 찾기, 다중 역
 
 MVP 적용:
 
-- UI 로그인 화면과 사용자 테이블을 만들지 않는다.
+- 관제 운영자 로그인(UI 로그인 화면 + `users` 테이블)을 구현한다. 계정은 관리자가 사전 등록하며, 회원가입·소셜 로그인·프로필·비밀번호 찾기는 제외한다.
 - EC2 Security Group은 시연 장소의 허용 IP로 제한한다.
 - 외부 접속이 필요하면 사용자 계정 대신 배포 환경의 짧은 접근 토큰을 Nginx/Spring에서 검증한다.
 - WebSocket handshake의 Origin과 접근 토큰을 검증한다.
 - 15분 이상 비활성 시 제어 세션 만료
 - 브라우저 종료·네트워크 단절·게임패드 해제 시 Control Lease 해제 및 STOP
 
-추후 다중 사용자 서비스로 확장할 때만 계정·로그인·역할 권한을 별도 설계한다.
+추후 다중 사용자 서비스로 확장할 때 회원가입·역할 권한 세분화를 별도 설계한다.
 
 ---
 

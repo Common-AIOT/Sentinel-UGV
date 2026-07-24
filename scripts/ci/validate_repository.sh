@@ -15,7 +15,7 @@ required_files="
 .gitlab-ci.yml
 backend/compose.local.yaml
 backend/compose.prod.yaml
-docs/Sentinel_UGV_최종_통합_명세서_v1.0-rc3.md
+docs/README.md
 scripts/health_check.sh
 scripts/check_dev_environment.sh
 scripts/check_dev_environment.ps1

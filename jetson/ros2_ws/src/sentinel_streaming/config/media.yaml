@@ -1,0 +1,46 @@
+/**:
+  ros__parameters:
+    # 입력 — S15P11A301-62 확정 계약
+    input_topic: /camera/image_raw/compressed
+    input_width: 1280
+    input_height: 720
+    input_framerate: 30
+
+    # MJPEG 디코딩 — PoC-A에서 nvjpegdec는 5.09 FPS로 기각됐다.
+    # SW 폴백은 jpegdec(29.9 FPS 검증).
+    decoder: nvv4l2decoder
+    decoder_fallback: jpegdec
+
+    # H.264 인코딩 — Orin Nano에 NVENC가 없어 x264enc(CPU)를 쓴다.
+    # PoC-B 3차에서 이 설정으로 30.020 fps를 확인했다.
+    encoder_bitrate_kbps: 2500
+    encoder_speed_preset: ultrafast
+    encoder_tune: zerolatency
+    encoder_key_int_max: 30
+    encoder_bframes: 0
+
+    # MediaMTX 발행
+    #
+    # rtsp       : rtspclientsink로 직접 publish한다. 표준 경로이며
+    #              gstreamer1.0-rtsp 패키지가 필요하다(rosdep이 설치한다).
+    # udp_mpegts : mpegtsmux + udpsink로 보내고 MediaMTX가
+    #              udp+mpegts://로 받는다. 추가 패키지가 필요 없다.
+    #
+    # rtsp를 지정했는데 rtspclientsink가 없으면 경고 후 udp_mpegts로 폴백한다.
+    publish_mode: rtsp
+    rtsp_url: rtsp://127.0.0.1:8554/sentinel
+    udp_host: 127.0.0.1
+    udp_port: 8890
+
+    # 큐 정책 — 스트리밍은 leaky, 녹화는 non-leaky(32장 장애 격리 원칙)
+    stream_queue_buffers: 3
+    record_queue_buffers: 60
+
+    # 링 버퍼 분기 활성화 여부. S15P11A301-123 구현 전에는 false로 둔다.
+    # false면 tee에 fakesink를 붙여 분기 지점만 유지한다.
+    enable_record_branch: false
+
+    # 입력 끊김 복구 — 무한 재시작 금지(32-3)
+    restart_backoff_seconds: [1.0, 2.0, 4.0]
+    restart_max_attempts: 3
+    input_timeout_seconds: 3.0

@@ -1,0 +1,55 @@
+# MediaMTX 설정 (S15P11A301-106)
+#
+# 역할은 RTSP 수신 후 WHEP(WebRTC) 제공까지다. AI 처리나 파일 생성 책임은
+# MediaMTX에 두지 않는다(명세 32-4).
+#
+# 기본값 전체는 배포판의 mediamtx.yml을 참고한다. 여기에는 이 프로젝트가
+# 의도적으로 바꾼 항목만 둔다.
+
+logLevel: info
+logDestinations: [stdout]
+
+# --- RTSP: Jetson 내부에서 인코딩 노드가 발행하는 경로 ---
+rtsp: yes
+rtspTransports: [tcp]
+rtspAddress: 127.0.0.1:8554
+
+# --- WebRTC: 관제 브라우저가 WHEP으로 재생하는 경로 ---
+webrtc: yes
+webrtcAddress: :8889
+
+# LAN 시연에서는 호스트 candidate를 우선하고 STUN/TURN 의존을 제거한다.
+# 원격 관제는 선택 기능이며 필요할 때 별도 구성한다(32-4).
+webrtcICEServers2: []
+webrtcLocalUDPAddress: :8189
+webrtcIPsFromInterfaces: yes
+
+# HTTPS. EC2에서 HTTPS로 열린 관제 페이지가 평문 HTTP 신호 주소에 접근하면
+# 혼합 콘텐츠로 차단된다. 인증서 경로는 배포 시 주입한다.
+# 인증서가 준비되기 전에는 아래 3줄을 주석 처리하고 HTTP로 로컬 검증만 한다.
+# webrtcEncryption: yes
+# webrtcServerCert: /etc/sentinel/certs/server.crt
+# webrtcServerKey: /etc/sentinel/certs/server.key
+
+# --- 사용하지 않는 프로토콜은 끈다 ---
+hls: no
+rtmp: no
+srt: no
+
+# --- 경로 ---
+paths:
+  sentinel:
+    # 인코딩 노드가 rtspclientsink로 publish한다. MediaMTX가 카메라를 직접
+    # 열지 않는다.
+    #
+    # rtspclientsink가 없는 환경(gstreamer1.0-rtsp 미설치)에서는 노드가
+    # udp_mpegts로 폴백한다. 그때는 이 source를 아래로 바꿔야 한다.
+    #
+    #   source: udp+mpegts://127.0.0.1:8890
+    #
+    # streaming.launch.py에 publish_mode:=udp_mpegts를 주면 환경변수
+    # MTX_PATHS_SENTINEL_SOURCE로 자동 주입되므로 이 파일을 고치지 않아도 된다.
+    source: publisher
+    # 발행자가 끊겼을 때 읽기 측을 즉시 끊지 않고 대기한다.
+    # 파이프라인 재시작(최대 3회) 동안 브라우저 세션을 유지하기 위한 것이다.
+    sourceOnDemand: no

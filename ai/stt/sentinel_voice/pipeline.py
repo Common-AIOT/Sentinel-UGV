@@ -1,4 +1,3 @@
-# pipeline.py
 """
 재난 구조 로봇 음성 파이프라인 (온디바이스, 네트워크 독립).
 
@@ -14,9 +13,8 @@
   - device/compute 는 config가 자동 감지(Jetson=cuda/int8, PC=cuda/float16).
 
 실행:
-  python pipeline.py            # 1=마이크 8초 녹음, 2=파일 입력
+  python -m sentinel_voice.pipeline  # 1=마이크 8초 녹음, 2=파일 입력
 """
-import os
 import time
 
 import numpy as np
@@ -25,11 +23,11 @@ import torch
 from faster_whisper import WhisperModel
 from silero_vad import load_silero_vad, get_speech_timestamps
 
-import config
-from utils import load_mono
-from config import FS
-from safety import is_valid_stt, coerce_defaults, triage_rule
-from llm import extract as extract_info
+from . import config
+from .audio import load_mono
+from .config import FS
+from .llm import extract as extract_info
+from .safety import coerce_defaults, is_valid_stt, triage_rule
 
 try:  # MeloTTS는 개발 PC 전용 옵션 — 젯슨(미설치)은 사전녹음 재생으로 동작
     from melo.api import TTS
@@ -44,7 +42,7 @@ if _HAS_MELO:
     tts = TTS(language=config.TTS_LANG, device=config.DEVICE)
     tsid = tts.hps.data.spk2id
 
-ASSETS = os.path.join(os.path.dirname(__file__), "assets")
+ASSETS = config.STT_ROOT / "assets"
 
 
 def normalize(wav):
@@ -56,8 +54,8 @@ def speak(text):
     """안내 음성. 우선순위: 사전녹음(assets) → MeloTTS(PC) → 텍스트만."""
     print(f"🔊 로봇: {text}")
     canned = config.GUIDE_WAVS.get(text)
-    path = os.path.join(ASSETS, canned) if canned else None
-    if path and os.path.exists(path):
+    path = ASSETS / canned if canned else None
+    if path and path.exists():
         sd.play(load_mono(path), FS)
         sd.wait()
     elif _HAS_MELO:
@@ -65,7 +63,7 @@ def speak(text):
         sd.play(load_mono("_tts.wav"), FS)
         sd.wait()
     else:
-        print("   (사전녹음 없음·TTS 미탑재 — 텍스트 안내만. make_tts_assets.py 참고)")
+        print("   (사전녹음 없음·TTS 미탑재 — tools.make_tts_assets 참고)")
 
 
 def has_speech(wav):

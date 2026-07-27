@@ -1,9 +1,8 @@
-# check_env.py
 """
 젯슨(및 개발 PC)에서 STT 파이프라인이 돌아갈 수 있는지 점검한다.
 
-  python check_env.py            # 임포트/CUDA/장치/모델가용성 점검
-  python check_env.py --load     # 실제 STT/VAD 모델까지 로드(무거움, 최종 확인)
+  python -m tools.check_env          # 임포트/CUDA/장치/모델가용성 점검
+  python -m tools.check_env --load   # 실제 STT/VAD 모델까지 로드(무거움, 최종 확인)
 
 [OK]/[FAIL]/[WARN] 로 한 줄씩 출력. 하나라도 FAIL이면 그 원인부터 해결한다.
 """
@@ -29,7 +28,7 @@ def check(name, fn, warn=False):
 
 # ── 0. 플랫폼/젯슨 정보 ─────────────────────────────────────
 def _platform():
-    import config
+    from sentinel_voice import config
     j = "Jetson" if config.is_jetson() else "non-Jetson"
     tegra = ""
     if os.path.exists("/etc/nv_tegra_release"):
@@ -53,7 +52,7 @@ check("torch+CUDA", _torch_cuda)
 
 # ── 2. 선택된 device/compute (config 자동감지 결과) ─────────
 def _config():
-    import config
+    from sentinel_voice import config
     return config.summary()
 
 
@@ -70,7 +69,7 @@ check("melo(TTS)", lambda: __import__("melo.api") and "", warn=True)
 
 # ── 4. GMS LLM (openai SDK + 키 설정 여부) ──────────────────
 def _gms():
-    import config
+    from sentinel_voice import config
     __import__("openai")
     if not config.GMS_KEY:
         raise RuntimeError("GMS_KEY 미설정 — ai/stt/.env 에 GMS_KEY=... 추가 (커밋 금지)")
@@ -103,7 +102,7 @@ check("memory/swap", _mem, warn=True)
 # ── 6. (옵션) 실제 모델 로드 ───────────────────────────────
 if LOAD:
     def _load_stt():
-        import config
+        from sentinel_voice import config
         from faster_whisper import WhisperModel
         WhisperModel(config.STT_MODEL, device=config.DEVICE, compute_type=config.COMPUTE)
         return f"{config.STT_MODEL}/{config.COMPUTE} 로드 성공"
@@ -114,7 +113,7 @@ if LOAD:
         return "Silero VAD 로드 성공"
 
     def _gms_live():
-        from llm import llm_extract
+        from sentinel_voice.llm import llm_extract
         info = llm_extract("테스트")
         return f"GMS 응답 정상 (consciousness={info.get('consciousness')})"
 

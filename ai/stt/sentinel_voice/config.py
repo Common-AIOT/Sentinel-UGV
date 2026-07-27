@@ -12,16 +12,19 @@ device / compute_type 를 자동 감지한다. 환경 변수로 언제든 덮어
   GMS_KEY           = GMS API 키 (ai/stt/.env 파일 지원, 커밋 금지)
 """
 import os
+from pathlib import Path
+
+STT_ROOT = Path(__file__).resolve().parent.parent
 
 FS = 16000  # 파이프라인 전체 표준 샘플레이트(Hz)
 
 
 def _load_dotenv():
     """ai/stt/.env 의 KEY=VALUE 를 환경변수로 로드(이미 설정된 값은 유지)."""
-    path = os.path.join(os.path.dirname(__file__), ".env")
-    if not os.path.exists(path):
+    path = STT_ROOT / ".env"
+    if not path.exists():
         return
-    with open(path, encoding="utf-8") as f:
+    with path.open(encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if line and not line.startswith("#") and "=" in line:
@@ -84,7 +87,7 @@ LLM_TIMEOUT = float(os.getenv("SENTINEL_LLM_TIMEOUT", "10"))  # 초과 시 33-8 
 
 TTS_LANG = "KR"   # MeloTTS(개발 PC 전용). 젯슨은 사전녹음 재생 — GUIDE_WAVS 참고
 
-# 고정 안내 문구 → 사전녹음 파일 (assets/). make_tts_assets.py 로 생성.
+# 고정 안내 문구 → 사전녹음 파일 (assets/). tools.make_tts_assets로 생성.
 GUIDE_WAVS = {
     "구조대에 정보를 전달했습니다. 안심하세요.": "guide_reported.wav",
     "괜찮으시면 다시 한번 말씀해 주세요.": "guide_retry.wav",
@@ -121,7 +124,7 @@ SILENCE_RMS = 0.005
 # 정규화 목표 RMS
 NORM_TARGET_RMS = 0.08
 
-PROMPT_PATH = os.path.join(os.path.dirname(__file__), "prompts", "triage_extract.txt")
+PROMPT_PATH = STT_ROOT / "prompts" / "triage_extract.txt"
 
 
 def summary() -> str:

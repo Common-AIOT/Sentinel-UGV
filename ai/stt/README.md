@@ -19,24 +19,27 @@
 | STT | faster-whisper **`small`** (로컬, 젯슨은 CPU/int8) | 저SNR·약한발화 강건성 |
 | LLM | **`gpt-5-nano`** (GMS API) | 팀 결정 2026-07-24. 로컬 3b는 젯슨 실측 피크 5.62GB·OOM([근거](docs/메모리-예산.md)) |
 | LLM 폴백 | 키워드 파서(`llm.keyword_extract`) | STT 완료 후 GMS 호출만 실패한 경우의 축소 보고 |
-| TTS | **사전녹음 wav 재생**(`assets/`) | RAM 절약 1순위(−1.3~2GB). 생성은 PC에서 `make_tts_assets.py` |
+| TTS | **사전녹음 wav 재생**(`assets/`) | RAM 절약 1순위(−1.3~2GB). 생성은 PC에서 `python -m tools.make_tts_assets` |
 | 등급 | 규칙(`safety.triage_rule`) | LLM 자유판단 배제, 재현·설명 가능 |
 
-## 파일 구성
+## 폴더 구성
 
-| 파일 | 역할 |
+| 경로 | 역할 |
 |------|------|
-| `config.py` | device/compute **자동 감지**, GMS·모델·튜닝 파라미터, `.env` 로드 |
-| `utils.py` | 오디오 로더(16kHz mono float32 통일) |
-| `safety.py` | STT 환각 가드 + LLM 출력 보정 + 규칙 기반 triage |
-| `llm.py` | **GMS 호출 + 33-8 키워드 폴백** (`extract()` 단일 진입점) |
-| `pipeline.py` | 엔드투엔드 실행 (마이크/파일) |
-| `make_tts_assets.py` | 고정 안내 문구 wav 생성 (개발 PC, MeloTTS 필요) |
-| `check_env.py` | **젯슨 구동 가능 여부 점검** (`--load`로 GMS 실호출까지) |
-| `bench/pipeline_bench.py` | 측정용 다회차 벤치(지연·일관성) |
-| `prompts/triage_extract.txt` | 정보 추출 프롬프트(진단 금지, 사실만) |
-| `docs/대화-안전-정책.md` | 위험도 참고값, 무응답/시스템 실패 구분, ETA·안내 문구 정책 |
-| `docs/정량-검증-기준.md` | STT·GMS·E2E·Jetson 자원 검증 지표, 통과 기준, 기록 형식 |
+| `sentinel_voice/` | 실제 음성 서비스 패키지. 설정·오디오·안전 규칙·GMS·파이프라인 |
+| `sentinel_voice/config.py` | device/compute 자동 감지, GMS·모델·튜닝 파라미터, `.env` 로드 |
+| `sentinel_voice/audio.py` | 오디오 로더(16kHz mono float32 통일) |
+| `sentinel_voice/safety.py` | STT 환각 가드, LLM 출력 보정, 규칙 기반 triage |
+| `sentinel_voice/llm.py` | GMS 호출 + 33-8 키워드 폴백 (`extract()` 단일 진입점) |
+| `sentinel_voice/pipeline.py` | 엔드투엔드 실행(마이크/파일) |
+| `tools/` | 배포 전 환경·오디오 점검과 개발 PC용 TTS 자산 생성 |
+| `bench/` | 측정용 다회차 벤치(지연·일관성) |
+| `prompts/` | 정보 추출 프롬프트(진단 금지, 사실만) |
+| `docs/` | 실행 런북, 안전 정책, 메모리·정량·오디오 검증 기준 |
+
+오디오 검사 코드가 수집하는 항목과 산출물은
+[`docs/오디오-입출력-검증-도구.md`](docs/오디오-입출력-검증-도구.md)에 설명합니다.
+실제 장비의 합격 여부는 별도 검증 절차로 판정합니다.
 
 가중치·녹음 데이터·`results/`·**`.env`(GMS 키)**는 커밋하지 않습니다(`.gitignore`).
 
@@ -122,7 +125,7 @@ LLM은 GMS API 호출이므로 젯슨에 모델을 올리지 않습니다 — `p
 
 ```bash
 cd ai/stt
-python check_env.py --load     # STT/VAD 로드 → 캐시 생성 + GMS 실호출 점검(온라인 필요)
+python -m tools.check_env --load  # STT/VAD 로드 → 캐시 생성 + GMS 실호출 점검
 ```
 
 > TTS는 사전녹음 wav(`assets/`, 저장소에 포함)라 캐싱이 필요 없고, LLM(GMS)은 온라인 전용
@@ -137,16 +140,20 @@ python check_env.py --load     # STT/VAD 로드 → 캐시 생성 + GMS 실호�
 ```bash
 # 이 저장소를 젯슨에 clone 후
 cd ai/stt
-python check_env.py            # 임포트/CUDA/장치/LLM 보유/스왑 점검
-python check_env.py --load     # STT/VAD 실제 로드까지 최종 확인
+python -m tools.check_env          # 임포트/CUDA/장치/GMS/스왑 점검
+python -m tools.check_env --load   # STT/VAD 실제 로드까지 최종 확인
 ```
 
-`check_env.py`가 전부 `[OK]`면 STT 구동 준비 완료입니다. `[FAIL]`부터 해결하세요.
+`python -m tools.check_env`가 전부 `[OK]`면 STT 구동 준비 완료입니다.
+`[FAIL]`부터 해결하세요.
+
+BRIO 100 마이크와 Bluetooth 스피커의 실제 장치 선택·녹음·재생은
+[`docs/오디오-입출력-검증.md`](docs/오디오-입출력-검증.md)의 절차로 별도 검증합니다.
 
 ### STEP 3 — 실행
 
 ```bash
-python pipeline.py             # 1=마이크 8초, 2=파일  /  트리거는 VISION 기본
+python -m sentinel_voice.pipeline  # 1=마이크 8초, 2=파일 / 트리거는 VISION 기본
 ```
 
 ### STEP 4 — 메모리 절약 3대 전략 (8GB 필수)
@@ -161,7 +168,7 @@ python pipeline.py             # 1=마이크 8초, 2=파일  /  트리거는 VIS
 `jtop`을 켠 채로 벤치를 돌려 기록합니다.
 
 ```bash
-python bench/pipeline_bench.py   # results/pipeline_bench_summary.csv
+python -m bench.pipeline_bench   # results/pipeline_bench_summary.csv
 ```
 
 | 항목 | 방법 | 목표 |
@@ -197,7 +204,7 @@ python bench/pipeline_bench.py   # results/pipeline_bench_summary.csv
 
 ```bash
 pip install -r requirements.txt   # 젯슨과 달리 x86은 이대로 설치 가능(torch는 별도)
-python check_env.py
+python -m tools.check_env
 ```
 
 ## 알려진 이슈

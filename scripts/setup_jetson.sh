@@ -97,3 +97,60 @@ if [[ "${patch_applied}" -ne 0 ]]; then
 fi
 
 echo "External package patch verification passed."
+
+# ---------------------------------------------------------------------------
+# MediaMTX (S15P11A301-106)
+#
+# 단일 정적 바이너리이며 저장소에 커밋하지 않는다. 여기서 받아 ~/.local/bin에
+# 둔다. 버전을 고정하는 이유는 WHEP 동작과 설정 키가 버전에 따라 바뀌기
+# 때문이다.
+# ---------------------------------------------------------------------------
+MEDIAMTX_VERSION="${MEDIAMTX_VERSION:-1.19.3}"
+MEDIAMTX_BIN="${MEDIAMTX_BIN:-${HOME}/.local/bin/mediamtx}"
+
+mediamtx_installed_version() {
+  [[ -x "${MEDIAMTX_BIN}" ]] || return 1
+  "${MEDIAMTX_BIN}" --version 2>/dev/null | tr -d 'v'
+}
+
+installed="$(mediamtx_installed_version || true)"
+if [[ "${installed}" == "${MEDIAMTX_VERSION}" ]]; then
+  echo "MediaMTX ${MEDIAMTX_VERSION} already installed: ${MEDIAMTX_BIN}"
+elif [[ "${mode}" == "check" ]]; then
+  echo "MediaMTX ${MEDIAMTX_VERSION}가 설치되지 않았다 (현재: ${installed:-none})." >&2
+  echo "  ./scripts/setup_jetson.sh 를 실행해 설치한다." >&2
+  exit 1
+else
+  arch="$(uname -m)"
+  case "${arch}" in
+    aarch64|arm64) mtx_arch="linux_arm64" ;;
+    x86_64)        mtx_arch="linux_amd64" ;;
+    *)
+      echo "지원하지 않는 아키텍처: ${arch}. MediaMTX를 손으로 설치한다." >&2
+      exit 1
+      ;;
+  esac
+
+  url="https://github.com/bluenviron/mediamtx/releases/download/v${MEDIAMTX_VERSION}/mediamtx_v${MEDIAMTX_VERSION}_${mtx_arch}.tar.gz"
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+
+  echo "MediaMTX ${MEDIAMTX_VERSION} 다운로드: ${url}"
+  if ! curl -fsSL -o "${tmp_dir}/mediamtx.tar.gz" "${url}"; then
+    echo "MediaMTX 다운로드 실패. 망 제약이 있으면 바이너리를 직접 받아" >&2
+    echo "  ${MEDIAMTX_BIN} 에 두고 실행 권한을 준다." >&2
+    exit 1
+  fi
+
+  tar xzf "${tmp_dir}/mediamtx.tar.gz" -C "${tmp_dir}" mediamtx
+  mkdir -p "$(dirname "${MEDIAMTX_BIN}")"
+  install -m 0755 "${tmp_dir}/mediamtx" "${MEDIAMTX_BIN}"
+  echo "MediaMTX 설치 완료: ${MEDIAMTX_BIN} ($("${MEDIAMTX_BIN}" --version))"
+fi
+
+# rtspclientsink는 표준 발행 경로다. 없으면 노드가 udp_mpegts로 폴백하지만
+# MPEG-TS 먹싱이 한 단계 늘어나므로 설치를 권한다.
+if ! gst-inspect-1.0 rtspclientsink >/dev/null 2>&1; then
+  echo "경고: rtspclientsink가 없다. sudo apt install -y gstreamer1.0-rtsp 를 권한다." >&2
+  echo "      미설치 상태에서는 streaming.launch.py가 udp_mpegts로 폴백한다." >&2
+fi

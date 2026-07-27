@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useRobot } from "@/features/robot/RobotContext";
+import { useStreaming } from "@/features/streaming/StreamingContext";
 import { Gamepad2, Usb, AlertTriangle } from "lucide-react";
 
 const RADIUS = 52;
@@ -64,6 +65,11 @@ function useGamepad() {
 export default function Joystick() {
   const { sendControl, wsConnected } = useRobot();
   const { gamepadConnected, gamepadName, axesRef } = useGamepad();
+  // SR-010: 관제 영상이 3초 이상 멈추면 신규 수동 전진 명령을 보내지 않는다.
+  // 조종자가 보이지 않는 상황에서 로봇을 움직이게 되기 때문이다.
+  // 이미 전송된 주행 명령은 Jetson의 300ms TTL이 정지시킨다.
+  const { status: streamStatus } = useStreaming();
+  const videoBlocked = streamStatus.stalledBlock;
 
   // 화면 표시용 위치 (물리 or 마우스)
   const [displayPos, setDisplayPos] = useState({ x: 0, y: 0 });
@@ -81,10 +87,14 @@ export default function Joystick() {
     const id = setInterval(() => {
       const src = gamepadConnected ? axesRef.current : mousePosRef.current;
       setDisplayPos({ x: src.x * RADIUS, y: -src.y * RADIUS });
-      if (!disabled) sendControl(src.x, src.y);
+      if (disabled) return;
+      // 영상이 멈춘 동안에는 전진(y > 0)만 막고 정지·후진은 허용한다.
+      // 전진을 0으로 클램프해야 이미 밀고 있던 스틱도 멈춘다.
+      const forwardBlocked = videoBlocked && src.y > 0;
+      sendControl(src.x, forwardBlocked ? 0 : src.y);
     }, 40);
     return () => clearInterval(id);
-  }, [gamepadConnected, disabled, sendControl, axesRef]);
+  }, [gamepadConnected, disabled, videoBlocked, sendControl, axesRef]);
 
   // 안전 차단 — 300ms 응답 없음
   const resetSafety = useCallback(() => {
@@ -161,6 +171,12 @@ export default function Joystick() {
           <div className="flex items-center gap-1 text-destructive">
             <AlertTriangle size={10} />
             <span className="text-[10px] font-medium">안전 차단</span>
+          </div>
+        )}
+        {videoBlocked && (
+          <div className="flex items-center gap-1 text-destructive">
+            <AlertTriangle size={10} />
+            <span className="text-[10px] font-medium">영상 정지 · 전진 차단</span>
           </div>
         )}
         {disabled && (

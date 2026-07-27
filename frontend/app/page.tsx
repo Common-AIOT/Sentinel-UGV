@@ -30,9 +30,14 @@ function NavLink({ to, children }: { to: string; children: React.ReactNode }) {
 
 function TopBar() {
   const { wsConnected, detections } = useRobot();
-  const [, setTick] = useState(0);
+  // 시계는 클라이언트에서만 렌더한다. 서버 렌더와 클라이언트 렌더 사이에
+  // 초가 흐르면 hydration 불일치 오류가 난다. 초기값을 null로 두고
+  // 마운트 후에 채우면 서버는 시계를 그리지 않아 불일치가 생기지 않는다.
+  const [clock, setClock] = useState<string | null>(null);
   useEffect(() => {
-    const id = setInterval(() => setTick(t => t + 1), 1000);
+    const update = () => setClock(new Date().toLocaleTimeString());
+    update();
+    const id = setInterval(update, 1000);
     return () => clearInterval(id);
   }, []);
 
@@ -64,7 +69,7 @@ function TopBar() {
       <div className="flex items-center gap-3">
         <div className={`w-2 h-2 rounded-full ${wsConnected ? "bg-primary animate-pulse" : "bg-destructive"}`} />
         <span className="font-mono text-xs text-muted-foreground tabular-nums">
-          {new Date().toLocaleTimeString()} UTC+9
+          {clock ?? "--:--:--"} UTC+9
         </span>
       </div>
     </div>

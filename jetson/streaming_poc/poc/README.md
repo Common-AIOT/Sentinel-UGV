@@ -7,7 +7,7 @@ PoC-A는 측정 스크립트를 남기지 않아 재현이 불가능했다. PoC-
 ## 실행 순서
 
 ```bash
-cd jetson/streaming/poc
+cd jetson/streaming_poc/poc
 
 # 0. MJPEG 샘플 캡처 — 카메라가 비어 있어야 한다(sensors.launch.py 내린 상태)
 ./poc_b_capture.sh 30

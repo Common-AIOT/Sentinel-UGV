@@ -1,0 +1,28 @@
+# STT-LLM-TTS 파이프라인 의존성
+#
+# ⚠️ Jetson(ARM64+CUDA)에서는 pip 직접 설치가 막히는 패키지가 있다.
+#    torch / faster-whisper(CTranslate2) 는 반드시 Jetson 전용 휠 또는
+#    jetson-containers 이미지를 사용한다. 자세한 절차는 README.md 참고.
+#
+# 개발 PC(x86)에서는 아래를 그대로 pip install 해도 된다.
+
+# 오디오 I/O·전처리
+sounddevice
+soundfile
+numpy
+scipy
+librosa
+
+# STT
+faster-whisper        # Jetson: jetson-containers 또는 whisper.cpp 대체 검토
+
+# VAD (torch 의존)
+silero-vad
+# torch  ← Jetson은 NVIDIA 전용 휠로 별도 설치(여기서 pip install 금지)
+
+# LLM 클라이언트 (GMS API — https://gms.ssafy.io)
+openai                # GMS API 호출 (팀 결정 2026-07-24, 온디바이스 LLM 전환)
+
+# TTS (한국어). eunjeon(한국어 형태소)은 리눅스에서 컴파일 잘 됨
+melotts
+eunjeon

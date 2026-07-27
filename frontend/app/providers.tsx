@@ -3,11 +3,12 @@
 import type { ReactNode } from "react";
 import { Toaster } from "sonner";
 import { RobotProvider } from "@/features/robot/RobotContext";
+import { StreamingProvider } from "@/features/streaming/StreamingContext";
 
 export function Providers({ children }: { children: ReactNode }) {
   return (
     <RobotProvider>
-      {children}
+      <StreamingProvider>{children}</StreamingProvider>
       <Toaster
         position="bottom-right"
         toastOptions={{

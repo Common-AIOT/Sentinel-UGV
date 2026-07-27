@@ -2,7 +2,7 @@
 
 ROS 압축 토픽을 H.264로 인코딩해 MediaMTX에 발행합니다 (S15P11A301-106).
 
-계약과 성능 전제는 S15P11A301-62에서 확정했습니다. 규범은 명세 32장이고 실측 기준선은 [`jetson/streaming/README.md`](../../../streaming/README.md)입니다.
+계약과 성능 전제는 S15P11A301-62에서 확정했습니다. 규범은 명세 32장이고 실측 기준선은 [`jetson/streaming_poc/README.md`](../../../streaming_poc/README.md)입니다.
 
 ## 파이프라인
 
@@ -137,6 +137,57 @@ ffmpeg 오류 : 0
 - **VID-01** 브라우저 WebRTC 지연 30회 측정. 엔드포인트는 동작하지만 측정 주체가 브라우저 클라이언트이므로 S15P11A301-107과 함께 봅니다.
 - 관제 노트북의 인증서 신뢰 등록. 사람이 해야 합니다.
 - USB 케이블을 실제로 분리했을 때의 동작. 위 대체 검증으로 코드 경로는 확인했지만 USB 재연결 시 장치 번호가 바뀌는 경우는 다릅니다.
+
+## 문제 해결
+
+### 영상이 간헐적으로 끊겼다 붙었다 한다
+
+**가장 흔한 원인은 `stream_pipeline` 노드가 두 개 도는 것입니다.** MediaMTX는 한 경로에 발행자 하나만 허용하므로, 두 노드가 `sentinel` 경로를 서로 빼앗으면서 각자 쫓겨나고 재구성을 반복합니다.
+
+증상이 네트워크 문제처럼 보여서 원인을 찾기 어렵습니다. 로그에 이 조합이 보이면 이 경우입니다.
+
+```text
+GStreamer 오류 [rtsp]: Could not write to resource.
+출력 경로 장애(rtsp). N초 후 파이프라인을 다시 세운다 (누적 20회)
+```
+
+`ros2 launch`를 Ctrl+C나 kill로 끊었을 때 자식 노드가 살아남으면 발생합니다. 확인과 정리는 이렇게 합니다.
+
+```bash
+pgrep -af "lib/sentinel_streaming/stream_pipeline"
+# 두 개 이상이면 전부 정리한 뒤 다시 launch 한다
+pkill -f "lib/sentinel_streaming/stream_pipeline"
+```
+
+MediaMTX 로그에서 발행 세션이 계속 새로 생기는 것으로도 확인할 수 있습니다.
+
+```bash
+grep -c "is publishing to path" <launch 로그>
+```
+
+정상이면 실행당 1~2회입니다. 수십 회면 발행 경쟁입니다.
+
+### 브라우저에서 영상이 안 나오고 상태가 변하지 않는다
+
+`.env.local`의 주소가 **VS Code 포트 포워딩(`127.0.0.1`)을 경유하면** 터널이 끊길 때 브라우저의 WHEP POST가 Jetson에 도달하지 않습니다. 이때 MediaMTX 로그에는 아무 기록도 남지 않으므로, 로그가 비어 있으면 이 경우를 의심하세요.
+
+Jetson의 실제 IP를 직접 쓰는 것이 맞습니다. 지연 측정도 터널을 거치면 오염됩니다.
+
+```bash
+echo 'NEXT_PUBLIC_LOCAL_STREAM_URL=http://<젯슨IP>:8889/sentinel/whep' > frontend/.env.local
+```
+
+`.env.local` 변경은 dev 서버 재시작이 필요합니다.
+
+### MediaMTX 내장 플레이어로 먼저 확인한다
+
+앱을 거치지 않고 스트림 자체를 볼 수 있습니다. 여기서 안 나오면 서버 문제, 나오는데 앱에서 안 나오면 앱 문제로 범위가 좁혀집니다.
+
+```text
+http://<젯슨IP>:8889/sentinel        플레이어 페이지
+http://<젯슨IP>:8889/sentinel/whep   POST 전용 API (브라우저로 열면 오류)
+rtsp://127.0.0.1:8554/sentinel       RTSP. 브라우저로 열 수 없다
+```
 
 ## 알려진 사항
 

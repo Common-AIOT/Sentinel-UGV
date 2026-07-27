@@ -187,5 +187,5 @@ if [[ "${yolo_active}" -ne 1 ]]; then
 fi
 
 echo
-echo "판정은 jetson/streaming/README.md의 PoC-B 합격 조건 6개와 대조한다."
+echo "판정은 jetson/streaming_poc/README.md의 PoC-B 합격 조건 6개와 대조한다."
 echo "조건 6(링 버퍼 쓰기 지연)은 별도 측정이다 — 링 writer 구현 후."

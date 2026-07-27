@@ -66,7 +66,7 @@ TF 트리는 `sentinel_description`이 발행하므로 `base_footprint`를 Fixed
 
 노드 구성은 전 구간 `/camera/usb_cam`, `/robot_state_publisher`, `/ydlidar_ros2_driver_node` 3개와 launch 프로세스가 유지됐다. Fast DDS SHM 오류(`open_and_lock_file failed`)는 이 실행에서 **0건**이었다.
 
-프레임 크기 31KB는 정적 실내 장면 값이고, S15P11A301-66 당시에는 약 105KB였다. 장면 복잡도에 따라 Fast DDS 단편화 임계(약 64KB) 양쪽을 오가므로 PoC-B에서 최대값을 별도로 측정한다([`jetson/streaming/poc/README.md`](../streaming/poc/README.md)).
+프레임 크기 31KB는 정적 실내 장면 값이고, S15P11A301-66 당시에는 약 105KB였다. 장면 복잡도에 따라 Fast DDS 단편화 임계(약 64KB) 양쪽을 오가므로 PoC-B에서 최대값을 별도로 측정한다([`jetson/streaming_poc/poc/README.md`](../streaming/poc/README.md)).
 
 라이다 `Real points 43x > fixed points 430` 경고는 전 구간 반복됐으나 `/scan` 발행률과 메시지 유효성에는 영향이 없었다. `fixed_resolution: true` 설정에서 실제 포인트 수가 고정값을 넘을 때 나오는 경고다.
 

@@ -1,4 +1,11 @@
-# Streaming
+# Streaming PoC — 설계 기록과 실측
+
+이 디렉터리는 **기록과 측정 도구**만 담습니다. 실제 구현은 ROS 2 패키지에 있습니다.
+
+| 위치 | 성격 |
+|---|---|
+| `jetson/streaming_poc/` (여기) | 확정 계약, PoC-A/B 실측 기준선, 측정 스크립트 |
+| [`jetson/ros2_ws/src/sentinel_streaming/`](../ros2_ws/src/sentinel_streaming/) | 실행되는 노드·launch·설정 (S15P11A301-106) |
 
 카메라를 한 번만 열어 AI와 스트리밍 소비자에게 프레임을 분배하고, 로컬 우선 WebRTC 스트림을 제공합니다. 이벤트 녹화는 전 5초·후 10초 링 버퍼를 기본값으로 사용합니다.
 

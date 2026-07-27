@@ -176,3 +176,22 @@ deploy:ec2:
     - changes:
         - backend/**/*
     - if: '$CI_PIPELINE_SOURCE == "web"'
+
+# 프런트엔드 Vercel 자동 배포
+# GitLab이 self-host라 Vercel Git 연동 대신 CLI를 토큰으로 호출해 배포한다.
+# 프로젝트 식별자(VERCEL_ORG_ID/VERCEL_PROJECT_ID)와 토큰(VERCEL_TOKEN)은
+# GitLab CI/CD Variables로 주입한다(.vercel 디렉터리는 커밋하지 않음).
+deploy:frontend:
+  stage: deploy_ec2
+  image: node:20-alpine
+  script:
+    - cd frontend
+    # VERCEL_ORG_ID/VERCEL_PROJECT_ID는 env로 자동 인식, 인증은 --token 사용
+    - npx vercel@latest deploy --prod --token="$VERCEL_TOKEN" --yes
+  rules:
+    # 기본 브랜치에 frontend 변경이 반영될 때만 운영 배포
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      changes:
+        - frontend/**/*
+    # 웹에서 수동 실행 시에도 허용
+    - if: '$CI_PIPELINE_SOURCE == "web"'

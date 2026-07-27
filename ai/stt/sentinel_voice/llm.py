@@ -11,10 +11,10 @@ LLM 정보 구조화 — GMS API(gpt-5-nano) 호출 + 오프라인 규칙 폴백
 import json
 import re
 
-import config
-from safety import strip_hallucinated, coerce_defaults
+from . import config
+from .safety import coerce_defaults, strip_hallucinated
 
-PROMPT = open(config.PROMPT_PATH, encoding="utf-8").read()
+PROMPT = config.PROMPT_PATH.read_text(encoding="utf-8")
 
 _client = None
 

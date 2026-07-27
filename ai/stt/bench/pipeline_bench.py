@@ -6,14 +6,13 @@ STT는 시나리오당 1회(음성 고정) 캐싱하고, LLM은 NUM_RUNS회 반�
 평균/최소/최대 지연과 triage 등급 일관성(%)을 집계한다.
 device/compute 는 config가 자동 감지(Jetson=int8).
 
-  cd ai/stt && python bench/pipeline_bench.py
+  cd ai/stt && python -m bench.pipeline_bench
 
 측정 중 다른 터미널에서 `jtop` 으로 RAM/GPU/온도/전력을 함께 기록할 것.
 data/ 샘플이 없으면 해당 시나리오는 NO_FILE로 스킵된다(README의 데이터 준비 참고).
 결과: results/pipeline_bench_raw.csv, results/pipeline_bench_summary.csv
 """
 import os
-import sys
 import time
 import csv
 from collections import Counter
@@ -23,13 +22,11 @@ import torch
 from faster_whisper import WhisperModel
 from silero_vad import load_silero_vad, get_speech_timestamps
 
-# ai/stt 를 import 경로에 추가(=상위 폴더)
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import config
-from config import FS
-from utils import load_mono
-from safety import is_valid_stt, coerce_defaults, triage_rule
-from llm import llm_extract as gms_extract
+from sentinel_voice import config
+from sentinel_voice.audio import load_mono
+from sentinel_voice.config import FS
+from sentinel_voice.llm import llm_extract as gms_extract
+from sentinel_voice.safety import coerce_defaults, is_valid_stt, triage_rule
 
 NUM_RUNS = int(os.getenv("BENCH_RUNS", "3"))
 # 측정할 LLM 후보(GMS 모델명, 쉼표 구분). 확정 모델은 config.LLM_MODEL(gpt-5-nano)

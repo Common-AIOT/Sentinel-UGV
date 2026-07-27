@@ -32,8 +32,10 @@
 | `sentinel_voice/safety.py` | STT 환각 가드, LLM 출력 보정, 규칙 기반 triage |
 | `sentinel_voice/llm.py` | GMS 호출 + 33-8 키워드 폴백 (`extract()` 단일 진입점) |
 | `sentinel_voice/pipeline.py` | 엔드투엔드 실행(마이크/파일) |
+| `sentinel_voice/conversation.py` | 5단계 다턴 상태머신과 VAD·STT·구조화 결과 4분류 |
 | `tools/` | 배포 전 환경·오디오 점검과 개발 PC용 TTS 자산 생성 |
 | `bench/` | 측정용 다회차 벤치(지연·일관성) |
+| `tests/` | 하드웨어 없이 실행 가능한 상태머신·안전 규칙 단위 테스트 |
 | `prompts/` | 정보 추출 프롬프트(진단 금지, 사실만) |
 | `docs/` | 실행 런북, 안전 정책, 메모리·정량·오디오 검증 기준 |
 
@@ -42,6 +44,13 @@
 실제 장비의 합격 여부는 별도 검증 절차로 판정합니다.
 
 가중치·녹음 데이터·`results/`·**`.env`(GMS 키)**는 커밋하지 않습니다(`.gitignore`).
+
+상태머신 단위 테스트:
+
+```bash
+cd ai/stt
+python -m unittest discover -s tests -v
+```
 
 ## GMS 설정 (필수)
 

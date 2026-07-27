@@ -1,0 +1,124 @@
+<?xml version="1.0"?>
+<!--
+  Sentinel UGV TF 정적 골격 (S15P11A301-74)
+
+  명세 04장 8.3·03장 22.3의 TF 트리를 그대로 기록한다.
+  - 모든 오프셋은 placeholder다. 갱신 출처는 항목별로 다르다.
+      차체·휠 기하(지상고, 후륜 축, 전륜 조향) : TBD-HW-001 / TBD-HW-008
+      센서·짐벌 장착 오프셋                    : 명세 35-7 「LiDAR·카메라·차체
+        외부 파라미터」. base_link 원점에서 센서 중심까지 X/Y/Z·RPY를 측정해
+        여기에 입력하고 sensor_extrinsics.yaml(명세 35-11 config 목록, 아직
+        생성되지 않음)과 값을 일치시킨다.
+        상류 의존성은 TBD-HW-006(3D 모델·부품 배치 실측)이다.
+    실측 파라미터 도입 시 xacro로 승격한다(현재는 의존성 최소화를 위해 plain URDF).
+  - 짐벌 조인트는 CENTER_LOCK fallback(각도 0)과 동일한 fixed로 시작하고,
+    짐벌 구현 시 revolute + joint_states 발행으로 전환한다.
+  - 휠 조인트는 구동/조향 구현 시 continuous/revolute 전환을 검토한다.
+  - TF 골격 전용이므로 visual/collision/inertial은 정의하지 않는다.
+    조인트 origin이 대부분 0이라 geometry를 넣으면 링크가 한 점에 겹쳐 보여
+    검증에 도움이 되지 않는다. 35-7 실측 반영 후 추가한다.
+  - 이 파일이 발행하는 범위는 base_footprint 이하다.
+    odom -> base_footprint는 오도메트리(EKF), map -> odom은 SLAM이 발행하며
+    둘 다 이 파일 범위 밖이다. 따라서 이 패키지만 실행한 상태에서
+    map 또는 odom을 기준으로 한 tf2_echo는 실패하는 것이 정상이다.
+    트리 검증은 base_footprint를 기준으로 한다.
+-->
+<robot name="sentinel">
+
+  <link name="base_footprint"/>
+  <link name="base_link"/>
+  <link name="imu_link"/>
+  <link name="rear_drive_wheel_link"/>
+  <link name="front_left_wheel_link"/>
+  <link name="front_right_wheel_link"/>
+  <link name="gimbal_base_link"/>
+  <link name="gimbal_roll_link"/>
+  <link name="gimbal_pitch_link"/>
+  <link name="lidar_link"/>
+  <link name="camera_link"/>
+  <link name="head_imu_link"/>
+  <link name="camera_optical_frame"/>
+
+  <!-- base_footprint(지면 투영) -> base_link(차체 기준). z = 지상고, TBD-HW-001 -->
+  <joint name="base_footprint_to_base_link" type="fixed">
+    <parent link="base_footprint"/>
+    <child link="base_link"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- IMU 장착 위치, TBD(실측) -->
+  <joint name="base_link_to_imu_link" type="fixed">
+    <parent link="base_link"/>
+    <child link="imu_link"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- 후륜 구동축. 위치 TBD-HW-001, 구동 구현 시 continuous 전환 검토 -->
+  <joint name="base_link_to_rear_drive_wheel_link" type="fixed">
+    <parent link="base_link"/>
+    <child link="rear_drive_wheel_link"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- 전륜 좌/우. 위치·조향 구조 TBD-HW-008, 조향 확정 시 revolute 전환 검토 -->
+  <joint name="base_link_to_front_left_wheel_link" type="fixed">
+    <parent link="base_link"/>
+    <child link="front_left_wheel_link"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+  <joint name="base_link_to_front_right_wheel_link" type="fixed">
+    <parent link="base_link"/>
+    <child link="front_right_wheel_link"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- 짐벌 베이스 장착 위치, TBD(3D 프린팅 마운트 확정 후 실측) -->
+  <joint name="base_link_to_gimbal_base_link" type="fixed">
+    <parent link="base_link"/>
+    <child link="gimbal_base_link"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- 짐벌 roll/pitch: CENTER_LOCK(각도 0) fixed. 짐벌 구현 시 revolute + joint_states 전환 -->
+  <joint name="gimbal_base_link_to_gimbal_roll_link" type="fixed">
+    <parent link="gimbal_base_link"/>
+    <child link="gimbal_roll_link"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+  <joint name="gimbal_roll_link_to_gimbal_pitch_link" type="fixed">
+    <parent link="gimbal_roll_link"/>
+    <child link="gimbal_pitch_link"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- LiDAR. z=0.02는 기존 base_link->laser_frame flat TF의 net 변환을 유지한 placeholder -->
+  <joint name="gimbal_pitch_link_to_lidar_link" type="fixed">
+    <parent link="gimbal_pitch_link"/>
+    <child link="lidar_link"/>
+    <origin xyz="0 0 0.02" rpy="0 0 0"/>
+  </joint>
+
+  <!-- 카메라 본체(REP-103 body: x-전방, y-좌, z-상). 위치 TBD(실측) -->
+  <joint name="gimbal_pitch_link_to_camera_link" type="fixed">
+    <parent link="gimbal_pitch_link"/>
+    <child link="camera_link"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- 짐벌 헤드 IMU 장착 위치, TBD(실측) -->
+  <joint name="gimbal_pitch_link_to_head_imu_link" type="fixed">
+    <parent link="gimbal_pitch_link"/>
+    <child link="head_imu_link"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- REP-103 optical 관례(x-우, y-하, z-전방). rpy = (-pi/2, 0, -pi/2),
+       quaternion (-0.5, 0.5, -0.5, 0.5).
+       S15P11A301-62 카메라 계약: /camera/image_raw/compressed의 frame_id -->
+  <joint name="camera_link_to_camera_optical_frame" type="fixed">
+    <parent link="camera_link"/>
+    <child link="camera_optical_frame"/>
+    <origin xyz="0 0 0" rpy="-1.5707963267948966 0 -1.5707963267948966"/>
+  </joint>
+
+</robot>

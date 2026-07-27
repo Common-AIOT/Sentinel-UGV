@@ -17,7 +17,7 @@ sudo apt install -y python3-vcstool v4l-utils \
   ros-humble-image-transport-plugins
 cd ~/projects/S15P11A301/jetson/ros2_ws
 vcs import src < sentinel.repos
-git -C src/usb_cam apply "$(pwd)/patches/usb_cam-0.8.1-raw-mjpeg-passthrough.patch"
+../../scripts/setup_jetson.sh
 rosdep install --from-paths src --ignore-src -r -y
 colcon build --symlink-install
 source install/setup.bash
@@ -39,4 +39,4 @@ ros2 launch sentinel_bringup sensors.launch.py
 
 TF 골격(`base_footprint`~`camera_optical_frame`)은 `sentinel_description`의 `robot_state_publisher`가 발행하며 `lidar.launch.py`에 포함된다. LiDAR 스캔 `frame_id`는 `lidar_link`다(S15P11A301-74에서 `laser_frame`에서 통일).
 
-Brio 설정은 `config/brio_100.yaml`에 있으며 `usb_cam`의 `raw_mjpeg` 패스스루를 사용한다. 영상은 `/camera/image_raw/compressed`(JPEG)로만 발행되며, `usb_cam`은 `sentinel.repos`로 받은 0.8.1 소스에 raw_mjpeg 버그 패치(`patches/`)를 적용해 빌드한다. Brio가 `/dev/video0`가 아니면 해당 파일의 `video_device`를 변경한다. `tri_test`는 라이다 ROS 2 드라이버와 동시에 실행하지 않는다.
+Brio 설정은 `config/brio_100.yaml`에 있으며 `usb_cam`의 `raw_mjpeg` 패스스루를 사용한다. 영상은 `/camera/image_raw/compressed`(JPEG)로만 발행되며, `usb_cam`은 `sentinel.repos`로 받은 0.8.1 소스에 raw_mjpeg 버그 패치(`patches/`)를 적용해 빌드한다. 패치 적용은 `scripts/setup_jetson.sh`가 담당하므로 손으로 `git apply`하지 않는다. 빌드 전 확인은 `./scripts/setup_jetson.sh --check`다. Brio가 `/dev/video0`가 아니면 해당 파일의 `video_device`를 변경한다. `tri_test`는 라이다 ROS 2 드라이버와 동시에 실행하지 않는다.

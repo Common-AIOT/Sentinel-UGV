@@ -32,6 +32,9 @@ dependencies {
   developmentOnly 'org.springframework.boot:spring-boot-devtools'
   developmentOnly 'org.springframework.boot:spring-boot-docker-compose'
   runtimeOnly 'org.postgresql:postgresql'
+  // AWS SDK v2 (S3 API — 자체 호스팅 MinIO 연동)
+  implementation platform('software.amazon.awssdk:bom:2.31.6')
+  implementation 'software.amazon.awssdk:s3'
   annotationProcessor 'org.projectlombok:lombok'
   testImplementation 'org.springframework.boot:spring-boot-starter-actuator-test'
   testImplementation 'org.springframework.boot:spring-boot-starter-data-jpa-test'

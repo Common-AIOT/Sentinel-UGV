@@ -5,7 +5,9 @@
 정보 구조화(LLM)는 **GMS API 호출**, 안내 음성은 **사전녹음 재생**으로 동작합니다.
 
 ```
-트리거(VISION) → VAD 게이트 → STT → 환각 가드 → LLM 정보추출(GMS ↘ 33-8 폴백)
+트리거(VISION) → 네트워크 확인 → VAD 게이트 → STT → 환각 가드 → LLM 정보추출(GMS)
+                              ↘ 오프라인: 안전 안내 + 관제 전송 대기
+                              ↘ STT 완료 후 GMS 실패: 33-8 폴백
               → 규칙 triage → 관제 보고(시뮬) → 안내 음성(사전녹음)
 ```
 
@@ -16,7 +18,7 @@
 | VAD | Silero VAD (로컬) | 노이즈 1차 컷, torch 기반 경량 |
 | STT | faster-whisper **`small`** (로컬, 젯슨은 CPU/int8) | 저SNR·약한발화 강건성 |
 | LLM | **`gpt-5-nano`** (GMS API) | 팀 결정 2026-07-24. 로컬 3b는 젯슨 실측 피크 5.62GB·OOM([근거](docs/메모리-예산.md)) |
-| LLM 폴백 | 키워드 파서(`llm.keyword_extract`) | 명세 33-8 축소안 — 네트워크 불가 시 핵심 보고 유지 |
+| LLM 폴백 | 키워드 파서(`llm.keyword_extract`) | STT 완료 후 GMS 호출만 실패한 경우의 축소 보고 |
 | TTS | **사전녹음 wav 재생**(`assets/`) | RAM 절약 1순위(−1.3~2GB). 생성은 PC에서 `make_tts_assets.py` |
 | 등급 | 규칙(`safety.triage_rule`) | LLM 자유판단 배제, 재현·설명 가능 |
 
@@ -44,7 +46,10 @@ echo "GMS_KEY=여기에_팀_GMS_키" > .env
 ```
 
 > GMS Key는 팀 크레딧과 연결된 비밀 값입니다. 코드·문서·커밋에 절대 넣지 마세요.
-> 호출 실패(오프라인 포함) 시 `llm.py`가 자동으로 33-8 키워드 폴백을 사용합니다.
+> GMS 키는 장기적으로 관제 백엔드의 환경 변수 또는 비밀 저장소에서 관리합니다.
+> Jetson 직접 호출을 사용하는 개발 단계에서는 `ai/stt/.env`에만 두며 커밋하지 않습니다.
+> 네트워크 단절이 확인되면 신규 STT 대화를 시작하지 않습니다. 이미 STT가 완료된 뒤
+> GMS 호출만 실패한 경우에 한해 `llm.py`의 33-8 키워드 폴백을 사용합니다.
 
 ## 추출 스키마
 
@@ -103,10 +108,10 @@ LLM은 GMS API 호출이므로 젯슨에 모델을 올리지 않습니다 — `p
 > 네이티브 설치를 택할 경우 `torch`는 **반드시 NVIDIA Jetson 전용 휠**만 사용하고,
 > `faster-whisper`가 GPU로 안 잡히면 **whisper.cpp(CUDA 빌드)**로 대체합니다(파라미터 이식 가능).
 
-### STEP 1.5 — 오프라인 가중치 사전 캐싱 ⚠️ (네트워크 끊김 대비 필수)
+### STEP 1.5 — 로컬 모델 가중치 사전 캐싱 ⚠️
 
 `faster-whisper`·`silero-vad`는 **첫 로드 시 인터넷에서 가중치를 내려받는다**
-(각각 HuggingFace / torch.hub). 오프라인 상황에서도 청취·폴백 보고가 동작해야 하므로,
+(각각 HuggingFace / torch.hub). 온라인 음성 세션 중 다운로드 지연을 방지하기 위해,
 **반드시 온라인 상태에서 한 번 로드해 캐시를 채운 뒤** 필드에 투입한다.
 
 ```bash
@@ -115,7 +120,8 @@ python check_env.py --load     # STT/VAD 로드 → 캐시 생성 + GMS 실호�
 ```
 
 > TTS는 사전녹음 wav(`assets/`, 저장소에 포함)라 캐싱이 필요 없고, LLM(GMS)은 온라인 전용
-> — 오프라인이면 33-8 키워드 폴백이 자동 적용된다.
+> — 네트워크 단절이 확인되면 신규 STT 대화는 시작하지 않는다. 33-8 폴백은
+> STT 완료 후 GMS 호출만 실패한 경우에 사용한다.
 
 > 캐시 위치(참고): `~/.cache/huggingface`, `~/.cache/torch/hub`. 오프라인 배포 이미지를
 > 만들 때 이 디렉터리를 함께 포함하면 재현이 쉽다.
@@ -177,7 +183,7 @@ python bench/pipeline_bench.py   # results/pipeline_bench_summary.csv
 | `SENTINEL_LLM` | gpt-5-nano | GMS 모델명 |
 | `GMS_KEY` | (없음, **필수**) | GMS API 키 — `ai/stt/.env`로 관리, 커밋 금지 |
 | `SENTINEL_GMS_BASE` | gms.ssafy.io/…/v1 | GMS OpenAI 호환 엔드포인트 |
-| `SENTINEL_LLM_TIMEOUT` | 10 | 초과 시 33-8 키워드 폴백 |
+| `SENTINEL_LLM_TIMEOUT` | 10 | STT 완료 후 GMS 호출 시간 초과 시 33-8 키워드 폴백 |
 
 ## 개발 PC(x86)에서 테스트
 

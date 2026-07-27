@@ -1,0 +1,22 @@
+# 모델 가중치(용량 큼, 커밋 금지)
+*.gguf
+*.onnx
+*.onnx.json
+models/
+
+# 런타임 산출물
+_tts.wav
+results/
+data/clean/
+data/mixed/
+data/noise/
+data/sed_samples/
+__pycache__/
+*.pyc
+
+# 가상환경
+.venv/
+venv/
+
+# GMS API 키 (절대 커밋 금지)
+.env

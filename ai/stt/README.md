@@ -36,6 +36,7 @@
 | `bench/pipeline_bench.py` | 측정용 다회차 벤치(지연·일관성) |
 | `prompts/triage_extract.txt` | 정보 추출 프롬프트(진단 금지, 사실만) |
 | `docs/대화-안전-정책.md` | 위험도 참고값, 무응답/시스템 실패 구분, ETA·안내 문구 정책 |
+| `docs/정량-검증-기준.md` | STT·GMS·E2E·Jetson 자원 검증 지표, 통과 기준, 기록 형식 |
 
 가중치·녹음 데이터·`results/`·**`.env`(GMS 키)**는 커밋하지 않습니다(`.gitignore`).
 
@@ -175,6 +176,8 @@ python bench/pipeline_bench.py   # results/pipeline_bench_summary.csv
 
 > 📄 RAM 예산과 실측 기록은 [`docs/메모리-예산.md`](docs/메모리-예산.md)에 정리합니다(팀 공유용).
 > 예상 예산표 + 젯슨에서 채우는 실측 템플릿이 들어 있습니다.
+> 전체 STT·GMS·E2E·자원 통과 기준과 공통 결과 필드는
+> [`docs/정량-검증-기준.md`](docs/정량-검증-기준.md)를 따릅니다.
 
 ---
 

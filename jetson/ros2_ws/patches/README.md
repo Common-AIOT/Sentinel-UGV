@@ -7,12 +7,28 @@
 - 외부 패키지 소스는 git에 커밋하지 않는다. root `.gitignore`에 경로를 추가하고 `sentinel.repos`에 URL과 버전을 고정한다.
 - 로컬 수정이 필요하면 이 디렉토리에 패치 파일로 두고, 아래 표에 사유·대상 버전·제거 조건을 기록한다.
 - 패치는 `vcs import` 직후 적용한다. 대상 패키지 버전을 올릴 때 패치 적용이 실패하면 이 문서를 보고 패치를 갱신하거나 제거한다.
+- **패치를 손으로 적용하지 않는다.** `scripts/setup_jetson.sh`가 필수 패치 목록을 관리하며, 적용 여부를 판정해 멱등하게 적용한다. 새 패치를 추가할 때는 이 문서의 표와 함께 해당 스크립트의 `required_patches` 배열에도 등록해야 한다.
 
 ```bash
 cd ~/projects/S15P11A301/jetson/ros2_ws
 vcs import src < sentinel.repos
-git -C src/usb_cam apply "$(pwd)/patches/usb_cam-0.8.1-raw-mjpeg-passthrough.patch"
+../../scripts/setup_jetson.sh          # 툴체인 확인 + 필수 패치 적용(멱등)
+colcon build --symlink-install
 ```
+
+빌드 전에 적용 여부만 확인하려면(적용은 하지 않고 미적용 시 실패):
+
+```bash
+./scripts/setup_jetson.sh --check
+```
+
+스크립트는 세 가지를 구분해 처리한다.
+
+| 상태 | 동작 |
+|---|---|
+| 이미 적용됨 | 통과 (재적용하지 않음) |
+| 미적용·적용 가능 | 기본 모드에서 적용, `--check`에서는 실패 |
+| 적용 불가 | 실패 — 고정 버전이 바뀐 경우이므로 패치를 갱신하거나 제거 |
 
 ## 패치 목록
 

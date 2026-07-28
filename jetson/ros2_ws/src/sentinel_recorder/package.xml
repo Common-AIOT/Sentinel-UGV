@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>sentinel_recorder</name>
+  <version>0.1.0</version>
+  <description>링 버퍼 조각을 모아 이벤트 MP4를 만든다 (S15P11A301-123).</description>
+  <maintainer email="team@example.com">Sentinel Team</maintainer>
+  <license>Apache-2.0</license>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <!--
+    MP4 재다중화와 썸네일 생성에 쓴다. GStreamer가 아니라 ffmpeg를 쓰는 이유는
+    concat demuxer로 MPEG-TS 조각을 스트림 복사로 이어붙이는 것이 간단하고,
+    재생 검사에 ffprobe를 그대로 쓸 수 있기 때문이다.
+  -->
+  <exec_depend>ffmpeg</exec_depend>
+
+  <export><build_type>ament_python</build_type></export>
+</package>

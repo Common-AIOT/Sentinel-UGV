@@ -36,9 +36,22 @@
     stream_queue_buffers: 3
     record_queue_buffers: 60
 
-    # 링 버퍼 분기 활성화 여부. S15P11A301-123 구현 전에는 false로 둔다.
-    # false면 tee에 fakesink를 붙여 분기 지점만 유지한다.
+    # 링 버퍼 분기 활성화 여부 (S15P11A301-123).
+    # false면 tee에 fakesink를 붙여 분기 지점만 유지한다. tee의 한 분기를
+    # 비워두면 파이프라인이 PREROLL에서 멈추므로 반드시 무엇이든 달아야 한다.
     enable_record_branch: false
+
+    # 링 버퍼 (32-5). 1초 MPEG-TS 조각을 순환 보관한다.
+    #
+    # ring_segments가 8인 이유는 3초 사전 영상을 보장하면서 복사 지연과 디스크
+    # 쓰기 여유를 두기 위해서다(32-5 표). 조각을 hard link로 가져가므로 링이
+    # 원본을 지워도 이벤트 영상은 안전하다.
+    #
+    # buffer_directory는 pending과 같은 볼륨에 둔다(32-5). 절대경로를 코드에
+    # 박지 않고 이 설정으로만 참조한다.
+    buffer_directory: /var/lib/sentinel/media/buffer
+    segment_seconds: 1
+    ring_segments: 8
 
     # 입력 끊김 복구 — 무한 재시작 금지(32-3)
     restart_backoff_seconds: [1.0, 2.0, 4.0]

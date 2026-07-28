@@ -38,12 +38,12 @@ DATA_SCHEMA_BY_TYPE = {
     "ROBOT_PRESENCE": "presence.schema.json",
     "ROBOT_STATE": "state.schema.json",
     "ROBOT_TELEMETRY": "telemetry.schema.json",
+    "ENCOUNTER_CONFIRMED": "encounter.schema.json",
 }
 
 # 아직 봉투만 있고 본문 스키마를 만들지 않은 것. 후속 티켓에서 채운다.
 # 여기 있는 동안은 예제가 없어도 통과시킨다.
 PENDING_TYPES = {
-    "ENCOUNTER_CONFIRMED": "S15P11A301-123",
     "MANUAL_DRIVE_COMMAND": "31-13 2단계 (ESP32 연동 이후)",
     "COMMAND_ACK": "31-13 2단계 (ESP32 연동 이후)",
 }

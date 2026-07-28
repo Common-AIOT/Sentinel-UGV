@@ -51,6 +51,13 @@ class CloudBridgeNode(Node):
         self.declare_parameter('broker_port', 8883)
         self.declare_parameter('broker_username', '')
         self.declare_parameter('broker_password', '')
+        # 접속 방식. S15P11A301-103에서 EC2 8883·1883이 막혀 있어 443
+        # WebSocket으로 붙는다. tcp는 보안그룹이 열리면 쓸 수 있게 남겨 둔다.
+        self.declare_parameter('broker_transport', 'websockets')
+        self.declare_parameter('broker_ws_path', '/mqtt')
+        # TLS 사용 여부와 CA 경로는 다른 파라미터다. 공인 인증서를 쓰는 운영에서는
+        # tls_ca_certs가 비어 있어도 TLS를 켜야 한다(mqtt_client의 주석 참고).
+        self.declare_parameter('tls_enabled', True)
         self.declare_parameter('tls_ca_certs', '')
         self.declare_parameter('tls_insecure', False)
         self.declare_parameter('keepalive_seconds', 30)
@@ -115,8 +122,11 @@ class CloudBridgeNode(Node):
             int(self._param('broker_port')),
             username=self._param('broker_username') or None,
             password=self._param('broker_password') or None,
+            tls_enabled=bool(self._param('tls_enabled')),
             tls_ca_certs=self._param('tls_ca_certs') or None,
             tls_insecure=bool(self._param('tls_insecure')),
+            transport=str(self._param('broker_transport')),
+            ws_path=str(self._param('broker_ws_path')),
             keepalive=int(self._param('keepalive_seconds')),
             protocol_version=int(self._param('protocol_version')),
             on_connected=self._on_broker_connected,

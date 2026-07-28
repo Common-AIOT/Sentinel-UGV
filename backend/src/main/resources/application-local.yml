@@ -9,7 +9,8 @@ spring:
     driver-class-name: org.postgresql.Driver
   jpa:
     hibernate:
-      ddl-auto: update
+      # 스키마는 Flyway 마이그레이션이 단독으로 관리한다.
+      ddl-auto: validate
     show-sql: true
     properties:
       hibernate:

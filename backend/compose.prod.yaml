@@ -2,8 +2,11 @@ version: '3.8'
 
 services:
   postgres:
-    image: postgres:15-alpine
+    # 시계열(hypertable)과 일반 테이블을 한 인스턴스에서 쓰기 위해 TimescaleDB 확장 이미지를 사용한다 (13.1).
+    image: timescale/timescaledb:latest-pg15
     container_name: postgres-prod
+    # 기존 데이터 디렉터리를 그대로 재사용하는 경우에도 확장이 로드되도록 명시한다.
+    command: postgres -c shared_preload_libraries=timescaledb
     environment:
       - POSTGRES_DB=${POSTGRES_DB:-sentinel_ugv}
       - POSTGRES_USER=${POSTGRES_USER}

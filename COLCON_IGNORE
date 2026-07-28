@@ -1,0 +1,10 @@
+이 파일이 있으면 colcon이 리포 최상위를 패키지 탐색 대상에서 제외한다.
+
+ROS 2 워크스페이스는 jetson/ros2_ws 하나뿐이다. 최상위에서 colcon build를
+돌리면 build/install/log가 최상위에 생기고, 그 install은 워크스페이스의
+install과 다른 부분 빌드가 된다. 실수로 그것을 source하면 옛 코드가 돌면서
+원인을 찾기 매우 어려운 증상이 생긴다(S15P11A301-125).
+
+빌드는 항상 워크스페이스 안에서 한다.
+
+    cd jetson/ros2_ws && colcon build --symlink-install

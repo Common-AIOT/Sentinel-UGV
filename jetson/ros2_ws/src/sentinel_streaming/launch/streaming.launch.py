@@ -35,6 +35,14 @@ def generate_launch_description():
     default_mediamtx_config = os.path.join(share, 'config', 'mediamtx.yml')
     default_mediamtx_binary = os.path.expanduser('~/.local/bin/mediamtx')
 
+    # MediaMTX에 전용 작업 디렉터리를 준다. 상속받은 cwd에 파일을 쓰기 때문에,
+    # 리포 안에서 launch하면 리포 안에 auto.crt / auto.key 같은 파일이 남는다.
+    # 실제로 리포 최상위와 scripts/ 두 곳에 남은 것을 발견했다(S15P11A301-125).
+    # 커밋되지는 않지만(gitignore가 *.crt/*.key를 제외한다) 실행 위치마다 쓰레기가
+    # 쌓이고, 우리 인증서(CN=sentinel.local)와 헷갈린다.
+    mediamtx_workdir = os.path.expanduser('~/.local/state/sentinel/mediamtx')
+    os.makedirs(mediamtx_workdir, exist_ok=True)
+
     publish_mode = LaunchConfiguration('publish_mode')
     udp_host = LaunchConfiguration('udp_host')
     udp_port = LaunchConfiguration('udp_port')
@@ -77,6 +85,7 @@ def generate_launch_description():
                  LaunchConfiguration('mediamtx_config')],
             name='mediamtx',
             output='screen',
+            cwd=mediamtx_workdir,
             condition=IfCondition(LaunchConfiguration('launch_mediamtx')),
             additional_env={
                 'MTX_PATHS_SENTINEL_SOURCE': mtx_source_override,

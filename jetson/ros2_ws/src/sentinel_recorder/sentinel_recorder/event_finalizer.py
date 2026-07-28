@@ -1,0 +1,331 @@
+"""이벤트 MP4 생성 (S15P11A301-123, 명세 32-5 「이벤트 종료와 MP4 생성」).
+
+명세가 순서를 정해 뒀고 그대로 따른다.
+
+    조각 목록 시각·PTS 순서 검증
+    → 누락 조각 검사
+    → H.264 재다중화
+    → event.partial.mp4 생성
+    → 재생 검사
+    → SHA-256 계산
+    → event.mp4 원자적 rename
+    → thumbnail.jpg 생성
+    → UPLOAD_PENDING 등록
+
+## `.partial`을 쓰는 이유
+
+전원이 차단되면 반쪽 MP4가 남는다. 최종 이름을 처음부터 쓰면 그것이 정상 파일인지
+알 수 없다. `.partial`로 만들고 검사를 통과한 뒤에만 이름을 바꾸므로, 부팅 후
+`.partial`이 보이면 그것은 실패한 것이다(32-5).
+
+`os.replace`는 같은 볼륨에서 원자적이다. 검사를 통과한 파일만 최종 이름을 갖는다.
+
+## 재생 검사를 하는 이유
+
+`ffmpeg -c copy`가 성공해도 재생이 안 되는 경우가 있다. 조각 경계에서 PTS가
+튀거나 첫 조각이 키프레임이 아니면 디코더가 시작하지 못한다. 파일 크기만 보고
+성공으로 처리하면 업로드 후에야 알게 된다. 그래서 실제로 패킷을 읽어 확인한다.
+
+## 오디오
+
+32-5는 "H.264/AAC 재다중화"라고 적었지만 `usb_cam`은 오디오를 발행하지 않고
+파이프라인에 오디오 경로가 없다. 지금은 비디오만 넣는다. 오디오는 음성 상호작용
+티켓과 연계해 정한다(32-6).
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import subprocess
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+from .segment_store import Segment, continuity_report, format_utc
+
+FFMPEG = 'ffmpeg'
+FFPROBE = 'ffprobe'
+
+PARTIAL_SUFFIX = '.partial.mp4'
+FINAL_NAME = 'event.mp4'
+THUMBNAIL_NAME = 'thumbnail.jpg'
+REPORT_NAME = 'report.json'
+CONCAT_NAME = 'segments.txt'
+
+# 재다중화와 검사에 주는 시간 제한. 이벤트가 5분(MAX_DURATION)이므로 스트림
+# 복사는 몇 초면 끝난다. 이보다 오래 걸리면 무언가 잘못된 것이고, 무한정
+# 기다리면 녹화 노드가 다음 이벤트를 받지 못한다.
+REMUX_TIMEOUT_SECONDS = 120
+PROBE_TIMEOUT_SECONDS = 60
+
+
+class FinalizeError(RuntimeError):
+    """마무리 실패. 사유를 담아 RECORDING_FAILED로 기록한다."""
+
+    def __init__(self, reason: str, detail: str = '') -> None:
+        super().__init__(f'{reason}: {detail}' if detail else reason)
+        self.reason = reason
+        self.detail = detail
+
+
+@dataclass
+class FinalizeResult:
+    media_path: Path
+    thumbnail_path: Path | None
+    sha256: str
+    size_bytes: int
+    duration_seconds: float | None
+    frame_count: int
+    continuity: dict[str, Any]
+
+
+def _run(command: list[str], timeout: int) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=False,
+    )
+
+
+def sha256_of(path: Path, chunk_size: int = 1 << 20) -> str:
+    digest = hashlib.sha256()
+    with path.open('rb') as handle:
+        while True:
+            chunk = handle.read(chunk_size)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def write_concat_list(segments: list[Segment], directory: Path) -> Path:
+    """ffmpeg concat demuxer 입력 파일.
+
+    `-safe 0`이 필요 없도록 파일명만 적고 작업 디렉터리를 맞춘다. 경로에 공백이나
+    작은따옴표가 있으면 concat 형식이 깨지므로, 조각 파일명이 `seg_%06d.ts`로
+    고정된 것에 의존한다.
+    """
+    listing = directory / CONCAT_NAME
+    # 이벤트 디렉터리의 이름(sequence 기준)을 쓴다. 링 버퍼의 파일명은 재사용되므로
+    # 그것으로 목록을 만들면 같은 파일이 여러 번 나열되고, 이어붙인 MP4가 같은
+    # 구간을 반복한다(Segment.local_filename 참고).
+    lines = [f"file '{segment.local_filename}'" for segment in segments]
+    listing.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+    return listing
+
+
+def probe_playable(path: Path) -> tuple[int, float | None]:
+    """실제로 패킷을 읽어 재생 가능한지 확인한다.
+
+    `-count_packets`를 쓴다. `-count_frames`는 전부 디코딩하므로 5분 영상에서
+    수십 초가 걸린다(S15P11A301-62에서 18000프레임 디코딩으로 timeout에 걸렸다).
+    `alignment=au`이므로 패킷 하나가 프레임 하나다.
+    """
+    result = _run(
+        [
+            FFPROBE, '-v', 'error',
+            '-select_streams', 'v:0',
+            '-count_packets',
+            '-show_entries', 'stream=nb_read_packets,codec_name',
+            '-show_entries', 'format=duration',
+            '-of', 'json',
+            str(path),
+        ],
+        timeout=PROBE_TIMEOUT_SECONDS,
+    )
+    if result.returncode != 0:
+        raise FinalizeError('PLAYBACK_CHECK_FAILED', result.stderr.strip()[:300])
+
+    try:
+        payload = json.loads(result.stdout)
+        stream = payload['streams'][0]
+        frames = int(stream['nb_read_packets'])
+        codec = stream.get('codec_name')
+        duration_raw = payload.get('format', {}).get('duration')
+        duration = float(duration_raw) if duration_raw else None
+    except (KeyError, IndexError, ValueError, json.JSONDecodeError) as error:
+        raise FinalizeError('PLAYBACK_CHECK_FAILED', f'ffprobe 출력 해석 실패: {error}')
+
+    if codec != 'h264':
+        raise FinalizeError('PLAYBACK_CHECK_FAILED', f'예상과 다른 코덱: {codec}')
+    if frames <= 0:
+        raise FinalizeError('PLAYBACK_CHECK_FAILED', '읽을 수 있는 패킷이 없다')
+    return frames, duration
+
+
+class EventFinalizer:
+    """조각 목록을 MP4로 만든다. ROS를 모르므로 단독으로 시험할 수 있다."""
+
+    def __init__(
+        self,
+        segment_seconds: int = 1,
+        thumbnail_offset_seconds: float = 3.0,
+        min_continuity_ratio: float = 0.8,
+    ) -> None:
+        self.segment_seconds = segment_seconds
+        # 썸네일을 사전 영상 길이만큼 들어간 지점에서 뽑는다. 파일 첫 프레임은
+        # 사람이 확정되기 전이라 빈 복도일 수 있다. 확정 시점이 썸네일로 더 쓸모
+        # 있다.
+        self.thumbnail_offset_seconds = thumbnail_offset_seconds
+        self.min_continuity_ratio = min_continuity_ratio
+
+    def finalize(
+        self,
+        segments: list[Segment],
+        work_directory: Path,
+        *,
+        encounter_id: str,
+        media_id: str,
+        detected_at: datetime,
+        end_reason: str,
+        person_count: int,
+        mission_id: str | None = None,
+    ) -> FinalizeResult:
+        if not segments:
+            raise FinalizeError('NO_SEGMENTS', '수집된 조각이 없다')
+
+        work_directory.mkdir(parents=True, exist_ok=True)
+
+        # 1. 시각·PTS 순서와 누락 검사
+        continuity = continuity_report(segments, self.segment_seconds)
+        if continuity['missingSequences']:
+            raise FinalizeError(
+                'SEGMENTS_MISSING',
+                f"누락 sequence {continuity['missingSequences'][:10]}",
+            )
+        if continuity['ptsRegressions']:
+            raise FinalizeError(
+                'PTS_REGRESSION',
+                f"PTS 역행 sequence {continuity['ptsRegressions'][:10]}",
+            )
+        ratio = continuity['durationRatio']
+        if ratio is not None and ratio < self.min_continuity_ratio:
+            # 조각 수는 맞는데 총 길이가 크게 짧다. 조각이 잘렸다는 뜻이다.
+            raise FinalizeError(
+                'DURATION_SHORTFALL', f'길이 비율 {ratio:.2f}'
+            )
+
+        # 2. 재다중화. 스트림 복사이므로 재인코딩하지 않는다.
+        partial = work_directory / f'{media_id}{PARTIAL_SUFFIX}'
+        listing = write_concat_list(segments, work_directory)
+        remux = _run(
+            [
+                FFMPEG, '-hide_banner', '-loglevel', 'error', '-y',
+                '-f', 'concat', '-safe', '0',
+                '-i', str(listing),
+                '-c', 'copy',
+                # faststart는 moov를 앞으로 옮겨 브라우저가 전체를 받기 전에
+                # 재생을 시작할 수 있게 한다. 다시보기에서 체감이 크다.
+                '-movflags', '+faststart',
+                # TS의 PTS는 1시간 오프셋에서 시작한다. 그대로 두면 MP4의
+                # 시작 시각이 1시간이 되어 플레이어가 앞부분을 비운다.
+                '-reset_timestamps', '1',
+                str(partial),
+            ],
+            timeout=REMUX_TIMEOUT_SECONDS,
+        )
+        if remux.returncode != 0 or not partial.exists():
+            raise FinalizeError('REMUX_FAILED', remux.stderr.strip()[:300])
+
+        # 3. 재생 검사
+        frames, duration = probe_playable(partial)
+
+        # 4. SHA-256
+        checksum = sha256_of(partial)
+        size_bytes = partial.stat().st_size
+
+        # 5. 원자적 rename. 여기까지 통과한 파일만 최종 이름을 갖는다.
+        final = work_directory / FINAL_NAME
+        os.replace(partial, final)
+
+        # 6. 썸네일. 실패해도 이벤트를 실패로 만들지 않는다. 32-5가 공간 확보
+        #    실패 시에도 "썸네일과 JSON 보고서는 남긴다"고 한 것처럼, 영상과
+        #    썸네일은 독립적으로 다룬다.
+        thumbnail = self._make_thumbnail(final, work_directory, duration)
+
+        report = {
+            'schemaVersion': '1.0',
+            'encounterId': encounter_id,
+            'mediaId': media_id,
+            'missionId': mission_id,
+            'detectedAt': format_utc(detected_at),
+            'endReason': end_reason,
+            'personCount': person_count,
+            'media': {
+                'path': FINAL_NAME,
+                'sha256': checksum,
+                'sizeBytes': size_bytes,
+                'durationSeconds': duration,
+                'frameCount': frames,
+                'thumbnail': THUMBNAIL_NAME if thumbnail else None,
+            },
+            'segments': {
+                'count': continuity['segmentCount'],
+                'firstSequence': segments[0].sequence,
+                'lastSequence': segments[-1].sequence,
+                'firstSegmentIsKeyframe': continuity['firstSegmentIsKeyframe'],
+                'totalDurationMs': continuity['totalDurationMs'],
+                'firstStartedAt': format_utc(segments[0].started_at),
+                'lastEndedAt': format_utc(segments[-1].ended_at),
+            },
+            # VID-03과 VID-04를 산출물만 보고 판정할 수 있게 넣는다.
+            #
+            # 로그 문구로 판정하면 안 된다. 이벤트 시작 시점의 index.json에는
+            # 아직 열려 있는 조각이 없어서 초기 수집이 최대 1조각 짧게 잡히고,
+            # 그 조각은 닫히는 즉시 따라붙는다. 즉 로그의 "사전 N초"는 과소
+            # 보고이며 최종 파일과 다르다.
+            #
+            # 실제 사전 영상 길이는 첫 조각 시작과 detectedAt의 차이다.
+            'coverage': {
+                'preRollSeconds': round(
+                    (detected_at - segments[0].started_at).total_seconds(), 3
+                ),
+                'postRollSeconds': round(
+                    (segments[-1].ended_at - detected_at).total_seconds(), 3
+                ),
+            },
+        }
+        (work_directory / REPORT_NAME).write_text(
+            json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8'
+        )
+
+        return FinalizeResult(
+            media_path=final,
+            thumbnail_path=thumbnail,
+            sha256=checksum,
+            size_bytes=size_bytes,
+            duration_seconds=duration,
+            frame_count=frames,
+            continuity=continuity,
+        )
+
+    def _make_thumbnail(
+        self, media: Path, directory: Path, duration: float | None
+    ) -> Path | None:
+        offset = self.thumbnail_offset_seconds
+        if duration is not None and duration <= offset:
+            # 짧은 이벤트는 중간 지점에서 뽑는다. 오프셋이 길이를 넘으면 ffmpeg가
+            # 프레임을 못 찾아 빈 파일을 만든다.
+            offset = max(0.0, duration / 2)
+
+        target = directory / THUMBNAIL_NAME
+        result = _run(
+            [
+                FFMPEG, '-hide_banner', '-loglevel', 'error', '-y',
+                '-ss', f'{offset:.3f}',
+                '-i', str(media),
+                '-frames:v', '1',
+                '-q:v', '3',
+                str(target),
+            ],
+            timeout=PROBE_TIMEOUT_SECONDS,
+        )
+        if result.returncode != 0 or not target.exists() or target.stat().st_size == 0:
+            target.unlink(missing_ok=True)
+            return None
+        return target

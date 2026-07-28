@@ -1,0 +1,31 @@
+# recording_manager 설정 (S15P11A301-123, 명세 32-5 / 부록 D)
+/**:
+  ros__parameters:
+    # AI 탐지 노드(S15P11A301-43)가 발행할 토픽. 계약은
+    # common/schemas/encounter.schema.json 이다.
+    encounter_topic: /perception/encounter
+
+    # 링 writer와 같은 볼륨에 둔다(32-5). 절대경로를 코드에 박지 않는다.
+    buffer_directory: /var/lib/sentinel/media/buffer
+    pending_directory: /var/lib/sentinel/media/pending
+
+    segment_seconds: 1
+
+    # 32-5 확정값. 사전 3초 + 상호작용 전체 + 사후 3초이며 길이는 가변이다.
+    pre_seconds: 3
+    post_seconds: 3
+
+    # 32-5 종료 예외
+    no_response_timeout_seconds: 30
+    max_event_seconds: 300
+
+    # TBD-VID-001에서 확정한 pending 보존 상한. 30분 분량 약 560MB이며
+    # microSD 여유 13GB의 4% 수준이다.
+    max_pending_seconds: 1800
+
+    # 상한을 바이트로 환산하는 데 쓴다. 32-8의 목표 비트레이트와 맞춘다.
+    encoder_bitrate_kbps: 2500
+
+    # 진행 중 이벤트의 조각을 가져오는 주기. 링 버퍼가 8초만 보관하므로
+    # 이보다 느리면 긴 이벤트에서 조각을 놓친다.
+    collect_period_seconds: 0.5

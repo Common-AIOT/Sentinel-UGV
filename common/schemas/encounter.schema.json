@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sentinel-ugv.xyz/schemas/encounter.schema.json",
+  "title": "ENCOUNTER_CONFIRMED 본문",
+  "description": "사람 확정 이벤트다. MVP의 유일한 녹화 트리거이며(32-5, 10.5) 젯슨 내부에서는 std_msgs/String에 이 JSON을 담아 /perception/encounter로 발행한다. 관제로 나갈 때는 31-5 봉투에 담겨 MQTT events 채널로 간다.\n\n커스텀 ROS 메시지 패키지를 만들지 않은 이유는 두 가지다. AI 패키지가 그 패키지에 빌드 의존을 걸어야 하고, JSON은 이 스키마와 CI 검증이라는 장치를 이미 갖고 있어 파이썬과 자바가 같은 계약을 쓴다는 것을 확인할 수 있다.\n\n**phase가 상태 머신을 움직인다.** 녹화 노드는 phase만 보고 전이하며 사람 수나 위치는 보고서용이다. 32-6에 따라 동시에 발견된 사람들은 encounter 하나를 공유하므로 encounterId가 같으면 같은 이벤트다.",
+  "type": "object",
+  "required": ["encounterId", "phase", "detectedAt", "personCount"],
+  "additionalProperties": false,
+  "properties": {
+    "encounterId": {
+      "description": "이벤트 식별자. 동시에 발견된 사람들은 하나를 공유한다(32-6). 같은 값이 다시 오면 같은 이벤트의 진행이며 새 녹화를 시작하지 않는다.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "phase": {
+      "description": "녹화 상태 머신을 움직이는 신호다(32-5).\n\n  CONFIRMED   사람 확정. BUFFERING에서 RECORDING으로 간다\n  APPROACHED  안전 위치 정지. RECORDING에서 INTERACTION으로 간다\n  ENDED       대화 종료. INTERACTION에서 POST_RECORDING으로 간다\n  REDETECTED  사후 3초 안에 재감지. POST_RECORDING에서 INTERACTION으로 되돌린다\n  LOST        사람을 놓쳤다. 진행 중 이벤트를 종료 절차로 보낸다",
+      "type": "string",
+      "enum": ["CONFIRMED", "APPROACHED", "ENDED", "REDETECTED", "LOST"]
+    },
+    "detectedAt": {
+      "description": "탐지 확정 시각. UTC만 허용한다. 이 값으로 확정 직전 3초 조각을 찾으므로 정확해야 한다(32-5 이벤트 시작).\n\n주의: usb_cam의 header.stamp는 노드 시작 시점에 한 번 계산한 고정 오프셋을 쓰므로 진짜 wall clock이 아니다. 조각 메타데이터가 PTS와 monotonic, wall time 세 가지를 함께 기록하는 이유다.",
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?Z$"
+    },
+    "personCount": {
+      "description": "이 시점에 확정된 사람 수. 보고서용이며 상태 전이에는 쓰지 않는다.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "trackIds": {
+      "description": "ByteTrack 추적 식별자. 사람별 바운딩 박스와 보고서를 잇는다.",
+      "type": ["array", "null"],
+      "items": {"type": "integer"}
+    },
+    "confidence": {
+      "description": "확정에 사용한 최고 신뢰도. person confidence 최종값은 TBD-CAL-001이다.",
+      "type": ["number", "null"],
+      "minimum": 0,
+      "maximum": 1
+    },
+    "pose": {
+      "description": "확정 시점의 로봇 위치. 지도 위 이벤트 표시에 쓴다. SLAM이 없으면 null이다.",
+      "type": ["object", "null"],
+      "required": ["x", "y", "yaw", "mapId"],
+      "additionalProperties": false,
+      "properties": {
+        "x": {"type": "number"},
+        "y": {"type": "number"},
+        "yaw": {"type": "number"},
+        "mapId": {"type": ["string", "null"]}
+      }
+    },
+    "missionId": {
+      "description": "임무 외 탐지이면 null이다.",
+      "type": ["string", "null"],
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    }
+  }
+}

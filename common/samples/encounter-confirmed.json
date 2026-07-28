@@ -1,0 +1,28 @@
+{
+  "schemaVersion": "1.0",
+  "messageId": "7a2c9e14-8b03-4d51-91f6-3e5b8a07cd62",
+  "messageType": "ENCOUNTER_CONFIRMED",
+  "robotId": "SENTINEL-01",
+  "missionId": "4a43f45c-779f-4df5-ac04-1695724829a4",
+  "sequence": 3312,
+  "sentAt": "2026-07-28T04:30:11.250Z",
+  "data": {
+    "encounterId": "c81f6d20-5a47-4e93-b2d8-1f70e4a95c33",
+    "phase": "CONFIRMED",
+    "detectedAt": "2026-07-28T04:30:11.180Z",
+    "personCount": 3,
+    "trackIds": [
+      12,
+      13,
+      15
+    ],
+    "confidence": 0.87,
+    "pose": {
+      "x": 4.31,
+      "y": 1.82,
+      "yaw": 0.74,
+      "mapId": "4f87365c-c914-4ba5-8e47-34417cd38c52"
+    },
+    "missionId": "4a43f45c-779f-4df5-ac04-1695724829a4"
+  }
+}

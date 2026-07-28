@@ -36,6 +36,8 @@ from rclpy.qos import (  # noqa: E402
 from sensor_msgs.msg import CompressedImage  # noqa: E402
 from std_msgs.msg import String  # noqa: E402
 
+from .ring_buffer import RingBufferWriter  # noqa: E402
+
 
 class StreamPipelineNode(Node):
     """압축 토픽을 구독해 GStreamer appsrc로 밀어넣고 H.264로 인코딩한다."""
@@ -80,6 +82,35 @@ class StreamPipelineNode(Node):
         self.pending_restart = False
         self.restart_timer = None
 
+        # 링 버퍼 (S15P11A301-123, 32-5). 분기가 꺼져 있으면 만들지 않는다.
+        #
+        # 디렉터리를 만들 수 없으면 링 버퍼 없이 계속한다. 관제 스트리밍이 녹화
+        # 준비 실패로 멈추면 안 된다(32장 장애 격리). 녹화 노드는 index.json이
+        # 없는 것으로 상황을 안다.
+        self.ring: RingBufferWriter | None = None
+        if self._param('enable_record_branch'):
+            candidate = RingBufferWriter(
+                self._param('buffer_directory'),
+                int(self._param('segment_seconds')),
+                int(self._param('ring_segments')),
+                send_keyframe_requests=bool(
+                    self._param('send_keyframe_requests')
+                ),
+                logger=self.get_logger(),
+            )
+            try:
+                candidate.prepare()
+                self.ring = candidate
+                self.get_logger().info(
+                    f'링 버퍼: {candidate.directory} '
+                    f'{candidate.segment_seconds}초 조각 × {candidate.ring_segments}개'
+                )
+            except OSError as error:
+                self.get_logger().error(
+                    f'링 버퍼 디렉터리를 만들 수 없다({error}). '
+                    '녹화 없이 스트리밍만 계속한다.'
+                )
+
         self._build_pipeline()
         self._create_input_subscription()
 
@@ -111,6 +142,15 @@ class StreamPipelineNode(Node):
         self.declare_parameter('stream_queue_buffers', 3)
         self.declare_parameter('record_queue_buffers', 60)
         self.declare_parameter('enable_record_branch', False)
+        # 링 버퍼 (S15P11A301-123, 명세 32-5)
+        self.declare_parameter(
+            'buffer_directory', '/var/lib/sentinel/media/buffer'
+        )
+        self.declare_parameter('segment_seconds', 1)
+        self.declare_parameter('ring_segments', 8)
+        # true면 splitmuxsink가 상류에 force-keyframe을 보내 조각이 한 번 더
+        # 쪼개진다. 실측에서 1001ms와 30ms가 번갈아 나왔다. ring_buffer.py 주석 참고.
+        self.declare_parameter('send_keyframe_requests', False)
         self.declare_parameter('restart_backoff_seconds', [1.0, 2.0, 4.0])
         self.declare_parameter('restart_max_attempts', 3)
         self.declare_parameter('input_timeout_seconds', 3.0)
@@ -181,16 +221,16 @@ class StreamPipelineNode(Node):
         decoder = self._decoder_description()
         publish_sink = self._publish_sink_description()
 
+        # 녹화 분기가 꺼져 있으면 tee를 막지 않도록 fakesink로 흘려버린다.
+        # tee의 한 분기를 비워두면 파이프라인이 PREROLL에서 멈춘다.
         record_sink = (
             f'queue name=record_queue max-size-buffers='
             f'{int(self._param("record_queue_buffers"))} leaky=no ! fakesink sync=false'
         )
-        if self._param('enable_record_branch'):
-            # S15P11A301-123이 이 지점을 소비한다. 그때까지는 fakesink로 둔다.
-            record_sink = (
-                f'queue name=record_queue max-size-buffers='
-                f'{int(self._param("record_queue_buffers"))} leaky=no ! '
-                'fakesink name=record_out sync=false'
+        if self._param('enable_record_branch') and self.ring is not None:
+            # S15P11A301-123. 1초 MPEG-TS 조각으로 링 버퍼에 기록한다(32-5).
+            record_sink = self.ring.sink_description(
+                int(self._param('record_queue_buffers'))
             )
 
         return (
@@ -226,6 +266,18 @@ class StreamPipelineNode(Node):
         # rclpy.spin()은 GLib 루프를 돌리지 않으므로 시그널이 영원히 오지 않는다.
         # 따라서 ROS 타이머에서 버스를 직접 폴링한다.
         self.bus = self.pipeline.get_bus()
+
+        # 링 writer는 format-location-full 시그널로 조각 메타데이터를 얻는다.
+        # 파이프라인을 다시 세울 때마다 연결해야 한다. 재구성 후 연결을 빠뜨리면
+        # 조각 파일은 생기는데 index.json이 갱신되지 않아, 녹화 노드가 존재하는
+        # 조각을 보지 못한다.
+        if self.ring is not None:
+            if self.ring.attach(self.pipeline):
+                self.get_logger().info('링 writer 연결됨')
+            else:
+                self.get_logger().error(
+                    'splitmuxsink를 찾지 못했다. 조각이 기록되지 않는다.'
+                )
 
         self.pipeline.set_state(Gst.State.PLAYING)
         self.get_logger().info('파이프라인 PLAYING')
@@ -270,6 +322,11 @@ class StreamPipelineNode(Node):
         buffer.pts = max(0, stamp_ns - self.first_stamp_ns)
         buffer.duration = Gst.CLOCK_TIME_NONE
 
+        # 조각 메타데이터의 firstPts 기준. mpegtsmux를 지난 값은 1시간 오프셋이
+        # 붙으므로 입력 PTS를 따로 알려준다(32-5 스트림 PTS).
+        if self.ring is not None:
+            self.ring.note_input_pts(buffer.pts)
+
         result = self.appsrc.emit('push-buffer', buffer)
         if result != Gst.FlowReturn.OK:
             self.get_logger().warn(f'appsrc push-buffer 실패: {result.value_nick}')
@@ -290,6 +347,14 @@ class StreamPipelineNode(Node):
         message = String()
         message.data = reason
         self.boundary_pub.publish(message)
+
+        # 링 writer가 같은 프로세스에 있으면 토픽을 기다리지 않고 직접 마감한다.
+        # 토픽을 거치면 다음 조각에 불연속이 섞일 수 있다.
+        if self.ring is not None and not self.ring.split_now():
+            self.get_logger().warn(
+                'splitmuxsink에 split-now를 보내지 못했다. '
+                '시간 불연속이 조각 중간에 들어갈 수 있다.'
+            )
 
     # ------------------------------------------------------------------
     # 입력 감시와 재시작
@@ -416,6 +481,10 @@ class StreamPipelineNode(Node):
         self.boundary_pub.publish(message)
 
     def destroy_node(self) -> bool:
+        # 열린 조각을 닫아 index.json을 마무리한다. 하지 않으면 마지막 조각이
+        # 인덱스에 없어 녹화 노드가 그 구간을 찾지 못한다.
+        if self.ring is not None:
+            self.ring.close()
         if self.pipeline is not None:
             self.pipeline.set_state(Gst.State.NULL)
         self.get_logger().info(f'종료. 누적 push 프레임 {self.frames_pushed}')

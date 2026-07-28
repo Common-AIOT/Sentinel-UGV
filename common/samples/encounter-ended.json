@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "1.0",
+  "messageId": "1d4b8f05-6c92-4a17-83e0-b5c27f19a4de",
+  "messageType": "ENCOUNTER_CONFIRMED",
+  "robotId": "SENTINEL-01",
+  "missionId": null,
+  "sequence": 3390,
+  "sentAt": "2026-07-28T04:31:47.000Z",
+  "data": {
+    "encounterId": "c81f6d20-5a47-4e93-b2d8-1f70e4a95c33",
+    "phase": "ENDED",
+    "detectedAt": "2026-07-28T04:31:46.900Z",
+    "personCount": 0,
+    "trackIds": null,
+    "confidence": null,
+    "pose": null,
+    "missionId": null
+  }
+}

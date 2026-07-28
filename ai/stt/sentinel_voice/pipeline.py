@@ -1,15 +1,15 @@
 """
-재난 구조 로봇 음성 파이프라인 (온디바이스, 네트워크 독립).
+재난 구조 로봇 음성 파이프라인.
 
   트리거(VISION) → VAD 게이트 → STT → 환각 가드 → LLM 정보추출(GMS) → 규칙 triage
-                 → 관제 서버 보고(시뮬) → 안내 음성(사전녹음 / TTS)
+                 → 관제 서버 보고(시뮬) → 안내 음성(승인된 사전녹음)
 
 설계 원칙
   - SED는 시연 시나리오에서 제외됨. 트리거는 비전(객체탐지)이 기본.
     (SED 소스가 들어오면 "무응답=중증"으로 보고하는 경로는 유지)
   - LLM은 진단하지 않고 사실만 구조화. 등급은 safety.triage_rule 규칙으로 산출.
   - LLM은 GMS API(gpt-5-nano) 호출, 네트워크 불가 시 33-8 키워드 폴백(llm.extract).
-  - TTS: 젯슨은 사전녹음 wav 재생(assets/), MeloTTS는 개발 PC 옵션(미설치면 자동 생략).
+  - 안내 음성: 승인된 사전녹음 WAV만 재생한다. 누락·오류 시 임의 TTS로 대체하지 않는다.
   - device/compute 는 config가 자동 감지(Jetson=cuda/int8, PC=cuda/float16).
 
 실행:
@@ -26,23 +26,16 @@ from silero_vad import load_silero_vad, get_speech_timestamps
 from . import config
 from .audio import load_mono
 from .config import FS
+from .guide_audio import GUIDE_ASSETS, GuideCode, GuidePlayer
 from .llm import extract as extract_info
 from .safety import coerce_report, is_valid_stt, report_defaults, risk_assessment
-
-try:  # MeloTTS는 개발 PC 전용 옵션 — 젯슨(미설치)은 사전녹음 재생으로 동작
-    from melo.api import TTS
-    _HAS_MELO = True
-except ImportError:
-    _HAS_MELO = False
 
 print(f"모델 로딩... ({config.summary()})")
 vad = load_silero_vad()
 stt = WhisperModel(config.STT_MODEL, device=config.DEVICE, compute_type=config.COMPUTE)
-if _HAS_MELO:
-    tts = TTS(language=config.TTS_LANG, device=config.DEVICE)
-    tsid = tts.hps.data.spk2id
 
 ASSETS = config.STT_ROOT / "assets"
+guide_player = GuidePlayer(sd, ASSETS)
 
 
 def normalize(wav):
@@ -50,20 +43,13 @@ def normalize(wav):
     return np.clip(wav * (config.NORM_TARGET_RMS / rms), -1, 1).astype(np.float32)
 
 
-def speak(text):
-    """안내 음성. 우선순위: 사전녹음(assets) → MeloTTS(PC) → 텍스트만."""
+def speak(text, *, report_succeeded=False):
+    """승인된 안내 음성을 재생하고 실패를 명시적으로 기록한다."""
     print(f"🔊 로봇: {text}")
-    canned = config.GUIDE_WAVS.get(text)
-    path = ASSETS / canned if canned else None
-    if path and path.exists():
-        sd.play(load_mono(path), FS)
-        sd.wait()
-    elif _HAS_MELO:
-        tts.tts_to_file(text, tsid[config.TTS_LANG], "_tts.wav", speed=0.9)
-        sd.play(load_mono("_tts.wav"), FS)
-        sd.wait()
-    else:
-        print("   (사전녹음 없음·TTS 미탑재 — tools.make_tts_assets 참고)")
+    result = guide_player.play_text(text, report_succeeded=report_succeeded)
+    if not result.ok:
+        print(f"   ⚠️ 안내 음성 재생 실패: {result.status.value} ({result.detail})")
+    return result
 
 
 def has_speech(wav):
@@ -88,7 +74,7 @@ def unresponsive_report(reason):
     )
     print(f"→ 무응답 관찰 사유: {reason}")
     report(info, risk_assessment(info))
-    speak("구조대에 정보를 전달했습니다. 안심하세요.")
+    speak(GUIDE_ASSETS[GuideCode.REPORT_PENDING].text)
 
 
 def run(source, wav):
@@ -108,7 +94,7 @@ def run(source, wav):
             unresponsive_report("신음 감지, 언어응답 없음")
         else:
             print("→ 유효 음성 없음. 재질문")
-            speak("괜찮으시면 다시 한번 말씀해 주세요.")
+            speak(GUIDE_ASSETS[GuideCode.RETRY_NO_RESPONSE].text)
         print(f"⏱ E2E: {time.time() - t0:.1f}s")
         return
 
@@ -126,7 +112,7 @@ def run(source, wav):
         if source == "SED":
             unresponsive_report(f"STT무효:{why}")
         else:
-            speak("잘 안 들려요. 다시 한번 말씀해 주세요.")
+            speak(GUIDE_ASSETS[GuideCode.RETRY_UNCLEAR].text)
         print(f"⏱ E2E: {time.time() - t0:.1f}s")
         return
 
@@ -145,7 +131,7 @@ def run(source, wav):
         info["reportedCountStatus"] = "SELF_REPORTED_GROUP_COUNT"
     info = coerce_report(info)
     report(info, risk_assessment(info))
-    speak("구조대에 정보를 전달했습니다. 안심하세요.")
+    speak(GUIDE_ASSETS[GuideCode.REPORT_PENDING].text)
     print(f"⏱ E2E: {time.time() - t0:.1f}s")
 
 

@@ -64,7 +64,22 @@ check("faster-whisper", lambda: __import__("faster_whisper") and "")
 check("silero-vad", lambda: __import__("silero_vad") and "")
 check("sounddevice(장치)", lambda: str(len(__import__("sounddevice").query_devices())) + " devices")
 check("librosa", lambda: __import__("librosa") and "")
-check("melo(TTS)", lambda: __import__("melo.api") and "", warn=True)
+def _guide_assets():
+    from sentinel_voice import config
+    from sentinel_voice.guide_audio import GUIDE_ASSETS
+
+    assets = config.STT_ROOT / "assets"
+    missing = [
+        asset.filename
+        for asset in GUIDE_ASSETS.values()
+        if not (assets / asset.filename).is_file()
+    ]
+    if missing:
+        raise RuntimeError(f"사전녹음 WAV {len(missing)}개 누락")
+    return f"사전녹음 WAV {len(GUIDE_ASSETS)}개 보유"
+
+
+check("guide-audio", _guide_assets)
 
 
 # ── 4. GMS LLM (openai SDK + 키 설정 여부) ──────────────────

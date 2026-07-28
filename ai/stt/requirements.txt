@@ -1,4 +1,4 @@
-# STT-LLM-TTS 파이프라인 의존성
+# STT-GMS-사전녹음 안내 파이프라인 의존성
 #
 # ⚠️ Jetson(ARM64+CUDA)에서는 pip 직접 설치가 막히는 패키지가 있다.
 #    torch / faster-whisper(CTranslate2) 는 반드시 Jetson 전용 휠 또는
@@ -23,6 +23,4 @@ silero-vad
 # LLM 클라이언트 (GMS API — https://gms.ssafy.io)
 openai                # GMS API 호출 (팀 결정 2026-07-24, 온디바이스 LLM 전환)
 
-# TTS (한국어). eunjeon(한국어 형태소)은 리눅스에서 컴파일 잘 됨
-melotts
-eunjeon
+# 안내 음성은 승인된 PCM WAV를 재생하므로 TTS 모델 의존성이 없다.

@@ -8,6 +8,7 @@ from sentinel_voice.conversation import (
     SessionState,
     classify_response,
 )
+from sentinel_voice.guide_audio import GUIDE_ASSETS, GuideCode
 
 
 class ConversationMachineTest(unittest.TestCase):
@@ -50,6 +51,9 @@ class ConversationMachineTest(unittest.TestCase):
 
         self.assertEqual(result.state, SessionState.COMPLETED)
         self.assertEqual([code for code, _ in prompts], list(QuestionCode))
+        self.assertEqual(
+            prompts[-1][1], GUIDE_ASSETS[GuideCode.REPORT_PENDING].text
+        )
         self.assertEqual(result.fields["reportedResponsiveCount"], 2)
         self.assertFalse(result.operator_review_required)
 
@@ -68,7 +72,7 @@ class ConversationMachineTest(unittest.TestCase):
         self.assertEqual(result.fields["mobilityStatus"], "NO")
 
     def test_intro_retries_once_for_total_no_response(self):
-        machine, _ = self.machine({})
+        machine, prompts = self.machine({})
         result = machine.run()
 
         intro_turns = [
@@ -78,6 +82,13 @@ class ConversationMachineTest(unittest.TestCase):
         self.assertFalse(result.fields["anyResponseDetected"])
         self.assertIn(SessionState.RETRYING, result.state_log)
         self.assertEqual(result.state, SessionState.COMPLETED)
+        self.assertEqual(
+            prompts[1],
+            (
+                QuestionCode.INTRO,
+                GUIDE_ASSETS[GuideCode.RETRY_NO_RESPONSE].text,
+            ),
+        )
 
     def test_manual_abort(self):
         calls = iter([None, SessionState.ABORTED_MANUAL])

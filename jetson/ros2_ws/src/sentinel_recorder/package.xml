@@ -15,6 +15,11 @@
     재생 검사에 ffprobe를 그대로 쓸 수 있기 때문이다.
   -->
   <exec_depend>ffmpeg</exec_depend>
+  <!--
+    Presigned URL 업로드에 쓴다(S15P11A301-124). 시스템 파이썬에 있어야 한다.
+    설치 방법은 README의 의존성 절을 본다.
+  -->
+  <exec_depend>python3-requests</exec_depend>
 
   <export><build_type>ament_python</build_type></export>
 </package>

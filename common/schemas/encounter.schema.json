@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://sentinel-ugv.xyz/schemas/encounter.schema.json",
   "title": "ENCOUNTER_CONFIRMED 본문",
-  "description": "사람 확정 이벤트다. MVP의 유일한 녹화 트리거이며(32-5, 10.5) 젯슨 내부에서는 std_msgs/String에 이 JSON을 담아 /perception/encounter로 발행한다. 관제로 나갈 때는 31-5 봉투에 담겨 MQTT events 채널로 간다.\n\n커스텀 ROS 메시지 패키지를 만들지 않은 이유는 두 가지다. AI 패키지가 그 패키지에 빌드 의존을 걸어야 하고, JSON은 이 스키마와 CI 검증이라는 장치를 이미 갖고 있어 파이썬과 자바가 같은 계약을 쓴다는 것을 확인할 수 있다.\n\n**phase가 상태 머신을 움직인다.** 녹화 노드는 phase만 보고 전이하며 사람 수나 위치는 보고서용이다. 32-6에 따라 동시에 발견된 사람들은 encounter 하나를 공유하므로 encounterId가 같으면 같은 이벤트다.",
+  "description": "사람 확정 이벤트다. MVP의 유일한 녹화 트리거이며(32-5, 10.5) 젯슨 내부에서는 std_msgs/String에 이 JSON을 담아 /perception/encounter로 발행한다. 관제로 나갈 때는 31-5 봉투에 담겨 MQTT events 채널로 간다.\n\n커스텀 ROS 메시지 패키지를 만들지 않은 이유는 두 가지다. AI 패키지가 그 패키지에 빌드 의존을 걸어야 하고, JSON은 이 스키마와 CI 검증이라는 장치를 이미 갖고 있어 파이썬과 자바가 같은 계약을 쓴다는 것을 확인할 수 있다.\n\n**phase가 상태 머신을 움직인다.** 녹화 노드는 phase만 보고 전이하며 사람 수나 위치는 보고서용이다. 32-6에 따라 동시에 발견된 사람들은 encounter 하나를 공유하므로 encounterId가 같으면 같은 이벤트다.\n\n## 발행 주체는 mission_manager_node 하나다\n\n26장이 \"Mission Manager가 유일한 권한\"이라고 정했다. 이 토픽에 여러 노드가 발행하면 phase 순서가 깨진다. YOLO 탐지 노드는 사람 후보만 알고, STT 노드는 대화가 끝난 것만 알며, 주행 노드는 정지한 것만 안다. 각자 자기가 아는 phase를 던지면 CONFIRMED 없이 ENDED가 먼저 오거나 encounterId가 서로 달라 녹화 노드가 이벤트를 둘로 본다.\n\n그래서 세 노드는 각자의 사실만 발행하고(예: /perception/person_candidates, /interaction/dialogue_state, /navigation/stopped), mission_manager_node가 그것을 합쳐 encounterId를 발급하고 phase를 결정한다. 개발 중에는 sentinel_recorder의 trigger_encounter가 같은 형식을 직접 발행해 검증한다.",
   "type": "object",
   "required": ["encounterId", "phase", "detectedAt", "personCount"],
   "additionalProperties": false,

@@ -23,6 +23,7 @@ setup(
         'console_scripts': [
             'recording_manager = sentinel_recorder.recording_manager_node:main',
             'trigger_encounter = sentinel_recorder.trigger_encounter:main',
+            'media_uploader = sentinel_recorder.media_uploader_node:main',
         ],
     },
 )

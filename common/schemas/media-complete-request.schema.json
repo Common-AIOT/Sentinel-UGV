@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sentinel-ugv.xyz/schemas/media-complete-request.schema.json",
+  "title": "POST /api/v1/media/uploads/{mediaId}/complete 요청 본문",
+  "description": "젯슨이 S3/MinIO에 직접 올린 뒤 완료를 알린다. 명세 31-7 「이벤트 영상 업로드」 5단계이며 서버가 `media_assets.storage_status`를 `AVAILABLE`로 바꾼다.\n\n**이 엔드포인트가 백엔드에 아직 없다.** 27.4와 31-7이 모두 요구하는데 `MediaController`에는 `/uploads`와 `/view-url`만 있다. 없으면 업로드 성공을 서버가 알 수 없고, 젯슨의 `uploadState`를 `AVAILABLE`로 바꿀 주체가 없다. 즉 다시보기 목록에 영상이 나타나지 않는다.\n\n## 멱등해야 한다\n\n젯슨은 응답을 못 받으면 재시도한다. 같은 `mediaId`로 두 번 올 수 있으므로 서버는 두 번째를 오류로 만들지 말고 기존 결과를 그대로 돌려줘야 한다. 31-10이 `media_assets.id UNIQUE`를 지정한 이유다.\n\n젯슨은 HTTP 200과 409를 모두 성공으로 취급한다. 409는 \"이미 완료됨\"이므로 재시도가 성공한 것과 같다.",
+  "type": "object",
+  "required": ["encounterId", "objectKey", "sizeBytes", "sha256"],
+  "additionalProperties": false,
+  "properties": {
+    "encounterId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "objectKey": {
+      "description": "업로드 URL 발급 응답에서 받은 값을 그대로 돌려준다. 젯슨이 정한 값이 아니다(31-11).",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "sizeBytes": {
+      "description": "실제로 올린 바이트 수. 서버가 스토리지의 객체 크기와 비교해 잘린 업로드를 잡을 수 있다.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "sha256": {
+      "description": "발급 요청 때 보낸 것과 같은 값. 서버가 저장해 두고 나중에 무결성 검증에 쓴다.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "kind": {
+      "type": ["string", "null"],
+      "enum": ["EVENT_VIDEO", "THUMBNAIL", null]
+    },
+    "durationSeconds": {
+      "description": "영상 길이. 썸네일이면 null이다. 관제 목록에 표시한다.",
+      "type": ["number", "null"],
+      "minimum": 0
+    },
+    "recorded": {
+      "description": "녹화 구간 메타데이터. 다시보기에서 사전·사후 구간을 표시하는 데 쓴다.",
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "detectedAt": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?Z$"
+        },
+        "preRollSeconds": {"type": ["number", "null"]},
+        "postRollSeconds": {"type": ["number", "null"]},
+        "endReason": {"type": ["string", "null"]},
+        "personCount": {"type": ["integer", "null"], "minimum": 0}
+      }
+    }
+  }
+}

@@ -7,6 +7,7 @@ from enum import Enum
 from time import monotonic
 from typing import Any, Callable
 
+from .guide_audio import GUIDE_ASSETS, GuideCode
 from .safety import report_defaults
 
 
@@ -40,11 +41,12 @@ class ResponseClass(str, Enum):
 
 
 PROMPTS = {
-    QuestionCode.INTRO: "탐사 로봇입니다. 대답할 수 있는 분은 말씀해 주세요.",
-    QuestionCode.COUNT: "현재 응답 가능한 인원 수를 숫자로 말씀해 주세요.",
-    QuestionCode.MOBILITY: "스스로 이동할 수 있습니까? 예 또는 아니오로 답해 주세요.",
-    QuestionCode.URGENT: "심한 출혈이나 호흡 곤란이 있습니까?",
-    QuestionCode.CLOSING: "정보를 관제실에 전달했습니다. 구조 요청을 기다려 주세요.",
+    QuestionCode.INTRO: GUIDE_ASSETS[GuideCode.INTRO].text,
+    QuestionCode.COUNT: GUIDE_ASSETS[GuideCode.ASK_COUNT].text,
+    QuestionCode.MOBILITY: GUIDE_ASSETS[GuideCode.ASK_MOBILITY].text,
+    QuestionCode.URGENT: GUIDE_ASSETS[GuideCode.ASK_URGENT].text,
+    # S15P11A301-116에서 전송 성공 이벤트가 연결되기 전에는 완료 표현을 금지한다.
+    QuestionCode.CLOSING: GUIDE_ASSETS[GuideCode.REPORT_PENDING].text,
 }
 
 FIELD_BY_QUESTION = {
@@ -207,6 +209,10 @@ class ConversationMachine:
                     and attempt < max_attempts
                 ):
                     self._transition(result, SessionState.RETRYING)
+                    self.prompt(
+                        question,
+                        GUIDE_ASSETS[GuideCode.RETRY_NO_RESPONSE].text,
+                    )
                     continue
 
                 field_name = FIELD_BY_QUESTION[question]

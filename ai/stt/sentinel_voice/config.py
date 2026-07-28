@@ -85,15 +85,6 @@ GMS_BASE_URL = os.getenv("SENTINEL_GMS_BASE",
 GMS_KEY = os.getenv("GMS_KEY", "")
 LLM_TIMEOUT = float(os.getenv("SENTINEL_LLM_TIMEOUT", "10"))  # 초과 시 33-8 폴백
 
-TTS_LANG = "KR"   # MeloTTS(개발 PC 전용). 젯슨은 사전녹음 재생 — GUIDE_WAVS 참고
-
-# 고정 안내 문구 → 사전녹음 파일 (assets/). tools.make_tts_assets로 생성.
-GUIDE_WAVS = {
-    "구조대에 정보를 전달했습니다. 안심하세요.": "guide_reported.wav",
-    "괜찮으시면 다시 한번 말씀해 주세요.": "guide_retry.wav",
-    "잘 안 들려요. 다시 한번 말씀해 주세요.": "guide_unclear.wav",
-}
-
 # ── 튜닝된 파라미터(측정으로 고정) ────────────────────────────
 # Silero VAD
 VAD_OPTS = dict(

@@ -1,6 +1,6 @@
 # STT 음성 파이프라인
 
-요구조자의 음성을 듣고 → 부상 정보를 구조화 → 관제 서버에 보고 → "전달했으니 안심하라"는
+요구조자의 음성을 듣고 → 상태 정보를 구조화 → 관제 보고 상태에 맞는 안전
 안내 음성을 내보내는 **음성 파이프라인**입니다. 청취(VAD·STT)는 Jetson 로컬,
 정보 구조화(LLM)는 **GMS API 호출**, 안내 음성은 **사전녹음 재생**으로 동작합니다.
 
@@ -19,7 +19,7 @@
 | STT | faster-whisper **`small`** (로컬, 젯슨은 CPU/int8) | 저SNR·약한발화 강건성 |
 | LLM | **`gpt-5-nano`** (GMS API) | 팀 결정 2026-07-24. 로컬 3b는 젯슨 실측 피크 5.62GB·OOM([근거](docs/메모리-예산.md)) |
 | LLM 폴백 | 키워드 파서(`llm.keyword_extract`) | STT 완료 후 GMS 호출만 실패한 경우의 축소 보고 |
-| TTS | **사전녹음 wav 재생**(`assets/`) | RAM 절약 1순위(−1.3~2GB). 생성은 PC에서 `python -m tools.make_tts_assets` |
+| 안내 음성 | **승인된 사전녹음 WAV 재생**(`assets/`) | TTS 모델 미탑재로 RAM 절약. 형식 검사는 `python -m tools.validate_guide_assets` |
 | 등급 | 규칙(`safety.triage_rule`) | LLM 자유판단 배제, 재현·설명 가능 |
 
 ## 폴더 구성
@@ -33,7 +33,8 @@
 | `sentinel_voice/llm.py` | GMS 호출 + 33-8 키워드 폴백 (`extract()` 단일 진입점) |
 | `sentinel_voice/pipeline.py` | 엔드투엔드 실행(마이크/파일) |
 | `sentinel_voice/conversation.py` | 5단계 다턴 상태머신과 VAD·STT·구조화 결과 4분류 |
-| `tools/` | 배포 전 환경·오디오 점검과 개발 PC용 TTS 자산 생성 |
+| `sentinel_voice/guide_audio.py` | 승인 문구 목록, WAV 형식 검사, 안전 재생 결과 |
+| `tools/` | 배포 전 환경·오디오·사전녹음 자산 점검 |
 | `bench/` | 측정용 다회차 벤치(지연·일관성) |
 | `tests/` | 하드웨어 없이 실행 가능한 상태머신·안전 규칙 단위 테스트 |
 | `prompts/` | 정보 추출 프롬프트(진단 금지, 사실만) |
@@ -42,6 +43,8 @@
 오디오 검사 코드가 수집하는 항목과 산출물은
 [`docs/오디오-입출력-검증-도구.md`](docs/오디오-입출력-검증-도구.md)에 설명합니다.
 실제 장비의 합격 여부는 별도 검증 절차로 판정합니다.
+사전녹음 파일 목록과 제작·청취·에코 검증은
+[`docs/사전녹음-안내-음성.md`](docs/사전녹음-안내-음성.md)를 따릅니다.
 
 가중치·녹음 데이터·`results/`·**`.env`(GMS 키)**는 커밋하지 않습니다(`.gitignore`).
 
@@ -144,7 +147,7 @@ cd ai/stt
 python -m tools.check_env --load  # STT/VAD 로드 → 캐시 생성 + GMS 실호출 점검
 ```
 
-> TTS는 사전녹음 wav(`assets/`, 저장소에 포함)라 캐싱이 필요 없고, LLM(GMS)은 온라인 전용
+> 안내 음성은 사전녹음 WAV(`assets/`, 저장소에 포함)라 캐싱이 필요 없고, LLM(GMS)은 온라인 전용
 > — 네트워크 단절이 확인되면 신규 STT 대화는 시작하지 않는다. 33-8 폴백은
 > STT 완료 후 GMS 호출만 실패한 경우에 사용한다.
 
@@ -176,7 +179,7 @@ python -m sentinel_voice.pipeline  # 1=마이크 8초, 2=파일 / 트리거는 V
 
 1. **STT int8** — `config.py`가 젯슨에서 자동으로 `int8` 선택(float16 대비 메모리 절반).
    강제하려면 `SENTINEL_COMPUTE=int8`.
-2. **TTS 사전녹음** — ✅ 적용됨. 고정 안내 문구는 `assets/` wav 재생(MeloTTS 미탑재, 1~2GB 절약).
+2. **안내 음성 사전녹음** — ✅ 재생·검증 코드 적용됨. 실제 승인 WAV는 녹음·청취 검수 후 포함(MeloTTS 미탑재).
 3. **LLM 미탑재** — ✅ 적용됨. GMS API 호출로 젯슨 LLM RAM 0 (구 로컬 3b는 피크 5.62GB였음).
 
 ### STEP 5 — 측정 (보고서 핵심 수치)

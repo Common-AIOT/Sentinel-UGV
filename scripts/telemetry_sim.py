@@ -22,12 +22,16 @@ import argparse
 import json
 import signal
 import sys
+import threading
 import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
 import paho.mqtt.client as mqtt
+
+# 연결 수립을 기다리는 시간. 인증 실패는 CONNACK 로 오므로 접속 자체는 성공한다.
+CONNECT_TIMEOUT_SECONDS = 10
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SAMPLES = REPO_ROOT / "common" / "samples"
@@ -57,13 +61,20 @@ def topic_for(robot_id: str, channel: str) -> str:
 
 
 def publish(client: mqtt.Client, robot_id: str, channel: str, message: dict) -> None:
+    """발행 결과를 확인한다.
+
+    연결이 없으면 paho 는 조용히 버리고 예외도 던지지 않는다. 확인하지 않으면 인증 실패
+    상태에서도 "발행했다"고 출력되어 서버 쪽을 헛되게 뒤지게 된다.
+    """
     qos, retain = CHANNEL_POLICY[channel]
-    client.publish(
+    info = client.publish(
         topic_for(robot_id, channel),
         json.dumps(message, ensure_ascii=False),
         qos=qos,
         retain=retain,
     )
+    if info.rc != mqtt.MQTT_ERR_SUCCESS:
+        raise RuntimeError(f"{channel} 발행 실패: rc={info.rc}")
 
 
 def presence_message(robot_id: str, status: str, reason: str | None) -> dict:
@@ -122,8 +133,34 @@ def main() -> int:
         retain=retain,
     )
 
+    # CONNACK 를 기다렸다가 실패하면 즉시 멈춘다. 인증 실패(비밀번호·ACL)를 여기서 드러낸다.
+    connected = threading.Event()
+    connect_failure: list[str] = []
+
+    def on_connect(_client, _userdata, _flags, reason_code, _properties=None):
+        if reason_code == 0:
+            connected.set()
+        else:
+            connect_failure.append(str(reason_code))
+            connected.set()
+
+    client.on_connect = on_connect
+
     client.connect(args.host, args.port, keepalive=30)
     client.loop_start()
+
+    if not connected.wait(CONNECT_TIMEOUT_SECONDS):
+        client.loop_stop()
+        print(f"접속 실패: {args.host}:{args.port} 에서 CONNACK 를 받지 못했다", file=sys.stderr)
+        return 1
+    if connect_failure:
+        client.loop_stop()
+        print(
+            f"접속 거부: {connect_failure[0]} — 계정·비밀번호를 확인하라",
+            file=sys.stderr,
+        )
+        return 1
+    print(f"접속 성공: {args.host}:{args.port} (user={args.username or '익명'})")
 
     publish(client, args.robot_id, "presence", presence_message(args.robot_id, "ONLINE", None))
     print(f"presence ONLINE 발행: {topic_for(args.robot_id, 'presence')}")

@@ -31,4 +31,15 @@ npm run lint
 
 ## 백엔드 연동
 
-`features/robot/RobotContext.tsx`의 `USE_MOCK`가 `true`면 목 시뮬레이션으로 동작합니다. 실제 백엔드(WebSocket/STOMP `ws://localhost:8080`, REST `/api/...`) 연동은 `USE_MOCK`를 끄고 `API` 엔드포인트를 배선하며 진행합니다. 브라우저에 노출 가능한 값만 `NEXT_PUBLIC_` 환경 변수로 정의합니다.
+`features/robot/RobotContext.tsx`의 `USE_MOCK`가 `true`면 목 시뮬레이션으로 동작합니다. 실제 백엔드 연동은 `USE_MOCK`를 끄고 `API` 엔드포인트를 배선하며 진행합니다. 브라우저에 노출 가능한 값만 `NEXT_PUBLIC_` 환경 변수로 정의합니다.
+
+백엔드 주소는 환경 변수로 주입합니다. 값이 없으면 로컬 개발 기준(`http://localhost:8080`)으로 동작합니다.
+
+| 변수 | 운영 값 | 용도 |
+|---|---|---|
+| `NEXT_PUBLIC_API_BASE_URL` | `https://api.sentinel-ugv.xyz` | REST API |
+| `NEXT_PUBLIC_WS_URL` | `wss://api.sentinel-ugv.xyz/ws` | STOMP/WebSocket |
+
+로컬은 `frontend/.env.local`에 두고, 배포는 **Vercel 프로젝트 환경 변수**(Settings → Environment Variables)에 등록합니다. CI는 `vercel deploy --prod`만 호출하므로 GitLab 변수로는 주입되지 않습니다.
+
+백엔드는 이 출처를 CORS 허용 목록(`app.cors.allowed-origins`)에 두어야 브라우저 호출이 통과합니다.

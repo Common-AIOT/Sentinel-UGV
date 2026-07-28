@@ -178,6 +178,35 @@ test:frontend:
     - npx tsc --noEmit
     - npx next build
 
+# 공통 메시지 계약 검증입니다 (S15P11A301-128).
+#
+# 명세 31-12가 이 검사를 요구합니다. "Python과 Java가 같은 JSON 계약을 사용하도록
+# common/schemas에 JSON Schema를 두고 CI에서 예제 메시지를 검증한다."
+#
+# 젯슨(Python)과 백엔드(Java)가 같은 봉투를 쓰는지 확인할 유일한 장치입니다.
+# 한쪽이 필드명을 바꾸면 여기서 잡히지 않으면 런타임에야 터집니다.
+#
+# ROS는 필요하지 않습니다. sentinel_bridge의 message_mapper와 mqtt_client가
+# rclpy를 import하지 않도록 만들었기 때문에 x86 Runner에서도 돕니다.
+test:message-contract:
+  stage: test
+  image: python:3.10-alpine
+  rules:
+    - changes:
+        - common/schemas/**/*
+        - common/samples/**/*
+        - jetson/ros2_ws/src/sentinel_bridge/**/*
+        - scripts/ci/validate_schemas.py
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+  before_script:
+    - pip install --quiet jsonschema "paho-mqtt>=2.1" pytest
+  script:
+    # 1. 스키마 자체와 예제 메시지
+    - python scripts/ci/validate_schemas.py
+    # 2. 코드가 만드는 메시지가 그 스키마를 통과하는지.
+    #    예제 파일 검증만으로는 구현이 어긋나도 통과한다.
+    - python -m pytest jetson/ros2_ws/src/sentinel_bridge/test -q
+
 # ROS 2 패키지의 colcon 빌드는 CI에 넣지 않습니다. Runner가 x86이면
 # nvv4l2decoder와 usb_cam 패치, Tegra 전용 요소를 다룰 수 없어 CI 통과가
 # Jetson 동작을 보장하지 못합니다. 파이프라인만 느려집니다.

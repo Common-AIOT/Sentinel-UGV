@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sentinel-ugv.xyz/schemas/telemetry.schema.json",
+  "title": "ROBOT_TELEMETRY 본문",
+  "description": "명세 31-6 Telemetry의 data 본문이다. 임무 중 2Hz, QoS 0, Retain 없음(31-4).\n\n미확보 필드는 null로 보낸다. ESP32 연동(S15P11A301-84~86)이 끝나기 전에는 environment, battery, motion, health.mcuConnected가 null이다. 필드를 나중에 추가하면 백엔드 파싱과 DB 스키마, 프런트엔드 표시를 다시 건드려야 하므로 처음부터 전체 형태를 보낸다.",
+  "type": "object",
+  "required": [
+    "pose",
+    "motion",
+    "battery",
+    "environment",
+    "compute",
+    "health",
+    "missionState"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "pose": {
+      "description": "지도 좌표계 위치. SLAM이 붙기 전에는 null이다.",
+      "type": ["object", "null"],
+      "required": ["x", "y", "yaw", "mapId"],
+      "additionalProperties": false,
+      "properties": {
+        "x": {"type": "number"},
+        "y": {"type": "number"},
+        "yaw": {
+          "description": "라디안. REP-103에 따라 반시계 방향이 양수다.",
+          "type": "number"
+        },
+        "mapId": {"type": ["string", "null"]}
+      }
+    },
+    "motion": {
+      "description": "엔코더 기반 실측 속도. ESP32 연동 전에는 null이다.",
+      "type": ["object", "null"],
+      "required": ["linearVelocityMps", "angularVelocityRadps"],
+      "additionalProperties": false,
+      "properties": {
+        "linearVelocityMps": {"type": "number"},
+        "angularVelocityRadps": {"type": "number"}
+      }
+    },
+    "battery": {
+      "description": "ESP32 연동 전에는 null이다.",
+      "type": ["object", "null"],
+      "required": ["voltage", "percent"],
+      "additionalProperties": false,
+      "properties": {
+        "voltage": {"type": "number", "minimum": 0},
+        "percent": {"type": "number", "minimum": 0, "maximum": 100}
+      }
+    },
+    "environment": {
+      "description": "DHT11 온습도. ESP32가 수집해 USB Serial로 젯슨에 보낸다(31-1). ESP32 연동 전에는 null이다.",
+      "type": ["object", "null"],
+      "required": ["temperatureC", "humidityPercent"],
+      "additionalProperties": false,
+      "properties": {
+        "temperatureC": {"type": "number"},
+        "humidityPercent": {"type": "number", "minimum": 0, "maximum": 100}
+      }
+    },
+    "compute": {
+      "description": "젯슨이 스스로 아는 값이므로 ESP32와 무관하게 항상 채운다.",
+      "type": ["object", "null"],
+      "required": ["cpuPercent", "gpuPercent", "memoryPercent", "jetsonTempC"],
+      "additionalProperties": false,
+      "properties": {
+        "cpuPercent": {"type": "number", "minimum": 0, "maximum": 100},
+        "gpuPercent": {"type": ["number", "null"], "minimum": 0, "maximum": 100},
+        "memoryPercent": {"type": "number", "minimum": 0, "maximum": 100},
+        "jetsonTempC": {"type": ["number", "null"]}
+      }
+    },
+    "health": {
+      "description": "구성요소별 연결 상태. 관제 화면이 무엇이 빠졌는지 알려주는 근거다.",
+      "type": "object",
+      "required": ["mcuConnected", "lidarOk", "cameraOk"],
+      "additionalProperties": false,
+      "properties": {
+        "mcuConnected": {
+          "description": "ESP32 USB Serial 연결. 연동 전에는 null이다. false와 null은 다르다. false는 확인했고 끊긴 것이고 null은 확인할 수단이 없는 것이다.",
+          "type": ["boolean", "null"]
+        },
+        "lidarOk": {"type": ["boolean", "null"]},
+        "cameraOk": {"type": ["boolean", "null"]}
+      }
+    },
+    "missionState": {
+      "description": "임무 상태 머신(14.1, 26.2)의 현재 상태.",
+      "type": ["string", "null"]
+    }
+  }
+}

@@ -1,0 +1,37 @@
+# cloud_bridge 설정 (S15P11A301-128)
+#
+# 브로커는 EC2에 있다. SSAFY 망이 인바운드를 막아 젯슨에 두면 Spring이 젯슨으로
+# 접속해 들어가야 하는데 불가능하기 때문이다(31-1).
+#
+# 자격증명을 이 파일에 커밋하지 않는다. launch 인자나 환경변수로 주입한다.
+# EC2 브로커는 S15P11A301-103에서 만든다.
+/**:
+  ros__parameters:
+    robot_id: SENTINEL-01
+
+    # 8883은 MQTT over TLS다. 평문 1883은 인터넷에 공개하지 않는다(31-11).
+    broker_host: 127.0.0.1
+    broker_port: 8883
+    broker_username: ''
+    broker_password: ''
+
+    # 차량별 X.509 클라이언트 인증서는 31-14가 확장으로 분류했으므로 쓰지 않는다.
+    # 서버 인증서 검증만 한다.
+    tls_ca_certs: ''
+    tls_insecure: false
+
+    keepalive_seconds: 30
+
+    # 31-1이 MQTT 5를 지정한다. 로컬 테스트 브로커(amqtt)는 3.1.1까지만
+    # 지원하므로 검증할 때만 3으로 내린다.
+    protocol_version: 5
+
+    # 31-4. state는 1초 heartbeat, telemetry는 2Hz.
+    state_period_seconds: 1.0
+    telemetry_period_seconds: 0.5
+
+    camera_topic: /camera/image_raw/compressed
+    scan_topic: /scan
+
+    # 단절 중 이벤트 보관. 링 버퍼·pending과 같은 볼륨에 둔다(32-5).
+    outbox_path: /var/lib/sentinel/bridge/outbox.sqlite3

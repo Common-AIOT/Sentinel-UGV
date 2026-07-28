@@ -1,0 +1,33 @@
+# Mosquitto 참고 설정 (S15P11A301-128 → S15P11A301-103에서 EC2에 적용)
+#
+# 이 파일은 예시다. 배포 설정은 백엔드 담당이 compose.prod.yaml과 함께 관리한다.
+# 젯슨에서 이 구성으로 TLS·인증·ACL을 실제로 검증했다(2026-07-28).
+#
+# 명세 31-11의 최소 보안 요구를 그대로 옮긴 것이다.
+#   - 평문 1883을 인터넷에 공개하지 않는다
+#   - 익명 접속을 차단하고 차량별 계정과 ACL을 적용한다
+#   - 젯슨 계정은 자신의 telemetry/state/events/acks만 발행하고
+#     자신의 cmd/*만 구독할 수 있다
+#   - Spring Boot 서비스 계정만 모든 차량 토픽에 접근한다
+
+# 리스너마다 인증 설정을 따로 두려면 반드시 필요하다. 빼면 첫 리스너 설정이
+# 전체에 적용된다.
+per_listener_settings true
+
+# 8883 MQTT over TLS. 젯슨과 Spring이 여기로 붙는다.
+listener 8883
+allow_anonymous false
+password_file /etc/mosquitto/passwd
+acl_file /etc/mosquitto/acl
+
+# 인증서는 기존 도메인 인증서를 재사용한다. 커밋하지 않는다.
+cafile /etc/mosquitto/certs/fullchain.pem
+certfile /etc/mosquitto/certs/fullchain.pem
+keyfile /etc/mosquitto/certs/privkey.pem
+
+# 차량별 X.509 클라이언트 인증서는 31-14가 확장으로 분류했다. 아이디와
+# 비밀번호로 충분하다.
+#   require_certificate true
+
+# 평문 리스너를 두지 않는다. 개발 중 로컬 확인이 필요하면 127.0.0.1에 바인딩한
+# 별도 리스너를 임시로 추가하고 배포에는 포함하지 않는다.

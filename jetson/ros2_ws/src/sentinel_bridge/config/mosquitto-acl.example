@@ -1,0 +1,13 @@
+# 명세 31-11. 젯슨 계정은 자신의 telemetry/state/events/acks만 발행하고
+# 자신의 cmd/*만 구독할 수 있다.
+user sentinel-01
+topic write sentinel/v1/robots/SENTINEL-01/presence
+topic write sentinel/v1/robots/SENTINEL-01/state
+topic write sentinel/v1/robots/SENTINEL-01/telemetry
+topic write sentinel/v1/robots/SENTINEL-01/events
+topic write sentinel/v1/robots/SENTINEL-01/acks
+topic read  sentinel/v1/robots/SENTINEL-01/cmd/#
+
+# Spring Boot 서비스 계정만 모든 차량 토픽에 접근한다.
+user spring-service
+topic readwrite sentinel/v1/robots/#

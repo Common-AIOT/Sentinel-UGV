@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "1.0",
+  "messageId": "e58a2d94-3c71-4b05-9e8f-2d64a170bc35",
+  "messageType": "ROBOT_STATE",
+  "robotId": "SENTINEL-01",
+  "missionId": null,
+  "sequence": 87,
+  "sentAt": "2026-07-28T03:12:00.000Z",
+  "data": {
+    "robotId": "SENTINEL-01",
+    "missionState": "SAFE_IDLE",
+    "controlMode": null,
+    "safetyState": "SAFE_IDLE",
+    "activeMissionId": null,
+    "components": {
+      "camera": true,
+      "lidar": true,
+      "streaming": true,
+      "mcu": false
+    }
+  }
+}

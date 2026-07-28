@@ -155,6 +155,23 @@ if ! gst-inspect-1.0 rtspclientsink >/dev/null 2>&1; then
   echo "      미설치 상태에서는 streaming.launch.py가 udp_mpegts로 폴백한다." >&2
 fi
 
+# sentinel_bridge는 paho-mqtt로 관제 서버에 발행한다(31-3). ROS 노드는 시스템
+# 파이썬으로 도므로 venv가 아니라 시스템 쪽에 있어야 한다. venv를 활성화한
+# 셸에서 확인하면 잘못된 결과가 나오므로 /usr/bin/python3로 직접 확인한다.
+if ! /usr/bin/python3 -c "import paho.mqtt" >/dev/null 2>&1; then
+  echo "경고: 시스템 파이썬에 paho-mqtt가 없다. cloud_bridge가 기동하지 않는다." >&2
+  echo "      sudo apt install -y python3-paho-mqtt" >&2
+  echo "      또는 sudo 없이:" >&2
+  echo "      /usr/bin/python3 -m pip install --user 'paho-mqtt>=2.1'" >&2
+fi
+
+# 계약 검증(scripts/ci/validate_schemas.py)에 필요하다. CI는 스스로 설치하지만
+# 로컬에서 미리 돌려보려면 있어야 한다.
+if ! /usr/bin/python3 -c "import jsonschema" >/dev/null 2>&1; then
+  echo "권장: jsonschema가 없다. 공통 메시지 계약을 로컬에서 검증할 수 없다." >&2
+  echo "      /usr/bin/python3 -m pip install --user jsonschema" >&2
+fi
+
 # CI의 lint:shell이 shellcheck로 scripts/*.sh를 검사한다. 로컬에 없으면 CI에서야
 # 실패를 알게 되므로 설치를 권한다. sudo 없이 받을 수 있다.
 if ! command -v shellcheck >/dev/null 2>&1; then

@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>sentinel_bridge</name>
+  <version>0.1.0</version>
+  <description>ROS 토픽을 MQTT로 변환해 관제 서버에 발행한다 (S15P11A301-128).</description>
+  <maintainer email="team@example.com">Sentinel Team</maintainer>
+  <license>Apache-2.0</license>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <!--
+    MQTT 5 클라이언트. 명세 31-3이 paho-mqtt를 권장한다.
+    설치 방법은 README의 「의존성」 절에 적었다.
+
+    주의: XML 주석 안에는 연속된 하이픈 두 개를 쓸 수 없다. 명령줄 옵션을
+    주석에 그대로 적으면 파싱이 깨지는데, colcon은 그것을 조용히 넘기고 이
+    패키지를 ROS 패키지가 아닌 일반 python 패키지로 취급한다. 그러면 빌드는
+    성공하지만 ament_prefix_path 훅이 생기지 않아 ros2 run이 패키지를 찾지
+    못한다. 실제로 겪었다(S15P11A301-128).
+  -->
+  <exec_depend>python3-paho-mqtt</exec_depend>
+
+  <export><build_type>ament_python</build_type></export>
+</package>

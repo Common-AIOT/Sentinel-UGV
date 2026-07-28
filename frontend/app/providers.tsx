@@ -4,11 +4,14 @@ import type { ReactNode } from "react";
 import { Toaster } from "sonner";
 import { RobotProvider } from "@/features/robot/RobotContext";
 import { StreamingProvider } from "@/features/streaming/StreamingContext";
+import { GamepadProvider } from "@/features/control/GamepadContext";
 
 export function Providers({ children }: { children: ReactNode }) {
   return (
     <RobotProvider>
-      <StreamingProvider>{children}</StreamingProvider>
+      <StreamingProvider>
+        <GamepadProvider>{children}</GamepadProvider>
+      </StreamingProvider>
       <Toaster
         position="bottom-right"
         toastOptions={{

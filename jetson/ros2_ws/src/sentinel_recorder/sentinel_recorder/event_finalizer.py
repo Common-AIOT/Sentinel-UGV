@@ -103,6 +103,38 @@ def sha256_of(path: Path, chunk_size: int = 1 << 20) -> str:
     return digest.hexdigest()
 
 
+def write_report(path: Path, report: dict[str, Any]) -> None:
+    """`report.json`을 원자적으로 쓴다.
+
+    `write_text`로 쓰면 안 된다. 두 가지 이유가 있다.
+
+    첫째, `recording_manager`와 `media_uploader`는 별 프로세스이고 같은 파일을
+    쓴다(전자는 상태 전이·복구, 후자는 `uploadState`). 한쪽이 쓰는 중에 다른 쪽이
+    읽으면 잘린 JSON을 본다. 실제로 그렇게 됐고, `UploadWorker`가 그 이벤트를
+    `REPORT_UNREADABLE`로 영구 실패 처리해 다시는 올리지 않았다.
+
+    둘째, 32-5는 공간이 부족해도 "썸네일과 JSON 보고서는 남긴다"고 정했다. 쓰기
+    도중에 전원이 끊겨 보고서가 손상되면 그 이벤트는 무엇이었는지조차 알 수 없다.
+    MP4는 이미 `.partial` + `os.replace`로 이 문제를 막고 있는데 보고서만 빠져
+    있었다.
+
+    `fsync`까지 한다. `os.replace`는 원자적이지만 데이터가 디스크에 닿았다는 보장은
+    아니다. microSD에서 전원이 끊기면 이름만 바뀌고 내용이 0바이트일 수 있다.
+    """
+    temporary = path.with_suffix(path.suffix + '.tmp')
+    payload = json.dumps(report, ensure_ascii=False, indent=2)
+    with temporary.open('w', encoding='utf-8') as handle:
+        handle.write(payload)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temporary, path)
+
+
+def read_report(path: Path) -> dict[str, Any]:
+    """`report.json`을 읽는다. 실패는 호출자가 판단하도록 예외를 그대로 올린다."""
+    return json.loads(path.read_text(encoding='utf-8'))
+
+
 def write_concat_list(segments: list[Segment], directory: Path) -> Path:
     """ffmpeg concat demuxer 입력 파일.
 
@@ -246,7 +278,7 @@ class EventFinalizer:
         # 6. 썸네일. 실패해도 이벤트를 실패로 만들지 않는다. 32-5가 공간 확보
         #    실패 시에도 "썸네일과 JSON 보고서는 남긴다"고 한 것처럼, 영상과
         #    썸네일은 독립적으로 다룬다.
-        thumbnail = self._make_thumbnail(final, work_directory, duration)
+        thumbnail = self.make_thumbnail(final, work_directory, duration)
 
         report = {
             'schemaVersion': '1.0',
@@ -290,9 +322,7 @@ class EventFinalizer:
                 ),
             },
         }
-        (work_directory / REPORT_NAME).write_text(
-            json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8'
-        )
+        write_report(work_directory / REPORT_NAME, report)
 
         return FinalizeResult(
             media_path=final,
@@ -304,11 +334,31 @@ class EventFinalizer:
             continuity=continuity,
         )
 
-    def _make_thumbnail(
-        self, media: Path, directory: Path, duration: float | None
+    def make_thumbnail(
+        self,
+        media: Path,
+        directory: Path,
+        duration: float | None,
+        offset_seconds: float | None = None,
     ) -> Path | None:
-        offset = self.thumbnail_offset_seconds
-        if duration is not None and duration <= offset:
+        """미디어 한 개에서 정지 프레임을 뽑는다.
+
+        MP4뿐 아니라 링 버퍼의 `.ts` 조각도 입력으로 받는다. 상한 초과로 MP4를
+        포기했을 때 조각에서 직접 뽑아야 하기 때문이다. 32-5는 그 경우에도
+        "썸네일과 JSON 보고서는 남긴다"고 정했고, 관제가 그 자리에 무슨 일이
+        있었는지 볼 유일한 시각 증거가 이것이다.
+
+        `offset_seconds=0`을 주면 파일 처음에서 뽑는다. **MPEG-TS 조각에는 이것이
+        필요하다.** TS에는 정확한 duration 헤더가 없어 입력 탐색이 부정확하고,
+        1초짜리 조각에서 `-ss 0.5`는 오류 메시지 없이 빈 파일을 만든다. 조각 하나가
+        1초이므로 그 안에서 어디를 뽑든 같은 순간이다.
+        """
+        offset = (
+            self.thumbnail_offset_seconds
+            if offset_seconds is None
+            else offset_seconds
+        )
+        if offset_seconds is None and duration is not None and duration <= offset:
             # 짧은 이벤트는 중간 지점에서 뽑는다. 오프셋이 길이를 넘으면 ffmpeg가
             # 프레임을 못 찾아 빈 파일을 만든다.
             offset = max(0.0, duration / 2)

@@ -261,3 +261,85 @@ def test_local_filename_differs_from_ring_filename():
     )
     assert first.local_filename == 'seg_00000100.ts'
     assert second.local_filename.endswith('.ts')
+
+
+# ----------------------------------------------------------------------
+# 보고서 쓰기의 원자성 (S15P11A301-124)
+# ----------------------------------------------------------------------
+
+
+def test_write_report_is_atomic_and_leaves_no_temporary(tmp_path):
+    """쓰는 중에 읽어도 잘린 JSON이 보이면 안 된다.
+
+    `recording_manager`와 `media_uploader`는 별 프로세스이고 같은 `report.json`을
+    쓴다. 비원자적으로 쓰던 동안, 겹친 한 번이 이벤트를 영구 실패로 떨어뜨려 다시는
+    업로드하지 않았다. 그래서 원자성이 이 파일의 계약이다.
+    """
+    from sentinel_recorder.event_finalizer import read_report, write_report
+
+    path = tmp_path / 'report.json'
+    write_report(path, {'uploadState': 'UPLOAD_PENDING', 'note': '가' * 5000})
+
+    # 큰 본문을 여러 번 덮어써도, 매 시점의 파일은 항상 완전한 JSON이다.
+    for index in range(20):
+        write_report(path, {'uploadState': 'AVAILABLE', 'seq': index, 'pad': '나' * 5000})
+        assert read_report(path)['seq'] == index
+
+    leftovers = [entry.name for entry in tmp_path.iterdir() if entry.name != 'report.json']
+    assert leftovers == [], f'임시 파일이 남았다: {leftovers}'
+
+
+def test_unreadable_report_is_retryable():
+    """보고서를 못 읽는 것은 영구 실패가 아니다.
+
+    영구 실패로 표시하면 워커가 그 이벤트를 다시 시도하지 않는다. 일시적인 읽기
+    실패 하나로 이벤트 영상을 영원히 잃는 경로였다.
+    """
+    from sentinel_recorder.upload_worker import UploadWorker
+    from sentinel_recorder.upload_client import UploadError
+
+    worker = UploadWorker.__new__(UploadWorker)
+    try:
+        worker._read_report(Path('/nonexistent-directory-for-test'))
+    except UploadError as error:
+        assert error.reason == 'REPORT_UNREADABLE'
+        assert error.retryable, '재시도하지 않으면 이벤트를 잃는다'
+    else:
+        raise AssertionError('읽기 실패에 UploadError를 올려야 한다')
+
+
+def test_worker_skips_event_whose_finalize_has_not_registered_checksum(tmp_path):
+    """마무리 중인 이벤트를 업로드 대상으로 잡으면 안 된다.
+
+    32-5의 순서상 `event.mp4`는 이미 최종 이름인데 보고서에 `media.sha256`이 아직
+    없는 순간이 있다. 그 창에서 집으면 `CHECKSUM_MISSING`으로 이벤트를 잃었다.
+    """
+    from sentinel_recorder.event_finalizer import write_report
+    from sentinel_recorder.pending_store import PendingStore
+    from sentinel_recorder.upload_worker import UploadWorker
+
+    directory = tmp_path / 'eb1c6850-0000-4000-8000-000000000000'
+    directory.mkdir()
+    (directory / 'event.mp4').write_bytes(b'\x00' * 1024)
+    # `_begin_event`가 남기는 진행 중 보고서. media 블록이 아직 없다.
+    write_report(directory / 'report.json', {'encounterId': directory.name, 'startedAt': 'x'})
+
+    store = PendingStore(tmp_path)
+    event = store.scan()[0]
+    assert event.has_media, '영상 파일은 이미 최종 이름이다'
+    assert not event.ready_for_upload, '체크섬이 없으면 올릴 준비가 안 된 것이다'
+
+    class ExplodingClient:
+        def upload(self, **_kwargs):
+            raise AssertionError('마무리 중인 이벤트로 백엔드를 호출하면 안 된다')
+
+    stats = UploadWorker(store, ExplodingClient()).run_once(now=0.0)
+    assert stats.attempted == 0
+    assert stats.skipped_permanent == 0, '영구 실패로 굳으면 다시 올리지 않는다'
+
+    # 마무리가 끝나면 같은 이벤트가 대상이 된다.
+    write_report(
+        directory / 'report.json',
+        {'encounterId': directory.name, 'media': {'sha256': 'a' * 64}},
+    )
+    assert PendingStore(tmp_path).scan()[0].ready_for_upload

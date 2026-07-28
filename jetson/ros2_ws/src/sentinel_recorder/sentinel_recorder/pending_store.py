@@ -39,7 +39,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .event_finalizer import FINAL_NAME, REPORT_NAME, THUMBNAIL_NAME
+from .event_finalizer import (
+    FINAL_NAME,
+    REPORT_NAME,
+    THUMBNAIL_NAME,
+    read_report,
+    write_report,
+)
 
 UPLOAD_STATE_PENDING = 'UPLOAD_PENDING'
 UPLOAD_STATE_AVAILABLE = 'AVAILABLE'
@@ -60,6 +66,7 @@ class PendingEvent:
     total_bytes: int
     upload_state: str
     finalized_at: str | None
+    has_checksum: bool = False
 
     @property
     def uploaded(self) -> bool:
@@ -68,6 +75,23 @@ class PendingEvent:
     @property
     def has_media(self) -> bool:
         return (self.directory / FINAL_NAME).exists()
+
+    @property
+    def ready_for_upload(self) -> bool:
+        """업로드해도 되는 이벤트인가.
+
+        `has_media`만 보면 안 된다. 32-5의 순서가
+
+            SHA-256 계산 → event.mp4 원자적 rename → 썸네일 → UPLOAD_PENDING 등록
+
+        이므로 rename은 끝났고 보고서 등록은 아직인 순간이 존재한다. 그 창에서
+        스캔하면 영상은 있는데 체크섬이 없고, `UploadWorker`가 그것을
+        `CHECKSUM_MISSING`으로 처리해 이벤트를 잃었다.
+
+        `media.sha256`은 마무리가 끝났다는 신호다. 발급 요청에 반드시 넣어야 하는
+        값이기도 하므로(31-7 2단계), 그것이 있으면 올릴 준비가 됐다는 뜻이다.
+        """
+        return self.has_media and self.has_checksum
 
 
 class PendingStore:
@@ -120,10 +144,12 @@ class PendingStore:
             report_path = child / REPORT_NAME
             upload_state = UPLOAD_STATE_PENDING
             finalized_at: str | None = None
+            has_checksum = False
             try:
-                report = json.loads(report_path.read_text(encoding='utf-8'))
+                report = read_report(report_path)
                 upload_state = str(report.get('uploadState', UPLOAD_STATE_PENDING))
                 finalized_at = report.get('finalizedAt')
+                has_checksum = bool((report.get('media') or {}).get('sha256'))
             except (OSError, json.JSONDecodeError):
                 pass
 
@@ -139,6 +165,7 @@ class PendingStore:
                         total_bytes=self._directory_bytes(child),
                         upload_state=upload_state,
                         finalized_at=finalized_at,
+                        has_checksum=has_checksum,
                     ),
                 )
             )
@@ -230,7 +257,7 @@ class PendingStore:
 
         report_path = directory / REPORT_NAME
         try:
-            report = json.loads(report_path.read_text(encoding='utf-8'))
+            report = read_report(report_path)
         except (OSError, json.JSONDecodeError):
             report = {'schemaVersion': '1.0'}
         report['mediaState'] = MEDIA_STATE_DISK_FULL
@@ -242,9 +269,7 @@ class PendingStore:
             media_block['sizeBytes'] = 0
             # 썸네일은 남기므로 참조를 유지한다.
             media_block.setdefault('thumbnail', THUMBNAIL_NAME)
-        report_path.write_text(
-            json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8'
-        )
+        write_report(report_path, report)
 
     def cleanup_segments(self, directory: Path) -> int:
         """MP4를 만든 뒤 hard link한 조각을 지운다.

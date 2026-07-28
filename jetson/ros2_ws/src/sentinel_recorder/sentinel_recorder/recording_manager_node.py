@@ -44,6 +44,8 @@ from .event_finalizer import (
     REPORT_NAME,
     EventFinalizer,
     FinalizeError,
+    read_report,
+    write_report,
 )
 from .pending_store import PendingStore, UPLOAD_STATE_PENDING
 from .segment_store import Segment, SegmentStore, format_utc, parse_utc
@@ -214,7 +216,7 @@ class RecordingManagerNode(Node):
         """
         report_path = directory / REPORT_NAME
         try:
-            report = json.loads(report_path.read_text(encoding='utf-8'))
+            report = read_report(report_path)
             detected_at = parse_utc(str(report['detectedAt']))
         except (OSError, json.JSONDecodeError, KeyError, ValueError):
             self.pending.cleanup_segments(directory)
@@ -285,9 +287,7 @@ class RecordingManagerNode(Node):
         # 복구된 영상임을 명시한다. 사전·사후 구간이 조각 mtime 기반이라 정확도가
         # 정상 경로보다 낮다는 사실을 관제가 알아야 한다.
         try:
-            recovered_report = json.loads(
-                (directory / REPORT_NAME).read_text(encoding='utf-8')
-            )
+            recovered_report = read_report(directory / REPORT_NAME)
             recovered_report['mediaState'] = 'LOCAL'
             recovered_report['uploadState'] = UPLOAD_STATE_PENDING
             recovered_report['recovered'] = True
@@ -297,10 +297,7 @@ class RecordingManagerNode(Node):
                 '조각 시각을 파일 mtime으로 추정했으므로 coverage 값의 정확도가 '
                 '정상 경로보다 낮다.'
             )
-            (directory / REPORT_NAME).write_text(
-                json.dumps(recovered_report, ensure_ascii=False, indent=2),
-                encoding='utf-8',
-            )
+            write_report(directory / REPORT_NAME, recovered_report)
         except (OSError, json.JSONDecodeError):
             pass
 
@@ -314,7 +311,7 @@ class RecordingManagerNode(Node):
     def _write_corrupt_report(self, directory: Path, detail: str) -> None:
         report_path = directory / REPORT_NAME
         try:
-            report = json.loads(report_path.read_text(encoding='utf-8'))
+            report = read_report(report_path)
         except (OSError, json.JSONDecodeError):
             report = {'schemaVersion': '1.0', 'encounterId': directory.name}
         report['mediaState'] = 'CORRUPT'
@@ -322,9 +319,7 @@ class RecordingManagerNode(Node):
             f'{detail}. 전원 차단이나 프로세스 강제 종료로 보인다.'
         )
         report['recoveredAt'] = format_utc(self._now())
-        report_path.write_text(
-            json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8'
-        )
+        write_report(report_path, report)
 
     # ------------------------------------------------------------------
     # 트리거
@@ -470,9 +465,7 @@ class RecordingManagerNode(Node):
             'startedAt': format_utc(event.started_at),
         }
         try:
-            (self.work_directory / REPORT_NAME).write_text(
-                json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8'
-            )
+            write_report(self.work_directory / REPORT_NAME, report)
         except OSError as error:
             self.get_logger().warn(f'진행 중 보고서 기록 실패: {error}')
 
@@ -544,7 +537,12 @@ class RecordingManagerNode(Node):
                 f"상한 {verdict['capBytes'] / 1e6:.0f}MB. "
                 '썸네일과 보고서는 남긴다(32-5).'
             )
-            self._write_minimal_report(event, end_reason)
+            # 영상은 포기하지만 썸네일은 조각에서 뽑는다. 32-5가 이 경우에도
+            # "썸네일과 JSON 보고서는 남긴다"고 정했다. 조각은 아직 작업 디렉터리에
+            # 있고(cleanup_segments는 아래에서 부른다) 썸네일은 수십 KB라 상한에
+            # 실질적 영향이 없다.
+            thumbnail = self._thumbnail_from_segments(segments)
+            self._write_minimal_report(event, end_reason, thumbnail=thumbnail)
             self.pending.mark_disk_full(
                 self.work_directory, '미업로드분만으로 상한을 넘었다'
             )
@@ -566,14 +564,24 @@ class RecordingManagerNode(Node):
             )
         except FinalizeError as error:
             self.get_logger().error(f'MP4 생성 실패: {error.reason} / {error.detail}')
-            self._write_minimal_report(event, end_reason, failure=error.reason)
+            self._write_minimal_report(
+                event,
+                end_reason,
+                failure=error.reason,
+                thumbnail=self._thumbnail_from_segments(segments),
+            )
             self.pending.cleanup_segments(self.work_directory)
             self._publish_status(self.machine.finish(False))
             self._reset_event()
             return
         except (OSError, subprocess.TimeoutExpired) as error:
             self.get_logger().error(f'MP4 생성 중 예외: {error}')
-            self._write_minimal_report(event, end_reason, failure='UNEXPECTED')
+            self._write_minimal_report(
+                event,
+                end_reason,
+                failure='UNEXPECTED',
+                thumbnail=self._thumbnail_from_segments(segments),
+            )
             self.pending.cleanup_segments(self.work_directory)
             self._publish_status(self.machine.finish(False))
             self._reset_event()
@@ -598,18 +606,48 @@ class RecordingManagerNode(Node):
             return
         report_path = self.work_directory / REPORT_NAME
         try:
-            report = json.loads(report_path.read_text(encoding='utf-8'))
+            report = read_report(report_path)
         except (OSError, json.JSONDecodeError):
             return
         report['uploadState'] = UPLOAD_STATE_PENDING
         report['mediaState'] = 'LOCAL'
         report['finalizedAt'] = format_utc(self._now())
-        report_path.write_text(
-            json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8'
-        )
+        write_report(report_path, report)
+
+    def _thumbnail_from_segments(self, segments: list[Segment]) -> Path | None:
+        """MP4 없이 조각에서 썸네일을 뽑는다 (32-5).
+
+        사전 구간이 끝난 지점의 조각을 쓴다. 첫 조각은 사람이 확정되기 전이라 빈
+        복도일 수 있고, 확정 시점이 썸네일로 더 쓸모 있다(EventFinalizer가 MP4에서
+        `pre_seconds` 지점을 쓰는 것과 같은 이유다).
+
+        실패는 삼킨다. 썸네일이 없는 것보다 보고서까지 못 쓰는 것이 나쁘다.
+        """
+        if not segments or self.work_directory is None:
+            return None
+        index = min(int(self._param('pre_seconds')), len(segments) - 1)
+        source = self.work_directory / segments[index].local_filename
+        if not source.exists():
+            return None
+        try:
+            # 조각 처음에서 뽑는다. TS는 입력 탐색이 부정확해 1초 조각에서 `-ss`를
+            # 주면 오류 없이 빈 파일이 나온다(make_thumbnail 참고).
+            return self.finalizer.make_thumbnail(
+                source,
+                self.work_directory,
+                float(self._param('segment_seconds')),
+                offset_seconds=0.0,
+            )
+        except (OSError, subprocess.TimeoutExpired) as error:
+            self.get_logger().warn(f'조각에서 썸네일 생성 실패: {error}')
+            return None
 
     def _write_minimal_report(
-        self, event, end_reason: str, failure: str | None = None
+        self,
+        event,
+        end_reason: str,
+        failure: str | None = None,
+        thumbnail: Path | None = None,
     ) -> None:
         """영상이 없어도 사실은 남긴다 (32-5).
 
@@ -627,15 +665,18 @@ class RecordingManagerNode(Node):
             'detectedAt': format_utc(event.detected_at),
             'endReason': end_reason,
             'personCount': event.person_count,
-            'media': {'path': None, 'sha256': None, 'sizeBytes': 0, 'thumbnail': None},
+            'media': {
+                'path': None,
+                'sha256': None,
+                'sizeBytes': 0,
+                'thumbnail': thumbnail.name if thumbnail else None,
+            },
             'uploadState': UPLOAD_STATE_PENDING,
             'finalizedAt': format_utc(self._now()),
         }
         if failure:
             report['mediaState'] = f'RECORDING_FAILED_{failure}'
-        report_path.write_text(
-            json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8'
-        )
+        write_report(report_path, report)
 
     def _reset_event(self) -> None:
         self.work_directory = None

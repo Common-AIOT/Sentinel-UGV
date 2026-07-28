@@ -225,9 +225,6 @@ build:backend-image:
     - name: docker:24.0.5-dind
       command: ["--tls=false"]
   variables:
-    DOCKER_HOST: tcp://docker:2375
-    DOCKER_TLS_CERTDIR: ""
-  variables:
     # DinD 서비스가 TLS 없이 실행되도록 설정 (빈 문자열 = TLS 비활성화)
     DOCKER_TLS_CERTDIR: ""
     # Docker 클라이언트가 DinD 서비스의 비-TLS 포트로 접속하도록 지정
@@ -246,8 +243,17 @@ build:backend-image:
     - docker build -t $DOCKER_HUB_USER/spring-backend:latest .
     - docker push $DOCKER_HUB_USER/spring-backend:latest
   rules:
-    # backend 폴더에 변경사항이 있을 때만 이 Job을 실행합니다. (파이프라인 최적화)
-    - changes:
+    # 기본 브랜치에서만 실행합니다. backend 폴더가 바뀐 경우로 한정합니다.
+    #
+    # 이전에는 브랜치 조건이 없어서 MR 파이프라인에서도 실행됐습니다.
+    # workflow:rules가 merge_request_event를 허용하므로, backend/를 건드린 MR을
+    # 올리면 머지 전 코드가 :latest 태그로 Docker Hub에 올라가고 deploy:ec2가
+    # 그것을 프로덕션에 배포했습니다(S15P11A301-127).
+    #
+    # :latest는 가변 태그이므로 MR이 덮어쓰면, 이후 기본 브랜치에서 도는
+    # deploy:ec2가 MR의 이미지를 배포할 수도 있었습니다.
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      changes:
         - backend/**/*
     # 사용자가 수동으로 파이프라인을 실행했을 때도 동작하도록 허용
     - if: '$CI_PIPELINE_SOURCE == "web"'
@@ -275,9 +281,14 @@ deploy:ec2:
     # 3. EC2 접속 후 최신 이미지 Pull 및 컨테이너 재시작
     - ssh $EC2_USER@$EC2_HOST "cd ~/deploy && docker compose -f compose.prod.yaml pull && docker compose -f compose.prod.yaml up -d"
   rules:
-    # build:backend-image와 동일한 조건: 백엔드 변경 시 또는 웹 수동 실행 시에만 실행
-    # (default branch 조건은 workflow:rules에서 이미 관리하므로 여기서 제거)
-    - changes:
+    # build:backend-image와 동일한 조건입니다.
+    #
+    # 이전 주석은 "default branch 조건은 workflow:rules에서 이미 관리하므로
+    # 여기서 제거"라고 적혀 있었습니다. workflow:rules는 merge_request_event도
+    # 허용하므로 그 전제가 성립하지 않습니다. 같은 파일의 deploy:frontend는
+    # 처음부터 기본 브랜치 조건을 명시하고 있었습니다(S15P11A301-127).
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      changes:
         - backend/**/*
     - if: '$CI_PIPELINE_SOURCE == "web"'
 

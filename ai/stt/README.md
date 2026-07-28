@@ -34,6 +34,7 @@
 | `sentinel_voice/gms_resilience.py` | GMS 장애 분류·제한 재시도·호스트 도달성 검사 |
 | `sentinel_voice/session_gate.py` | 신규 STT 세션 시작 전 GMS 가용성 게이트 |
 | `sentinel_voice/report_delivery.py` | 관제 전송 대기/대기열 인계 상태 계약 |
+| `sentinel_voice/report_lifecycle.py` | 관제 ACK·Mission Manager 재개 승인 상태머신 |
 | `sentinel_voice/pipeline.py` | 엔드투엔드 실행(마이크/파일) |
 | `sentinel_voice/conversation.py` | 5단계 다턴 상태머신과 VAD·STT·구조화 결과 4분류 |
 | `sentinel_voice/guide_audio.py` | 승인 문구 목록, WAV 형식 검사, 안전 재생 결과 |
@@ -90,6 +91,9 @@ cp .env.example .env       # Linux/Jetson
 
 필드별 한글 의미, `null`과 `UNKNOWN`의 차이, 결정 주체와 오류 예시는
 [`docs/음성-세션-보고-스키마.md`](docs/음성-세션-보고-스키마.md)를 따릅니다.
+관제 보고 생성부터 ACK 확인, Mission Manager 재개 승인, Closing 재생과 후속
+MQTT·ROS 2 연결 경계는
+[`docs/보고-ACK-탐사-재개.md`](docs/보고-ACK-탐사-재개.md)에 용어와 사례를 포함해 설명합니다.
 
 GMS와 키워드 폴백은 인원 수·이동 가능 여부·긴급 상태 언급만 추출합니다.
 응답 감지 여부와 종료 사유는 VAD·상태머신이 결정합니다.
@@ -228,6 +232,8 @@ python -m bench.pipeline_bench   # results/pipeline_bench_summary.csv
 
 GMS 장애 분류와 관제 전송 대기 상태는
 [`docs/GMS-장애-대응.md`](docs/GMS-장애-대응.md)를 따릅니다.
+관제 ACK와 탐사 재개 Closing 규칙은
+[`docs/보고-ACK-탐사-재개.md`](docs/보고-ACK-탐사-재개.md)를 따릅니다.
 
 ```bat
 python -m tools.check_gms_resilience

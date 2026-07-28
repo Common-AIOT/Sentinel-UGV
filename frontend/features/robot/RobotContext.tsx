@@ -16,15 +16,20 @@ import {
   type MissionState,
 } from "./mockData";
 
-// ── API endpoints (swap these for real backend) ────────────────────────────
+// ── API endpoints ──────────────────────────────────────────────────────────
+// 배포 환경마다 백엔드 주소가 다르므로 환경 변수로 주입한다. 값이 없으면 로컬 개발 기준으로
+// 동작한다. Vercel 에서는 프로젝트 환경 변수에 NEXT_PUBLIC_API_BASE_URL 을 설정한다.
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
+const WS_BASE = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:8080/ws";
+
 export const API = {
-  WS_CONTROL: "ws://localhost:8080/ws/control",
-  WS_SENSORS: "ws://localhost:8080/ws/sensors",
-  WS_DETECTIONS: "ws://localhost:8080/ws/detections",
-  WS_SIGNALING: "ws://localhost:8080/ws/signaling",
-  STOMP_BROKER: "ws://localhost:8080/ws",
-  CMD: (type: string) => `http://localhost:8080/api/command/${type}`,
-  BLACKBOX: "http://localhost:8080/api/blackbox",
+  WS_CONTROL: `${WS_BASE}/control`,
+  WS_SENSORS: `${WS_BASE}/sensors`,
+  WS_DETECTIONS: `${WS_BASE}/detections`,
+  WS_SIGNALING: `${WS_BASE}/signaling`,
+  STOMP_BROKER: WS_BASE,
+  CMD: (type: string) => `${API_BASE}/api/command/${type}`,
+  BLACKBOX: `${API_BASE}/api/blackbox`,
 };
 
 export const USE_MOCK = true; // flip to false when backend is ready

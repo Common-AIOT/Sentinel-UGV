@@ -8,6 +8,10 @@ spring:
       file: backend/compose.yaml
 
 app:
+  cors:
+    # 관제 웹은 Vercel, API 는 EC2 라서 출처가 다르다. 브라우저에서 직접 호출하는 출처만 허용한다.
+    # `https://*.vercel.app` 는 프리뷰 배포용이며 도메인이 매번 바뀌기 때문에 필요하다.
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000,https://sentinel-ugv-frontend.vercel.app,https://*.vercel.app}
   mqtt:
     # 스프링은 브로커와 같은 도커 네트워크에 있으므로 내부 평문 리스너로 붙는다.
     # 이 포트는 외부에 publish 하지 않는다(명세 31-11).

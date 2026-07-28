@@ -27,8 +27,10 @@ from . import config
 from .audio import load_mono
 from .config import FS
 from .guide_audio import GUIDE_ASSETS, GuideCode, GuidePlayer
-from .llm import extract as extract_info
+from .llm import extract_with_status
+from .report_delivery import queue_report
 from .safety import coerce_report, is_valid_stt, report_defaults, risk_assessment
+from .session_gate import SessionGateResult, check_session_gate
 
 print(f"모델 로딩... ({config.summary()})")
 vad = load_silero_vad()
@@ -60,7 +62,16 @@ def has_speech(wav):
 def report(info, risk):
     print(f"🩹 음성 세션 보고: {info}")
     print(f"🚨 위험도 참고값: {risk}")
-    print("📡 관제 서버 전송 (시뮬레이션)")
+    print("📡 관제 전송 요청 생성")
+
+
+def queue_and_announce(info):
+    """보고서를 전송 경계에 인계하고 ACK 전용 안내를 선택한다."""
+
+    delivery = queue_report(info)
+    print(f"📨 관제 보고 상태: {delivery.state.value} ({delivery.detail})")
+    speak(GUIDE_ASSETS[delivery.guide_code].text)
+    return delivery
 
 
 def unresponsive_report(reason):
@@ -74,20 +85,29 @@ def unresponsive_report(reason):
     )
     print(f"→ 무응답 관찰 사유: {reason}")
     report(info, risk_assessment(info))
-    speak(GUIDE_ASSETS[GuideCode.REPORT_PENDING].text)
+    queue_and_announce(info)
 
 
-def run(source, wav):
+def run(source, wav, *, gate_result: SessionGateResult | None = None):
     print(f"\n▶ 트리거: {source}")
     t0 = time.time()
 
-    # 0) 원본 레벨로 무음 판정 (정규화가 노이즈 증폭하기 전에!)
+    # 0) 일반 인터넷이 아니라 실제 GMS 호스트 도달성을 먼저 확인한다.
+    # 실패하면 팀 결정에 따라 신규 녹음·STT 세션을 시작하지 않는다.
+    gate = gate_result or check_session_gate()
+    if not gate.proceed:
+        print(f"⚠️ 음성 세션 시작 차단: {gate.state.value}")
+        speak(GUIDE_ASSETS[gate.guide_code].text)
+        print(f"⏱ E2E: {time.time() - t0:.1f}s")
+        return
+
+    # 1) 원본 레벨로 무음 판정 (정규화가 노이즈 증폭하기 전에!)
     raw_rms = np.sqrt(np.mean(wav ** 2))
     silent = raw_rms < config.SILENCE_RMS
     if not silent:
         wav = normalize(wav)
 
-    # 1) VAD 게이트
+    # 2) VAD 게이트
     if silent or not has_speech(wav):
         if source == "SED":
             print(f"→ 유효 음성 없음(raw_rms={raw_rms:.4f}) + SED → 무반응(중증)")
@@ -98,14 +118,14 @@ def run(source, wav):
         print(f"⏱ E2E: {time.time() - t0:.1f}s")
         return
 
-    # 2) STT
+    # 3) STT
     segs, _ = stt.transcribe(wav, initial_prompt=config.STT_PROMPT, **config.STT_DECODE)
     segs = list(segs)
     text = "".join(s.text for s in segs).strip()
     nsp = float(np.mean([s.no_speech_prob for s in segs])) if segs else 1.0
     print(f"📝 STT: '{text}' (ns={nsp:.2f})")
 
-    # 3) 환각 가드 (프라이밍 echo 판정에는 STT initial_prompt 를 넘긴다)
+    # 4) 환각 가드 (프라이밍 echo 판정에는 STT initial_prompt 를 넘긴다)
     ok, why = is_valid_stt(text, nsp, config.STT_PROMPT)
     if not ok:
         print(f"→ STT 무효({why})")
@@ -116,12 +136,16 @@ def run(source, wav):
         print(f"⏱ E2E: {time.time() - t0:.1f}s")
         return
 
-    # 4) LLM 추출(GMS) — 네트워크/API 실패 시 llm.extract 가 33-8 키워드 폴백으로 처리
-    extraction, llm_source = extract_info(text)
-    if llm_source != "GMS":
-        print(f"→ 추출 경로: {llm_source} (오프라인 축소안)")
+    # 5) STT 뒤 GMS 일시 장애는 한 번만 재시도한 뒤 33-8 폴백으로 축소한다.
+    gms_result = extract_with_status(text)
+    extraction = gms_result.extraction
+    if gms_result.source != "GMS":
+        print(
+            f"→ 추출 경로: {gms_result.source} "
+            f"(failure={gms_result.failure.kind.value}, attempts={gms_result.attempts})"
+        )
 
-    # 5) 규칙 등급 + 보고 + 안내
+    # 6) 규칙 등급 + 보고 대기 + 안내
     info = report_defaults()
     info.update(extraction)
     info["anyResponseDetected"] = True
@@ -131,17 +155,22 @@ def run(source, wav):
         info["reportedCountStatus"] = "SELF_REPORTED_GROUP_COUNT"
     info = coerce_report(info)
     report(info, risk_assessment(info))
-    speak(GUIDE_ASSETS[GuideCode.REPORT_PENDING].text)
+    queue_and_announce(info)
     print(f"⏱ E2E: {time.time() - t0:.1f}s")
 
 
 if __name__ == "__main__":
     mode = input("1=마이크, 2=파일: ").strip()
     src = (input("트리거(VISION/SED): ").strip().upper() or "VISION")
-    if mode == "1":
+    initial_gate = check_session_gate()
+    if not initial_gate.proceed:
+        # 네트워크 단절 시 마이크 녹음 자체를 시작하지 않는다.
+        run(src, np.empty(0, dtype=np.float32), gate_result=initial_gate)
+    elif mode == "1":
         print("8초 녹음... 말하세요!")
         wav = sd.rec(int(8 * FS), samplerate=FS, channels=1, dtype="float32").reshape(-1)
         sd.wait()
+        run(src, wav, gate_result=initial_gate)
     else:
         wav = load_mono(input("파일 경로: ").strip())
-    run(src, wav)
+        run(src, wav, gate_result=initial_gate)

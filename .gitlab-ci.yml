@@ -178,6 +178,36 @@ test:frontend:
     - npx tsc --noEmit
     - npx next build
 
+# 백엔드 컴파일과 메시지 계약 검증입니다 (S15P11A301-103).
+#
+# 이미지 빌드(DinD)는 넣지 않습니다. Dockerfile 이 안에서 gradle 빌드를 하므로
+# 컴파일이 깨지면 어차피 build:backend-image 에서 실패하고, 그 job 은 기본 브랜치에서만
+# 돕니다. 여기서 컴파일만 확인하면 MR 단계에서 같은 실패를 훨씬 싸게 잡습니다.
+#
+# MessageContractTest 는 common/samples 예제를 백엔드 DTO 로 직접 파싱합니다.
+# test:message-contract 가 Python 쪽만 검사하므로 Java 쪽 구멍을 이 테스트가 막습니다.
+# DB 가 필요한 테스트는 없으므로 Runner 에 서비스 컨테이너가 필요하지 않습니다.
+test:backend:
+  stage: test
+  image: eclipse-temurin:21-jdk-alpine
+  rules:
+    - changes:
+        - backend/**/*
+        - common/schemas/**/*
+        - common/samples/**/*
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+  cache:
+    key:
+      files:
+        - backend/build.gradle
+    paths:
+      - backend/.gradle/
+  script:
+    - cd backend
+    - chmod +x gradlew
+    - ./gradlew --no-daemon bootJar -x test
+    - ./gradlew --no-daemon test --tests '*MessageContractTest'
+
 # 공통 메시지 계약 검증입니다 (S15P11A301-128).
 #
 # 명세 31-12가 이 검사를 요구합니다. "Python과 Java가 같은 JSON 계약을 사용하도록
@@ -277,6 +307,13 @@ deploy:ec2:
     # 2. 실행 파일(compose.prod.yaml) 및 환경변수(.env) 전송
     - scp backend/compose.prod.yaml $EC2_USER@$EC2_HOST:~/deploy/compose.prod.yaml
     - scp $ENV_PROD $EC2_USER@$EC2_HOST:~/deploy/.env
+
+    # 2-1. MQTT 브로커 설정과 ACL 전송 (S15P11A301-103)
+    # 계정 비밀번호 파일(passwd)은 전송하지 않는다. 비밀이므로 EC2 에서 한 번 생성해
+    # 그대로 유지한다. 절차는 docs/private-docs/mqtt-setup.md 를 따른다.
+    - ssh $EC2_USER@$EC2_HOST "mkdir -p ~/deploy/mosquitto"
+    - scp backend/mosquitto/mosquitto.prod.conf $EC2_USER@$EC2_HOST:~/deploy/mosquitto/mosquitto.conf
+    - scp backend/mosquitto/acl $EC2_USER@$EC2_HOST:~/deploy/mosquitto/acl
 
     # 3. EC2 접속 후 최신 이미지 Pull 및 컨테이너 재시작
     - ssh $EC2_USER@$EC2_HOST "cd ~/deploy && docker compose -f compose.prod.yaml pull && docker compose -f compose.prod.yaml up -d"

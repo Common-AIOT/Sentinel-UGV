@@ -27,6 +27,8 @@ dependencies {
   implementation 'org.springframework.boot:spring-boot-starter-webmvc'
   implementation 'org.springframework.boot:spring-boot-starter-websocket'
   implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:3.0.3'
+  // MQTT 구독 — 명세 31-3이 지정한 Eclipse Paho MQTT v5 비동기 클라이언트
+  implementation 'org.eclipse.paho:org.eclipse.paho.mqttv5.client:1.2.5'
   implementation 'org.flywaydb:flyway-database-postgresql'
   compileOnly 'org.projectlombok:lombok'
   developmentOnly 'org.springframework.boot:spring-boot-devtools'

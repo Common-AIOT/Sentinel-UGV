@@ -14,6 +14,13 @@ develop → 작업 브랜치 → Merge Request → develop → 통합 테스트 
 - 병합은 CI, 리뷰와 충돌 해결을 마친 Merge Request로 수행합니다.
 - Squash Merge 후 작업 브랜치를 삭제합니다.
 
+> **type 목록이 두 개인 이유** 브랜치와 MR 제목은 긴 형태(`feature`,
+> `documentation`, `performance`, `refactoring`)를, 커밋은 짧은 형태(`feat`,
+> `docs`, `perf`, `refactor`)를 씁니다. 짧은 형태는 Conventional Commits 관례를
+>따르는 것이고, 브랜치 이름은 사람이 목록에서 고르는 것이라 긴 형태가 읽기
+>낫습니다. **커밋에 `feature`나 `documentation`을 쓰면 CI가 거부합니다**
+> (`lint:commit-message`). 두 목록의 나머지 항목은 같습니다.
+
 ## 브랜치 이름
 
 ```text
@@ -46,8 +53,9 @@ develop → 작업 브랜치 → Merge Request → develop → 통합 테스트 
 
 예: `fix(control): S15P11A301-162 명령 타임아웃 시 모터 정지`
 
-- type: `feat`, `fix`, `hardware`, `refactor`, `perf`, `test`, `docs`, `style`, `build`, `chore`, `ci`, `hotfix`, `revert`
+- type: `feat`, `fix`, `hardware`, `refactor`, `perf`, `test`, `docs`, `style`, `build`, `chore`, `ci`, `hotfix`, `revert` — **짧은 형태입니다.** 브랜치의 `feature`·`documentation`을 그대로 쓰지 않습니다
 - scope: `frontend`, `backend`, `hardware`, `jetson`, `ros2`, `ai`, `camera`, `slam`, `navigation`, `control`, `streaming`, `database`, `common`, `deploy`, `docs`, `root`
+- jira-key와 설명을 모두 씁니다. `fix(camera): S15P11A301-62`처럼 설명이 없으면 CI가 거부합니다
 - 하나의 커밋에는 하나의 목적만 포함합니다.
 - `수정`, `작업`, `업데이트` 같은 모호한 표현과 끝의 마침표를 사용하지 않습니다.
 - 임시 커밋은 허용하지만 병합할 때 정상 메시지 하나로 squash합니다.

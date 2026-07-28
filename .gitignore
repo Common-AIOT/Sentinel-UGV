@@ -52,6 +52,11 @@ venv/
 jetson/ros2_ws/build/
 jetson/ros2_ws/install/
 jetson/ros2_ws/log/
+# 리포 최상위에서 colcon build를 돌리면 여기에 산출물이 남는다. 그 install은
+# jetson/ros2_ws/install과 다른 부분 빌드이므로, 실수로 source하면 옛 코드가
+# 돌면서 원인을 찾기 어려운 증상이 생긴다. build/는 위 Java 규칙이 이미 덮는다.
+/install/
+/log/
 jetson/ros2_ws/src/ydlidar_ros2_driver/
 jetson/ros2_ws/src/usb_cam/
 

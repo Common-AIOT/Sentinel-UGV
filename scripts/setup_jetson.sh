@@ -154,3 +154,14 @@ if ! gst-inspect-1.0 rtspclientsink >/dev/null 2>&1; then
   echo "경고: rtspclientsink가 없다. sudo apt install -y gstreamer1.0-rtsp 를 권한다." >&2
   echo "      미설치 상태에서는 streaming.launch.py가 udp_mpegts로 폴백한다." >&2
 fi
+
+# CI의 lint:shell이 shellcheck로 scripts/*.sh를 검사한다. 로컬에 없으면 CI에서야
+# 실패를 알게 되므로 설치를 권한다. sudo 없이 받을 수 있다.
+if ! command -v shellcheck >/dev/null 2>&1; then
+  sc_version="0.10.0"
+  sc_url="https://github.com/koalaman/shellcheck/releases/download/v${sc_version}/shellcheck-v${sc_version}.linux.$(uname -m).tar.xz"
+  echo "권장: shellcheck가 없다. CI의 lint:shell을 로컬에서 미리 확인할 수 없다." >&2
+  echo "      curl -fsSL -o /tmp/sc.tar.xz '${sc_url}' \\" >&2
+  echo "        && tar xf /tmp/sc.tar.xz -C /tmp \\" >&2
+  echo "        && install -m755 /tmp/shellcheck-v${sc_version}/shellcheck ~/.local/bin/shellcheck" >&2
+fi

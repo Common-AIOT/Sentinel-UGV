@@ -6,6 +6,7 @@ import json
 import re
 
 from . import config
+from .gms_resilience import GmsCallResult, call_with_limited_retry
 from .safety import coerce_extraction
 
 
@@ -92,13 +93,26 @@ def keyword_extract(text):
     )
 
 
+def extract_with_status(text) -> GmsCallResult:
+    """GMS 호출 결과와 재시도 횟수·분류된 실패 원인을 함께 반환한다."""
+
+    extraction, attempts, failure = call_with_limited_retry(
+        lambda: llm_extract(text),
+        max_attempts=config.GMS_MAX_ATTEMPTS,
+        retry_delay_seconds=config.GMS_RETRY_DELAY,
+    )
+    if extraction is not None:
+        return GmsCallResult(extraction, "GMS", attempts)
+
+    print(
+        f"[WARN] GMS 추출 실패(kind={failure.kind.value}, "
+        f"type={failure.error_type}, attempts={attempts}) -> 33-8 키워드 폴백"
+    )
+    return GmsCallResult(keyword_extract(text), "FALLBACK", attempts, failure)
+
+
 def extract(text):
-    """GMS 우선, 실패 시 동일 계약의 33-8 키워드 파서로 폴백한다."""
-    try:
-        return llm_extract(text), "GMS"
-    except Exception as error:
-        print(
-            f"[WARN] GMS 추출 실패({type(error).__name__}: {error}) "
-            "-> 33-8 키워드 폴백"
-        )
-        return keyword_extract(text), "FALLBACK"
+    """기존 호출자를 위한 `(추출값, 출처)` 호환 진입점."""
+
+    result = extract_with_status(text)
+    return result.extraction, result.source

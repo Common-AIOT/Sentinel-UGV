@@ -31,6 +31,9 @@
 | `sentinel_voice/audio.py` | 오디오 로더(16kHz mono float32 통일) |
 | `sentinel_voice/safety.py` | STT 환각 가드, LLM 출력 보정, 규칙 기반 triage |
 | `sentinel_voice/llm.py` | GMS 호출 + 33-8 키워드 폴백 (`extract()` 단일 진입점) |
+| `sentinel_voice/gms_resilience.py` | GMS 장애 분류·제한 재시도·호스트 도달성 검사 |
+| `sentinel_voice/session_gate.py` | 신규 STT 세션 시작 전 GMS 가용성 게이트 |
+| `sentinel_voice/report_delivery.py` | 관제 전송 대기/대기열 인계 상태 계약 |
 | `sentinel_voice/pipeline.py` | 엔드투엔드 실행(마이크/파일) |
 | `sentinel_voice/conversation.py` | 5단계 다턴 상태머신과 VAD·STT·구조화 결과 4분류 |
 | `sentinel_voice/guide_audio.py` | 승인 문구 목록, WAV 형식 검사, 안전 재생 결과 |
@@ -58,8 +61,9 @@ python -m unittest discover -s tests -v
 ## GMS 설정 (필수)
 
 ```bash
-# ai/stt/.env 파일 생성 (커밋 금지 — .gitignore 등록됨)
-echo "GMS_KEY=여기에_팀_GMS_키" > .env
+# ai/stt/.env 생성 후 GMS_KEY를 실제 팀 키로 교체
+cp .env.example .env       # Linux/Jetson
+# copy .env.example .env   # Windows Miniforge Prompt
 ```
 
 > GMS Key는 팀 크레딧과 연결된 비밀 값입니다. 코드·문서·커밋에 절대 넣지 마세요.
@@ -218,6 +222,20 @@ python -m bench.pipeline_bench   # results/pipeline_bench_summary.csv
 | `GMS_KEY` | (없음, **필수**) | GMS API 키 — `ai/stt/.env`로 관리, 커밋 금지 |
 | `SENTINEL_GMS_BASE` | gms.ssafy.io/…/v1 | GMS OpenAI 호환 엔드포인트 |
 | `SENTINEL_LLM_TIMEOUT` | 10 | STT 완료 후 GMS 호출 시간 초과 시 33-8 키워드 폴백 |
+| `SENTINEL_GMS_MAX_ATTEMPTS` | 2 | 최초 호출을 포함한 최대 GMS 호출 횟수 |
+| `SENTINEL_GMS_RETRY_DELAY` | 0.5 | 일시 장애 재시도 전 대기 시간(초) |
+| `SENTINEL_GMS_PROBE_TIMEOUT` | 2 | 신규 세션 전 GMS 호스트 연결 확인 제한 시간(초) |
+
+GMS 장애 분류와 관제 전송 대기 상태는
+[`docs/GMS-장애-대응.md`](docs/GMS-장애-대응.md)를 따릅니다.
+
+```bat
+python -m tools.check_gms_resilience
+python -m tools.check_gms_resilience --live --report results\gms-smoke.json
+```
+
+첫 명령은 외부 API를 호출하지 않으며, 두 번째 명령만 고정 합성 문장으로 GMS를
+실호출합니다. 두 명령 모두 키나 인증 헤더를 출력하지 않습니다.
 
 ## 개발 PC(x86)에서 테스트
 

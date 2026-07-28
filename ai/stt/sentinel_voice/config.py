@@ -84,6 +84,9 @@ GMS_BASE_URL = os.getenv("SENTINEL_GMS_BASE",
                          "https://gms.ssafy.io/gmsapi/api.openai.com/v1")
 GMS_KEY = os.getenv("GMS_KEY", "")
 LLM_TIMEOUT = float(os.getenv("SENTINEL_LLM_TIMEOUT", "10"))  # 초과 시 33-8 폴백
+GMS_MAX_ATTEMPTS = int(os.getenv("SENTINEL_GMS_MAX_ATTEMPTS", "2"))
+GMS_RETRY_DELAY = float(os.getenv("SENTINEL_GMS_RETRY_DELAY", "0.5"))
+GMS_PROBE_TIMEOUT = float(os.getenv("SENTINEL_GMS_PROBE_TIMEOUT", "2"))
 
 # ── 튜닝된 파라미터(측정으로 고정) ────────────────────────────
 # Silero VAD

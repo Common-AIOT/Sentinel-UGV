@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sentinel-ugv.xyz/schemas/state.schema.json",
+  "title": "ROBOT_STATE 본문",
+  "description": "운영 상태다. 상태 변경 시 즉시, 그리고 1초 heartbeat로 발행한다. QoS 1, Retain 사용(31-4).\n\ntelemetry와 나눈 이유는 성격이 다르기 때문이다. state는 '지금 어떤 상태인가'라서 Retain으로 최신값을 남겨야 하고, telemetry는 '지금 값이 얼마인가'라서 흘려보내도 된다. 관제 화면이 새로고침될 때 state는 즉시 보여야 하고 telemetry는 다음 주기를 기다려도 된다.",
+  "type": "object",
+  "required": ["robotId", "missionState", "controlMode", "safetyState"],
+  "additionalProperties": false,
+  "properties": {
+    "robotId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "missionState": {
+      "description": "임무 상태 머신(14.1, 26.2)의 현재 상태. 녹화 상태 머신(32-5)과는 별개의 상태 공간이다.",
+      "type": ["string", "null"]
+    },
+    "controlMode": {
+      "description": "MANUAL 또는 AUTO. 전환은 PAUSED를 경유한다.",
+      "type": ["string", "null"],
+      "enum": ["MANUAL", "AUTO", null]
+    },
+    "safetyState": {
+      "description": "안전 상태. 재연결 후에도 자동 주행을 재개하지 않고 이 값을 서버와 동기화만 한다(31-4).",
+      "type": ["string", "null"],
+      "enum": ["SAFE_IDLE", "READY", "RUNNING", "STOPPED", "ESTOP", "FAULT", null]
+    },
+    "activeMissionId": {
+      "description": "재연결 후 서버와 활성 임무를 비교하는 데 쓴다(31-10 복구 순서 3번).",
+      "type": ["string", "null"],
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "components": {
+      "description": "노드 단위 가동 여부. 관제가 무엇이 안 떠 있는지 구분하게 한다.",
+      "type": ["object", "null"],
+      "additionalProperties": {"type": "boolean"}
+    }
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sentinel-ugv.xyz/schemas/presence.schema.json",
+  "title": "ROBOT_PRESENCE 본문",
+  "description": "MQTT 연결 상태다. QoS 1, Retain 사용(31-4). 새 구독자가 붙으면 브로커가 마지막 값을 즉시 준다.\n\nOFFLINE은 두 경로로 발행된다. 젯슨이 정상 종료하며 직접 보내는 경우와, 젯슨이 죽어 브로커가 Last Will로 대신 보내는 경우다. 후자가 LWT이며 젯슨이 아무것도 못 하는 상황에서도 관제에 OFFLINE이 뜨게 해준다.\n\n이 신호는 관제 표시용이다. 모터 정지 근거로 쓰지 않는다. 모터는 젯슨과 ESP32의 300ms 로컬 watchdog이 훨씬 빨리 세운다(31-4).",
+  "type": "object",
+  "required": ["robotId", "status"],
+  "additionalProperties": false,
+  "properties": {
+    "robotId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "status": {
+      "type": "string",
+      "enum": ["ONLINE", "OFFLINE"]
+    },
+    "reason": {
+      "description": "OFFLINE일 때만 의미가 있다. LWT는 MQTT_CONNECTION_LOST를 쓴다.",
+      "type": ["string", "null"],
+      "enum": [
+        "MQTT_CONNECTION_LOST",
+        "SHUTDOWN",
+        null
+      ]
+    }
+  }
+}

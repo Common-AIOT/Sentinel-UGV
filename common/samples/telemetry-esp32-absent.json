@@ -1,0 +1,18 @@
+{
+  "schemaVersion": "1.0",
+  "messageId": "0b8c4a2e-9d17-4f63-8a51-cc2e6b7d1f40",
+  "messageType": "ROBOT_TELEMETRY",
+  "robotId": "SENTINEL-01",
+  "missionId": null,
+  "sequence": 42,
+  "sentAt": "2026-07-28T03:12:00.500Z",
+  "data": {
+    "pose": null,
+    "motion": null,
+    "battery": null,
+    "environment": null,
+    "compute": {"cpuPercent": 31.5, "gpuPercent": 12.0, "memoryPercent": 54.1, "jetsonTempC": 52.5},
+    "health": {"mcuConnected": null, "lidarOk": true, "cameraOk": true},
+    "missionState": "SAFE_IDLE"
+  }
+}

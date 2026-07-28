@@ -1,0 +1,14 @@
+{
+  "schemaVersion": "1.0",
+  "messageId": "b1c7e480-5f36-4a29-8d13-77e2a9c04f68",
+  "messageType": "ROBOT_PRESENCE",
+  "robotId": "SENTINEL-01",
+  "missionId": null,
+  "sequence": 0,
+  "sentAt": "2026-07-28T03:11:57.900Z",
+  "data": {
+    "robotId": "SENTINEL-01",
+    "status": "OFFLINE",
+    "reason": "MQTT_CONNECTION_LOST"
+  }
+}

@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sentinel-ugv.xyz/schemas/envelope.schema.json",
+  "title": "공통 메시지 봉투",
+  "description": "MQTT와 STOMP의 모든 메시지가 공유하는 껍데기다(명세 31-5). 젯슨(Python)과 백엔드(Java)가 같은 계약을 쓰는지 CI가 이 스키마로 검증한다. data 본문은 messageType별 스키마가 따로 정의한다.",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "messageId",
+    "messageType",
+    "robotId",
+    "missionId",
+    "sequence",
+    "sentAt",
+    "data"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "description": "메시지 호환성 버전. 필드를 제거하거나 의미를 바꿀 때 올린다.",
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+$"
+    },
+    "messageId": {
+      "description": "중복 저장 방지용 UUID. QoS 1은 같은 메시지를 두 번 전달하는 것이 정상 동작이므로, 서버가 이 값으로 막는다(31-10).",
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "messageType": {
+      "description": "메시지 종류. data 본문의 스키마를 결정한다.",
+      "type": "string",
+      "enum": [
+        "ROBOT_PRESENCE",
+        "ROBOT_STATE",
+        "ROBOT_TELEMETRY",
+        "ENCOUNTER_CONFIRMED",
+        "MANUAL_DRIVE_COMMAND",
+        "COMMAND_ACK"
+      ]
+    },
+    "robotId": {
+      "description": "차량 식별자. MQTT 토픽의 {robotId}와 같아야 한다.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "missionId": {
+      "description": "임무 외 상태이면 null이다.",
+      "type": ["string", "null"],
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "sequence": {
+      "description": "같은 발행자 내 순서 확인용 증가 번호. 재시작하면 0부터 다시 시작하므로 전역 순서로 쓰지 않는다.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "sentAt": {
+      "description": "젯슨에서 생성한 UTC 시각. 서버는 별도로 receivedAt을 기록해 전송 지연과 시계 오차를 확인한다(31-5). UTC만 허용하므로 반드시 Z로 끝난다. 지역 시간대 오프셋을 받으면 백엔드마다 다르게 해석될 수 있다.",
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?Z$"
+    },
+    "data": {
+      "description": "메시지별 본문. messageType에 대응하는 스키마를 따른다.",
+      "type": "object"
+    }
+  }
+}

@@ -16,6 +16,7 @@ setup(
             # Mosquitto 참고 설정. EC2 적용은 S15P11A301-103이지만, 젯슨에서
             # 이 구성으로 TLS·인증·ACL을 검증했으므로 함께 둔다.
             'config/mosquitto.conf.example',
+            'config/mosquitto-websocket.conf.example',
             'config/mosquitto-acl.example',
         ]),
     ],

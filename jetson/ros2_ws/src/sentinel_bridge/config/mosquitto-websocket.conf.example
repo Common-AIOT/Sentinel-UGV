@@ -1,0 +1,45 @@
+# 로컬 WebSocket 검증용 Mosquitto 설정 (S15P11A301-103 반영).
+#
+# 운영은 EC2의 Nginx가 443에서 TLS를 종료하고 /mqtt를 브로커 WebSocket 리스너로
+# 넘긴다. 이 파일은 젯슨에서 그 경로를 흉내내기 위한 것이며 배포 대상이 아니다.
+#
+# 리스너를 둘 두는 이유는 mosquitto_sub이 WebSocket을 지원하지 않기 때문이다.
+# ws로 발행하고 tcp로 구독해 교차 확인한다. 브로커 내부에서 두 리스너가 같은
+# 토픽 트리를 공유한다.
+#
+# 경로는 절대 경로로 바꿔 쓴다. password_file과 acl_file은 커밋하지 않는다.
+
+# 리스너마다 인증 설정을 따로 두려면 반드시 필요하다. 빼면 첫 리스너 설정이
+# 전체에 적용된다.
+per_listener_settings true
+
+# 젯슨의 transport=websockets 경로를 검증한다.
+listener 19883
+protocol websockets
+allow_anonymous false
+password_file /경로/passwd
+acl_file /경로/acl
+
+# 확인용. mosquitto_sub/mosquitto_pub이 여기로 붙는다.
+listener 19884
+protocol mqtt
+allow_anonymous false
+password_file /경로/passwd
+acl_file /경로/acl
+
+# ACL은 운영과 같은 규칙을 쓴다. 젯슨 계정은 자신의 telemetry/state/presence/
+# events/acks만 발행하고 자신의 cmd/*만 구독할 수 있다(31-11).
+#
+#   user sentinel-01
+#   topic write sentinel/v1/robots/SENTINEL-01/telemetry
+#   topic write sentinel/v1/robots/SENTINEL-01/state
+#   topic write sentinel/v1/robots/SENTINEL-01/presence
+#   topic write sentinel/v1/robots/SENTINEL-01/events
+#   topic write sentinel/v1/robots/SENTINEL-01/acks
+#   topic read  sentinel/v1/robots/SENTINEL-01/cmd/#
+#
+#   user spring
+#   topic readwrite sentinel/v1/robots/#
+#
+# ACL 위반은 종료 코드로 확인할 수 없다. mosquitto는 거부한 발행에도 성공을
+# 응답한다(QoS 1 + MQTT 5에서도). 구독자에 도달하는지로만 판단한다.

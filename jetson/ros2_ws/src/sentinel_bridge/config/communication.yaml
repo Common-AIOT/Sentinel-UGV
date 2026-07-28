@@ -9,14 +9,34 @@
   ros__parameters:
     robot_id: SENTINEL-01
 
-    # 8883은 MQTT over TLS다. 평문 1883은 인터넷에 공개하지 않는다(31-11).
-    broker_host: 127.0.0.1
-    broker_port: 8883
-    broker_username: ''
+    # 443 WebSocket으로 붙는다. 8883이 아니다(S15P11A301-103).
+    #
+    # EC2 실측에서 8883·1883은 패킷이 버려지고 443·8080·8989만 열려 있었다.
+    # SSAFY 보안그룹이 표준 포트만 열어두고 터미널로는 새 포트를 열 수 없다.
+    # MinIO 9000에서 이미 겪은 제약이다. 기존 443 vhost에 WebSocket 경로를
+    # 얹었고 Nginx가 TLS를 종료하므로 브로커는 인증서를 갖지 않는다.
+    #
+    # 토픽·QoS·Retain·LWT·봉투·ACL은 하나도 바뀌지 않았다. 접속 경로만 바뀐다.
+    # 보안그룹이 열리면 broker_port를 8883, broker_transport를 tcp로 되돌린다.
+    broker_host: api.sentinel-ugv.xyz
+    broker_port: 443
+    broker_transport: websockets
+    broker_ws_path: /mqtt
+    broker_username: sentinel-01
+    # 비밀번호를 커밋하지 않는다. launch 인자나 환경변수로 주입한다.
     broker_password: ''
 
+    # TLS 사용 여부와 CA 경로는 다른 설정이다.
+    #
+    # 공인 인증서를 쓰므로 tls_ca_certs를 비운다. 그래도 tls_enabled가 true면
+    # 시스템 CA 번들로 검증한다. 젯슨이 인증서 파일을 들고 있지 않아도 되고
+    # 인증서 갱신과도 무관하다.
+    #
+    # 이 둘을 하나로 묶으면 안 된다. 전에는 tls_ca_certs가 비면 TLS를 아예
+    # 끄도록 돼 있었고, 그러면 운영에서 ws로 443에 붙어 실패한다.
+    #
     # 차량별 X.509 클라이언트 인증서는 31-14가 확장으로 분류했으므로 쓰지 않는다.
-    # 서버 인증서 검증만 한다.
+    tls_enabled: true
     tls_ca_certs: ''
     tls_insecure: false
 

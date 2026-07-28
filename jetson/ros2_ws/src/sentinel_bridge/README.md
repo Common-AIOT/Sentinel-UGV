@@ -33,14 +33,64 @@ Retain을 `presence`와 `state`에만 쓰는 이유는 그 둘만 "지금 상태
 `telemetry`를 Retain하면 새 구독자가 낡은 값을 현재값으로 봅니다. `cmd/*`는
 Retain을 **금지**합니다. 과거 명령이 재연결 직후 실행되면 로봇이 움직입니다(31-4).
 
+## 접속은 443 WebSocket입니다 (8883 아님)
+
+S15P11A301-103에서 EC2 포트를 실측한 결과입니다.
+
+```text
+443 OPEN     8080 OPEN     8989 OPEN
+8883 TIMEOUT     1883 TIMEOUT
+```
+
+SSAFY 보안그룹이 표준 포트만 열어두고 터미널로는 새 포트를 열 수 없습니다. MinIO
+9000에서 이미 겪은 제약입니다. 그래서 기존 443 vhost에 WebSocket 경로를 얹었고
+**Nginx가 TLS를 종료**하므로 브로커는 인증서를 갖지 않습니다.
+
+```text
+주소      wss://api.sentinel-ugv.xyz/mqtt   (포트 443)
+프로토콜   MQTT 5, transport=websockets
+계정      sentinel-01
+```
+
+**토픽·QoS·Retain·LWT·공통 봉투·ACL은 하나도 바뀌지 않았습니다.** 접속 경로만
+바뀝니다. 아래 「31-11 보안 정책 실측」의 결과도 그대로 유효하며, 8883으로 붙던
+경로만 무효입니다.
+
+보안그룹이 열리면 `broker_port`를 8883, `broker_transport`를 `tcp`로 되돌립니다.
+`mosquitto.prod.conf`에 8883 리스너가 주석으로 보존돼 있고 두 리스너는 동시에
+동작합니다.
+
+### TLS 사용 여부와 CA 경로는 다른 설정입니다
+
+`tls_enabled`와 `tls_ca_certs`를 나눈 이유입니다. 전에는 `if tls_ca_certs:`로 TLS
+사용 여부를 판단했는데, 그러면 공인 인증서를 쓰는 운영에서 CA 경로가 비어 **TLS가
+조용히 꺼지고** `wss://`가 아니라 `ws://`로 443에 붙어 실패합니다.
+
+로컬 자체 서명 브로커에서는 CA를 주므로 이 결함이 드러나지 않았습니다. 접속 방식이
+443 WebSocket으로 바뀌며 실제 위험이 됐고, `test_tls_stays_on_when_ca_path_is_empty`
+가 회귀를 막습니다.
+
+`tls_set()`을 CA 없이 부르면 시스템 CA 번들로 검증합니다. 젯슨이 인증서 파일을 들고
+있지 않아도 되고 인증서 갱신과도 무관합니다.
+
+접속 로그에 실제 URL이 찍힙니다. TLS가 켜졌는지 로그에서 확인할 수 없으면 `ws`로
+443에 붙어 실패할 때 원인을 브로커 쪽에서 찾게 됩니다.
+
+```text
+MQTT 접속 시도: wss://api.sentinel-ugv.xyz:443/mqtt (MQTT 5)
+```
+
 ## 실행
 
 ```bash
 ros2 launch sentinel_bridge cloud_bridge.launch.py \
-    broker_host:=mqtt.sentinel-ugv.xyz broker_username:=sentinel-01
+    broker_password:=<DM으로 받은 비밀번호>
 ```
 
-자격증명은 커밋하지 않습니다. launch 인자나 환경변수로 넘깁니다.
+주소·포트·계정은 `config/communication.yaml`에 있습니다. 비밀번호만 넘깁니다.
+
+자격증명은 커밋하지 않습니다. launch 인자나 환경변수로 넘깁니다. 명령줄에 넣으면
+셸 히스토리와 `ps` 출력에 남으므로 환경변수를 권합니다.
 
 ## 의존성
 
@@ -98,6 +148,37 @@ TLS + 인증    8883 상당 리스너에 자체 서명 인증서로 접속 성�
 스키마        발행 메시지 전부 common/schemas 통과
 단위 시험     18건 통과. 결함 주입 시 정상적으로 실패
 ```
+
+### WebSocket 전환 검증 (S15P11A301-103 반영)
+
+transport가 바뀌었으므로 위 결과가 그대로 통하는지 다시 확인했습니다. 가장 깨지기
+쉬운 것이 LWT와 ACL입니다. 브로커에 WebSocket 리스너(19883)와 확인용 TCP
+리스너(19884)를 함께 두고, **ws로 발행한 것을 tcp로 구독**해 교차 확인했습니다.
+`mosquitto_sub`은 WebSocket을 지원하지 않습니다.
+
+```text
+ws 접속          ws://127.0.0.1:19883/mqtt 로 MQTT 5 연결
+발행 도달        presence 1 / state 11 / telemetry 21 전부 tcp 구독자에 도달
+LWT              SIGKILL 후 OFFLINE(MQTT_CONNECTION_LOST) 도달
+ACL 타 차량       sentinel-01 → SENTINEL-02/state 발행, 구독자 미도착(폐기)
+ACL 자기 cmd/*    sentinel-01 → SENTINEL-01/cmd/move 발행, 구독자 미도착(폐기)
+단위 시험         20건 (TLS·transport 회귀 2건 추가)
+```
+
+ACL은 종료 코드가 아니라 구독자로 확인했습니다. mosquitto는 ACL로 거부한 발행에도
+성공을 응답하므로(QoS 1 + MQTT 5에서도) 발행 결과만 보면 통과한 것처럼 보입니다.
+
+### 실제 EC2 경로 확인
+
+비밀번호 없이 경로만 검증한 것입니다.
+
+```text
+WebSocket 업그레이드   HTTP 101
+잘못된 비밀번호로 접속   CONNACK "Not authorized"
+```
+
+`Not authorized`가 온다는 것은 요청이 Nginx를 지나 **브로커까지 닿았다**는 뜻입니다.
+경로가 막혀 있으면 CONNACK 자체가 오지 않습니다. 비밀번호를 넣으면 붙습니다.
 
 ### 31-11 보안 정책 실측
 
@@ -160,6 +241,41 @@ mosquitto -c <설정파일>                   # 높은 포트에 직접 띄운�
 
 `mosquitto-clients`의 `mosquitto_pub`/`mosquitto_sub`가 "젯슨이 안 보내는 건가
 서버가 못 받는 건가"를 가릴 때 계속 쓰입니다.
+
+운영이 WebSocket이므로 그 경로를 검증하려면 리스너를 둘 둡니다. **`mosquitto_sub`은
+WebSocket을 지원하지 않습니다.** ws 리스너에 붙이면 이렇게 됩니다.
+
+```text
+Error: A network protocol error occurred when communicating with the broker.
+```
+
+그래서 ws로 발행하고 tcp로 구독합니다. 브로커 내부에서 두 리스너가 같은 토픽 트리를
+공유하므로 교차 확인이 됩니다.
+
+```text
+per_listener_settings true
+
+listener 19883
+protocol websockets
+allow_anonymous false
+password_file <경로>
+acl_file <경로>
+
+listener 19884
+protocol mqtt
+allow_anonymous false
+password_file <경로>
+acl_file <경로>
+```
+
+```bash
+ros2 run sentinel_bridge cloud_bridge --ros-args \
+  --params-file <communication.yaml> \
+  -p broker_host:=127.0.0.1 -p broker_port:=19883 -p tls_enabled:=false \
+  -p broker_username:=sentinel-01 -p broker_password:=<로컬 비밀번호>
+```
+
+`tls_enabled:=false`가 로컬 평문 WebSocket에 필요합니다. 운영에서는 켜 둡니다.
 
 `protocol_version` 파라미터는 MQTT 3.1.1로 내릴 때만 씁니다. 순수 파이썬
 브로커(`amqtt`)로 시험하면 필요합니다. 그것은 3.1.1까지만 지원해서 MQTT 5로

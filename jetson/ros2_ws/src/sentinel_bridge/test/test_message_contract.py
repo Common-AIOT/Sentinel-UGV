@@ -117,6 +117,9 @@ def test_publish_uses_channel_policy():
         def username_pw_set(self, *_a, **_k):
             pass
 
+        def ws_set_options(self, *_a, **_k):
+            pass
+
         def tls_set(self, *_a, **_k):
             pass
 
@@ -166,7 +169,16 @@ def test_last_will_is_registered_with_retain():
         def __init__(self, *_a, **_k):
             pass
 
+        def ws_set_options(self, *_a, **_k):
+            pass
+
         def username_pw_set(self, *_a, **_k):
+            pass
+
+        def tls_set(self, *_a, **_k):
+            pass
+
+        def tls_insecure_set(self, *_a, **_k):
             pass
 
         def will_set(self, topic, payload, qos, retain):
@@ -270,3 +282,92 @@ def test_sent_at_is_utc_with_z_suffix():
     stamp = MessageMapper("SENTINEL-01").presence_online()["sentAt"]
     assert stamp.endswith("Z")
     assert "+" not in stamp
+
+
+def test_tls_stays_on_when_ca_path_is_empty():
+    """공인 인증서를 쓰는 운영에서 TLS가 조용히 꺼지지 않아야 한다.
+
+    전에는 `if tls_ca_certs:`로 TLS 사용 여부를 판단했다. 그러면 CA 경로가 빈
+    운영 설정에서 TLS가 꺼지고, `wss://`가 아니라 `ws://`로 443에 붙어 실패한다.
+    로컬 자체 서명 브로커에서는 CA를 주므로 이 결함이 드러나지 않았다.
+
+    S15P11A301-103에서 접속 방식이 443 WebSocket으로 바뀌며 실제 위험이 됐다.
+    """
+    from sentinel_bridge import mqtt_client as module
+
+    calls = []
+
+    class FakeClient:
+        def __init__(self, *_a, **kwargs):
+            calls.append(("init", kwargs.get("transport")))
+
+        def ws_set_options(self, **kwargs):
+            calls.append(("ws", kwargs.get("path")))
+
+        def username_pw_set(self, *_a, **_k):
+            pass
+
+        def tls_set(self, ca_certs=None):
+            calls.append(("tls", ca_certs))
+
+        def tls_insecure_set(self, *_a, **_k):
+            calls.append(("insecure", None))
+
+        def will_set(self, *_a, **_k):
+            pass
+
+        def reconnect_delay_set(self, **_k):
+            pass
+
+    original = module.mqtt.Client
+    module.mqtt.Client = FakeClient
+    try:
+        publisher = module.MqttPublisher(
+            "SENTINEL-01", "api.sentinel-ugv.xyz", 443, tls_ca_certs=""
+        )
+    finally:
+        module.mqtt.Client = original
+
+    assert ("tls", None) in calls, "CA 경로가 비어도 TLS를 켜야 한다"
+    assert ("insecure", None) not in calls, "운영에서 검증을 끄면 안 된다"
+    assert ("init", "websockets") in calls
+    assert ("ws", "/mqtt") in calls
+    assert publisher.endpoint == "wss://api.sentinel-ugv.xyz:443/mqtt"
+
+
+def test_tls_can_be_disabled_for_local_broker():
+    """로컬 평문 WebSocket 브로커로 검증할 때만 끈다."""
+    from sentinel_bridge import mqtt_client as module
+
+    calls = []
+
+    class FakeClient:
+        def __init__(self, *_a, **_k):
+            pass
+
+        def ws_set_options(self, *_a, **_k):
+            pass
+
+        def username_pw_set(self, *_a, **_k):
+            pass
+
+        def tls_set(self, *_a, **_k):
+            calls.append("tls")
+
+        def will_set(self, *_a, **_k):
+            pass
+
+        def reconnect_delay_set(self, **_k):
+            pass
+
+    original = module.mqtt.Client
+    module.mqtt.Client = FakeClient
+    try:
+        publisher = module.MqttPublisher(
+            "SENTINEL-01", "127.0.0.1", 19883, tls_enabled=False
+        )
+    finally:
+        module.mqtt.Client = original
+
+    assert "tls" not in calls
+    assert publisher.endpoint == "ws://127.0.0.1:19883/mqtt"

@@ -96,8 +96,11 @@ class MqttPublisher:
         *,
         username: str | None = None,
         password: str | None = None,
+        tls_enabled: bool = True,
         tls_ca_certs: str | None = None,
         tls_insecure: bool = False,
+        transport: str = 'websockets',
+        ws_path: str = '/mqtt',
         keepalive: int = 30,
         protocol_version: int = 5,
         client_id: str | None = None,
@@ -126,21 +129,44 @@ class MqttPublisher:
         # 31-14도 MQTT 5 고유 기능(Message Expiry)을 선택으로 분류했다.
         protocol = mqtt.MQTTv5 if protocol_version == 5 else mqtt.MQTTv311
         self._protocol_version = protocol_version
+        # WebSocket으로 붙는다. 8883이 아니라 443이다(S15P11A301-103).
+        #
+        # EC2 실측에서 8883·1883은 패킷이 버려지고 443·8080·8989만 열려 있었다.
+        # SSAFY 보안그룹이 표준 포트만 열어두고 터미널로는 새 포트를 열 수 없다.
+        # MinIO 9000에서 이미 겪은 제약이다. 그래서 기존 443 vhost에 WebSocket
+        # 경로를 얹었고 Nginx가 TLS를 종료한다.
+        #
+        # 토픽·QoS·Retain·LWT·봉투·ACL은 하나도 바뀌지 않았다. 접속 경로만 바뀐다.
+        self._transport = transport
+        self._ws_path = ws_path
         self._client = mqtt.Client(
             mqtt.CallbackAPIVersion.VERSION2,
             client_id=client_id or f"{robot_id}-bridge",
             protocol=protocol,
+            transport=transport,
         )
+        if transport == 'websockets':
+            self._client.ws_set_options(path=ws_path)
 
         if username:
             self._client.username_pw_set(username, password)
 
-        if tls_ca_certs:
-            self._client.tls_set(ca_certs=tls_ca_certs)
+        # TLS 사용 여부와 CA 경로는 다른 것이다.
+        #
+        # 전에는 `if tls_ca_certs:`로 판단했다. 그러면 공인 인증서를 쓰는 운영에서
+        # CA 경로가 비어 TLS가 조용히 꺼지고, `wss://`가 아니라 `ws://`로 443에
+        # 붙어 실패한다. 로컬 자체 서명 브로커에서는 CA를 주므로 이 결함이
+        # 드러나지 않았다.
+        #
+        # `tls_set()`을 CA 없이 부르면 시스템 CA 번들로 검증한다. Let's Encrypt
+        # 인증서는 그것으로 충분하고, 젯슨이 인증서 파일을 들고 있지 않아도 된다.
+        if tls_enabled:
+            self._client.tls_set(ca_certs=tls_ca_certs or None)
             if tls_insecure:
                 # 자체 서명 인증서로 시험할 때만 쓴다. 운영에서는 호스트명이
                 # 인증서와 일치해야 한다.
                 self._client.tls_insecure_set(True)
+        self._tls_enabled = tls_enabled
 
         # LWT는 connect 전에 등록해야 한다. 접속 후에는 바꿀 수 없다.
         will_qos, will_retain = CHANNEL_POLICY["presence"]
@@ -167,11 +193,21 @@ class MqttPublisher:
         """비동기 접속을 시작한다. 브로커가 없어도 예외를 던지지 않는다."""
         self._client.connect_async(self.host, self.port, keepalive=self._keepalive)
         self._client.loop_start()
+        # 실제 URL을 찍는다. TLS가 켜졌는지 로그에서 확인할 수 없으면, ws로
+        # 443에 붙어 실패할 때 원인을 브로커 쪽에서 찾게 된다.
         self._log(
             "info",
-            f"MQTT 접속 시도: {self.host}:{self.port} "
-            f"(MQTT {self._protocol_version})",
+            f"MQTT 접속 시도: {self.endpoint} (MQTT {self._protocol_version})",
         )
+
+    @property
+    def endpoint(self) -> str:
+        """사람이 읽을 접속 주소. 로그와 진단에 쓴다."""
+        if self._transport == 'websockets':
+            scheme = 'wss' if self._tls_enabled else 'ws'
+            return f'{scheme}://{self.host}:{self.port}{self._ws_path}'
+        scheme = 'mqtts' if self._tls_enabled else 'mqtt'
+        return f'{scheme}://{self.host}:{self.port}'
 
     def stop(self) -> None:
         """정상 종료. LWT가 발행되지 않도록 DISCONNECT를 보낸다.
@@ -190,7 +226,7 @@ class MqttPublisher:
     def _handle_connect(self, _client, _userdata, _flags, reason_code, _properties=None):
         if reason_code == 0:
             self._connected.set()
-            self._log("info", f"MQTT 연결됨: {self.host}:{self.port}")
+            self._log("info", f"MQTT 연결됨: {self.endpoint}")
             if self._on_connected:
                 self._on_connected()
         else:

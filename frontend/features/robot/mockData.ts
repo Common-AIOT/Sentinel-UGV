@@ -106,15 +106,74 @@ export interface DetectionEvent {
   location: string;
 }
 
+/**
+ * 임무 상태 12개. 명세 26.2에서 확정된 값이며 common/schemas/state.schema.json의
+ * `missionState`와 동일한 문자열을 쓴다. 화면 표시용으로 줄이거나 이름을 바꾸면
+ * 백엔드가 보내는 값을 그대로 렌더할 수 없게 된다.
+ */
+export type MissionState =
+  | "SAFE_IDLE"
+  | "EXPLORING"
+  | "PERSON_APPROACHING"
+  | "INTERACTING"
+  | "POST_RECORDING"
+  | "REPORTING"
+  | "PAUSED"
+  | "MANUAL"
+  | "RETURNING"
+  | "COMPLETED"
+  | "ESTOP"
+  | "ERROR";
+
+/** state.schema.json `controlMode`. 전환은 항상 PAUSED를 경유한다(26.3). */
+export type ControlMode = "MANUAL" | "AUTO" | null;
+
+/** state.schema.json `safetyState`. */
+export type SafetyState =
+  | "SAFE_IDLE"
+  | "READY"
+  | "RUNNING"
+  | "STOPPED"
+  | "ESTOP"
+  | "FAULT"
+  | null;
+
+/**
+ * telemetry.schema.json `health`. 3상태다.
+ * true=확인됨, false=확인했고 끊김, null=확인할 수단이 없음.
+ * false와 null을 같이 표시하면 "연동 전"과 "고장"을 구분할 수 없다.
+ */
+export interface ComponentHealth {
+  mcuConnected: boolean | null;
+  lidarOk: boolean | null;
+  cameraOk: boolean | null;
+}
+
+/** 기본 탐사 제한 시간. 명세 23.4에서 기본 7분, 5~10분 범위로 설정 가능하다. */
+export const EXPLORATION_LIMIT_SEC = 7 * 60;
+
+/** 탐사를 종료시키는 배터리 임계값(명세 23.4). */
+export const BATTERY_ABORT_PCT = 20;
+
 export interface RobotStatus {
   connected: boolean;
-  mode: "EXPLORE" | "RETURN" | "IDLE" | "MANUAL";
+  missionState: MissionState;
+  controlMode: ControlMode;
+  safetyState: SafetyState;
+  health: ComponentHealth;
   speed: number;
   heading: number;
+  uptime: number;
+  /**
+   * 탐사 경과 시간. 잔여 시간은 EXPLORATION_LIMIT_SEC에서 빼서 화면에서 구한다.
+   * 로봇이 잔여 시간을 직접 보내지는 않으므로(스키마에 필드가 없다) 관제가
+   * 파생시키는 값이다.
+   */
+  explorationElapsedSec: number;
+  explorationLimitSec: number;
   errorCount: number;
   warningCount: number;
   infoCount: number;
-  uptime: number;
 }
 
 export const INITIAL_SENSORS: SensorReading = {

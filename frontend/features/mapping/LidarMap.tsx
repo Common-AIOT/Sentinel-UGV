@@ -122,7 +122,12 @@ function drawGrid(
   ctx.restore();
 }
 
-export default function LidarMap() {
+/**
+ * @param compact 사이드바 180px 슬롯용. 제목·범례·나침반·좌표는 전체 화면
+ * 크기를 전제로 모서리에 절대배치돼 있어서, 축소하면 서로 겹쳐 찍히고 지도를
+ * 덮는다. 축소 시에는 캔버스만 남긴다.
+ */
+export default function LidarMap({ compact = false }: { compact?: boolean } = {}) {
   const { grid, robotPos, pathHistory, detections } = useRobot();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -195,6 +200,8 @@ export default function LidarMap() {
         onMouseLeave={handleMouseUp}
       />
 
+      {!compact && (
+      <>
       <div className="absolute top-3 left-3 flex items-center gap-2">
         <span className="font-mono text-[10px] text-primary/60 tracking-widest uppercase">LiDAR 그리드</span>
         <span className="font-mono text-[10px] text-muted-foreground">{GRID_SIZE}×{GRID_SIZE}</span>
@@ -248,10 +255,12 @@ export default function LidarMap() {
 
       <button
         onClick={() => { followRobot.current = !followRobot.current; }}
-        className="absolute bottom-3 left-1/2 -translate-x-1/2 font-mono text-[10px] px-2 py-0.5 border border-border rounded text-muted-foreground hover:text-primary hover:border-primary/30 transition-colors"
+        className="absolute bottom-3 left-1/2 -translate-x-1/2 font-mono text-[11px] px-2 py-0.5 border border-border rounded text-muted-foreground hover:text-primary hover:border-primary/30 transition-colors"
       >
-        {followRobot.current ? "📍 추적 중" : "🔓 자유 시점"}
+        {followRobot.current ? "추적 중" : "자유 시점"}
       </button>
+      </>
+      )}
     </div>
   );
 }

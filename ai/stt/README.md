@@ -65,20 +65,27 @@ echo "GMS_KEY=여기에_팀_GMS_키" > .env
 > 네트워크 단절이 확인되면 신규 STT 대화를 시작하지 않습니다. 이미 STT가 완료된 뒤
 > GMS 호출만 실패한 경우에 한해 `llm.py`의 33-8 키워드 폴백을 사용합니다.
 
-## 추출 스키마
+## 음성 세션 보고 스키마
 
 ```json
 {
-  "consciousness": "명료|혼미|통증반응|무반응|미확인",
-  "speech":        "완전문장|단어만|신음만|불가|미확인",
-  "pain_location": ["부위", ...],
-  "hazard":        ["가스|불|연기|붕괴", ...],
-  "can_move":      "가능|불가|미확인",
-  "additional_victims": 0,
-  "raw_note": "한 줄 요약"
+  "responseScope": "GROUP",
+  "anyResponseDetected": true,
+  "reportedResponsiveCount": 2,
+  "reportedCountStatus": "SELF_REPORTED_GROUP_COUNT",
+  "countConfidence": null,
+  "mobilityStatus": "NO",
+  "urgentConditionReported": "UNKNOWN",
+  "operatorReviewRequired": true,
+  "terminationReason": "NORMAL"
 }
 ```
-→ `triage_rule`이 색상 등급(적색/황색/녹색)을 **규칙으로** 산출.
+
+필드별 한글 의미, `null`과 `UNKNOWN`의 차이, 결정 주체와 오류 예시는
+[`docs/음성-세션-보고-스키마.md`](docs/음성-세션-보고-스키마.md)를 따릅니다.
+
+GMS와 키워드 폴백은 인원 수·이동 가능 여부·긴급 상태 언급만 추출합니다.
+응답 감지 여부와 종료 사유는 VAD·상태머신이 결정합니다.
 
 색상 등급은 최종 구조 우선순위가 아니라 관제 검토용 참고값입니다. 로봇은 이를 요구조자에게
 직접 안내하지 않으며, 구조 ETA는 관제가 제공한 유효한 값만 승인된 템플릿으로 전달합니다.

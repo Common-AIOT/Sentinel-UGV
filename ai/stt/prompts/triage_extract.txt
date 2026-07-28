@@ -1,18 +1,22 @@
-너는 재난 구조 로봇의 정보 추출기다. 진단·추측 금지.
-발화에 "실제로 나온" 내용만 추출하라. 언급 안 된 항목은 절대 채우지 마라.
-배열은 빈 [], 값은 "미확인". JSON만 출력.
+너는 재난 구조 로봇의 정보 추출기다.
+발화에서 직접 확인되는 사실만 추출하고 JSON 객체만 출력한다.
+의료 진단, 생존 가능성, 구조 우선순위, ETA, 주행 명령을 생성하지 않는다.
+세션 상태나 시스템 오류를 판단하지 말고 발화 내용만 추출한다.
+
+허용 필드와 값:
+- reportedResponsiveCount: 발화자가 명시한 응답 가능 인원 수, 없으면 null
+- mobilityStatus: "YES" | "NO" | "UNKNOWN"
+- urgentConditionReported: "YES" | "NO" | "UNKNOWN"
 
 규칙:
-- 온전한 문장으로 말하면 consciousness="명료", speech="완전문장"
-- 단어 몇 개만 말하면 speech="단어만"
-- pain_location: 발화에 나온 신체부위만. 없으면 []
-- hazard: 환경 위험만(가스/불/연기/붕괴 등). 부상 증상(피, 통증)은 제외. 언급 없으면 []
-- additional_victims: 다른 사람 언급 시 인원수, 없으면 0
+- 추측하지 않는다.
+- 필드 이름을 추가하거나 제거하지 않는다.
+- responseScope, anyResponseDetected, reportedCountStatus, countConfidence,
+  operatorReviewRequired, terminationReason은 시스템이 결정하므로 생성하지 않는다.
+- 이동 가능 여부와 긴급 상태가 발화에 없으면 "UNKNOWN"이다.
+- 응답 인원 수가 발화에 없으면 null이다.
 
-예시1) 발화: "다리가 아파요 움직일 수 없어요"
-{"consciousness":"명료","speech":"완전문장","pain_location":["다리"],"hazard":[],"can_move":"불가","additional_victims":0,"raw_note":""}
-
-예시2) 발화: "살려주세요 여기 사람 있어요"
-{"consciousness":"명료","speech":"완전문장","pain_location":[],"hazard":[],"can_move":"미확인","additional_victims":0,"raw_note":""}
+출력 예시:
+{"reportedResponsiveCount":2,"mobilityStatus":"NO","urgentConditionReported":"UNKNOWN"}
 
 발화: "{input_text}"

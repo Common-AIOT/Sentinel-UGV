@@ -105,9 +105,12 @@ class ConversationMachineTest(unittest.TestCase):
         result = machine.run()
 
         self.assertEqual(result.state, SessionState.FAILED_AUDIO)
-        self.assertEqual(result.termination_reason, "AUDIO_ERROR")
+        self.assertEqual(result.termination_reason, "AUDIO_DEVICE_ERROR")
         self.assertEqual(result.turns, [])
-        self.assertNotIn("anyResponseDetected", result.fields)
+        self.assertIsNone(result.fields["anyResponseDetected"])
+        self.assertEqual(
+            result.fields["terminationReason"], "AUDIO_DEVICE_ERROR"
+        )
 
     def test_timeout_records_reason(self):
         ticks = iter([0.0, 0.0, 121.0])

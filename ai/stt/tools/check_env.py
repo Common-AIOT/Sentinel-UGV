@@ -115,7 +115,11 @@ if LOAD:
     def _gms_live():
         from sentinel_voice.llm import llm_extract
         info = llm_extract("테스트")
-        return f"GMS 응답 정상 (consciousness={info.get('consciousness')})"
+        return (
+            "GMS 응답 정상 "
+            f"(mobilityStatus={info.get('mobilityStatus')}, "
+            f"urgentConditionReported={info.get('urgentConditionReported')})"
+        )
 
     check("STT 로드", _load_stt)
     check("VAD 로드", _load_vad)

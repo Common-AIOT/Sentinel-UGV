@@ -15,6 +15,17 @@ services:
       - postgres_data:/var/lib/postgresql/data
     restart: unless-stopped
 
+  # 젯슨 telemetry 를 받는 MQTT 브로커 (명세 31-3).
+  # 로컬은 익명 접속을 허용한다. 계정·ACL 은 운영 설정(mosquitto.prod.conf)에서 적용한다.
+  mosquitto:
+    image: eclipse-mosquitto:2.0
+    container_name: mosquitto-local
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto/mosquitto.local.conf:/mosquitto/config/mosquitto.conf:ro
+    restart: unless-stopped
+
 volumes:
   postgres_data:
 

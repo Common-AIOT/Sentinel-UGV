@@ -1,0 +1,16 @@
+# 명세 31-11. 젯슨 계정은 자신의 telemetry/state/events/acks 만 발행하고
+# 자신의 cmd/* 만 구독할 수 있다. 스프링 서비스 계정만 모든 차량 토픽에 접근한다.
+#
+# 참고본: jetson/ros2_ws/src/sentinel_bridge/config/mosquitto-acl.example (S15P11A301-128)
+# 계정 비밀번호는 EC2 의 passwd 파일로 관리하며 리포에 두지 않는다.
+
+user sentinel-01
+topic write sentinel/v1/robots/SENTINEL-01/presence
+topic write sentinel/v1/robots/SENTINEL-01/state
+topic write sentinel/v1/robots/SENTINEL-01/telemetry
+topic write sentinel/v1/robots/SENTINEL-01/events
+topic write sentinel/v1/robots/SENTINEL-01/acks
+topic read  sentinel/v1/robots/SENTINEL-01/cmd/#
+
+user spring-service
+topic readwrite sentinel/v1/robots/#

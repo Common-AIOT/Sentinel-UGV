@@ -23,6 +23,10 @@ services:
       - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/${POSTGRES_DB:-sentinel_ugv}
       - SPRING_DATASOURCE_USERNAME=${POSTGRES_USER}
       - SPRING_DATASOURCE_PASSWORD=${POSTGRES_PASSWORD}
+      # 브로커는 같은 도커 네트워크에 있으므로 내부 평문 리스너로 붙는다(명세 31-11).
+      - MQTT_URL=tcp://mosquitto:1883
+      - MQTT_USERNAME=${MQTT_USERNAME}
+      - MQTT_PASSWORD=${MQTT_PASSWORD}
       - S3_ENDPOINT=${S3_ENDPOINT}
       - S3_REGION=${S3_REGION}
       - S3_BUCKET=${S3_BUCKET}
@@ -33,6 +37,33 @@ services:
     depends_on:
       - postgres
       - minio
+      - mosquitto
+    restart: always
+
+  # 젯슨 telemetry 를 받는 MQTT 브로커 (명세 31-3).
+  # 설정·ACL 은 CI 가 전송하고, 계정 비밀번호(passwd)는 EC2 에서 한 번 생성해 유지한다.
+  # 절차: docs/private-docs/mqtt-setup.md
+  mosquitto:
+    image: eclipse-mosquitto:2.0
+    container_name: mosquitto-prod
+    # 9001(websockets)만 호스트 루프백에 노출한다. nginx 가 443 의 /mqtt 로 프록시한다.
+    # 1883 은 publish 하지 않으므로 도커 네트워크 안에서만 닿는다.
+    ports:
+      - "127.0.0.1:9001:9001"
+    volumes:
+      - ./mosquitto:/seed:ro
+      - mosquitto_data_prod:/mosquitto/data
+    # 브로커는 mosquitto(uid 1883) 로 동작하므로 호스트 파일 소유자가 다르면
+    # passwd·acl 을 읽지 못하고 기동에 실패한다("Unable to open pwfile").
+    # CI 가 재배포할 때마다 소유자·권한이 초기화되므로 컨테이너 안에서 복사·교정 후 기동한다.
+    entrypoint:
+      - sh
+      - -c
+      - >
+        cp /seed/mosquitto.conf /seed/acl /seed/passwd /mosquitto/config/ &&
+        chown mosquitto:mosquitto /mosquitto/config/passwd /mosquitto/config/acl &&
+        chmod 0700 /mosquitto/config/passwd /mosquitto/config/acl &&
+        exec mosquitto -c /mosquitto/config/mosquitto.conf
     restart: always
 
   minio:
@@ -51,3 +82,4 @@ services:
 
 volumes:
   postgres_data_prod:
+  mosquitto_data_prod:

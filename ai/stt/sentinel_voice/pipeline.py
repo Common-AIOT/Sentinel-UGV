@@ -27,7 +27,7 @@ from . import config
 from .audio import load_mono
 from .config import FS
 from .llm import extract as extract_info
-from .safety import coerce_defaults, is_valid_stt, triage_rule
+from .safety import coerce_report, is_valid_stt, report_defaults, risk_assessment
 
 try:  # MeloTTS는 개발 PC 전용 옵션 — 젯슨(미설치)은 사전녹음 재생으로 동작
     from melo.api import TTS
@@ -71,19 +71,23 @@ def has_speech(wav):
     return len(ts) > 0
 
 
-def report(info, severity):
-    print(f"🩹 추출: {info}")
-    print(f"🚨 심각도: {severity}")
-    if info.get("hazard"):
-        print(f"⚠️ 환경위험: {info['hazard']}")
-    if info.get("additional_victims"):
-        print(f"👥 추가부상자: {info['additional_victims']}명")
+def report(info, risk):
+    print(f"🩹 음성 세션 보고: {info}")
+    print(f"🚨 위험도 참고값: {risk}")
     print("📡 관제 서버 전송 (시뮬레이션)")
 
 
 def unresponsive_report(reason):
-    info = coerce_defaults({"consciousness": "무반응", "speech": "신음만", "raw_note": reason})
-    report(info, triage_rule(info))
+    # 질문·청취가 정상 수행된 뒤 음성이 없을 때만 false로 기록한다.
+    info = coerce_report(
+        {
+            "anyResponseDetected": False,
+            "operatorReviewRequired": True,
+            "terminationReason": "NORMAL",
+        }
+    )
+    print(f"→ 무응답 관찰 사유: {reason}")
+    report(info, risk_assessment(info))
     speak("구조대에 정보를 전달했습니다. 안심하세요.")
 
 
@@ -127,12 +131,20 @@ def run(source, wav):
         return
 
     # 4) LLM 추출(GMS) — 네트워크/API 실패 시 llm.extract 가 33-8 키워드 폴백으로 처리
-    info, llm_source = extract_info(text)
+    extraction, llm_source = extract_info(text)
     if llm_source != "GMS":
         print(f"→ 추출 경로: {llm_source} (오프라인 축소안)")
 
     # 5) 규칙 등급 + 보고 + 안내
-    report(info, triage_rule(info))
+    info = report_defaults()
+    info.update(extraction)
+    info["anyResponseDetected"] = True
+    info["operatorReviewRequired"] = True
+    info["terminationReason"] = "NORMAL"
+    if info["reportedResponsiveCount"] is not None:
+        info["reportedCountStatus"] = "SELF_REPORTED_GROUP_COUNT"
+    info = coerce_report(info)
+    report(info, risk_assessment(info))
     speak("구조대에 정보를 전달했습니다. 안심하세요.")
     print(f"⏱ E2E: {time.time() - t0:.1f}s")
 

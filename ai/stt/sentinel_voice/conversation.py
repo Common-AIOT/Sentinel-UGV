@@ -7,6 +7,8 @@ from enum import Enum
 from time import monotonic
 from typing import Any, Callable
 
+from .safety import report_defaults
+
 
 class QuestionCode(str, Enum):
     INTRO = "INTRO"
@@ -73,7 +75,7 @@ class TurnResult:
 @dataclass
 class SessionResult:
     state: SessionState = SessionState.NOT_STARTED
-    fields: dict[str, Any] = field(default_factory=dict)
+    fields: dict[str, Any] = field(default_factory=report_defaults)
     turns: list[TurnResult] = field(default_factory=list)
     state_log: list[SessionState] = field(
         default_factory=lambda: [SessionState.NOT_STARTED]
@@ -128,10 +130,12 @@ class ConversationMachine:
             SessionState.ABORTED_SAFETY,
         }:
             result.termination_reason = abort_state.value
+            result.fields["terminationReason"] = abort_state.value
             self._transition(result, abort_state)
             return True
         if self.clock() - started_at >= self.timeout_seconds:
             result.termination_reason = "TIMEOUT"
+            result.fields["terminationReason"] = "TIMEOUT"
             self._transition(result, SessionState.COMPLETED)
             return True
         return False
@@ -149,7 +153,8 @@ class ConversationMachine:
             self._transition(result, SessionState.TTS_RESPONDING)
 
             if question == QuestionCode.CLOSING:
-                result.termination_reason = result.termination_reason or "COMPLETED"
+                result.termination_reason = result.termination_reason or "NORMAL"
+                result.fields["terminationReason"] = result.termination_reason
                 self._transition(result, SessionState.COMPLETED)
                 return result
 
@@ -161,7 +166,8 @@ class ConversationMachine:
                 self._transition(result, SessionState.LISTENING)
                 observation = self.listen(question, attempt)
                 if observation.audio_error:
-                    result.termination_reason = "AUDIO_ERROR"
+                    result.termination_reason = "AUDIO_DEVICE_ERROR"
+                    result.fields["terminationReason"] = "AUDIO_DEVICE_ERROR"
                     self._transition(result, SessionState.FAILED_AUDIO)
                     return result
 
@@ -191,6 +197,9 @@ class ConversationMachine:
                 )
                 result.turns.append(turn)
                 result.operator_review_required |= review_required
+                result.fields["operatorReviewRequired"] = (
+                    result.operator_review_required
+                )
 
                 if (
                     question == QuestionCode.INTRO
@@ -207,6 +216,14 @@ class ConversationMachine:
                     )
                 else:
                     result.fields[field_name] = turn.value
+                    if (
+                        question == QuestionCode.COUNT
+                        and isinstance(turn.value, int)
+                        and not isinstance(turn.value, bool)
+                    ):
+                        result.fields[
+                            "reportedCountStatus"
+                        ] = "SELF_REPORTED_GROUP_COUNT"
                 break
 
         return result

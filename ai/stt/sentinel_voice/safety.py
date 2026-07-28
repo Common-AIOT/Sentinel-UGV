@@ -1,82 +1,195 @@
-# safety.py
-"""
-LLM은 '진단'하지 않고 '정보 구조화'만 한다는 원칙을 강제하는 가드.
- - is_valid_stt : STT 환각/무음/프롬프트복사 컷
- - strip_hallucinated : 발화에 없는 부위/위험요소 제거
- - coerce_defaults : enum 밖 값/타입 오류를 안전값으로 보정
- - triage_rule : LLM 자유판단이 아니라 규칙으로 등급 산출(재현·설명 가능)
-"""
+"""음성 세션 보고값을 33-6 계약에 맞게 검증하고 보정한다."""
+
+from __future__ import annotations
+
+from typing import Any
+
+
+REPORT_FIELDS = (
+    "responseScope",  # 발화 적용 범위: 단일 마이크이므로 그룹 단위
+    "anyResponseDetected",  # 세션 중 사람의 음성 응답 감지 여부
+    "reportedResponsiveCount",  # 발화자가 직접 말한 응답 가능 인원 수
+    "reportedCountStatus",  # 인원 수의 출처·확정 상태
+    "countConfidence",  # 인원 수 인식 신뢰도(측정값이 있을 때만 사용)
+    "mobilityStatus",  # 그룹이 스스로 이동할 수 있다고 답했는지
+    "urgentConditionReported",  # 심한 출혈·호흡 곤란 등 긴급 상태 언급 여부
+    "operatorReviewRequired",  # 관제 담당자의 최종 확인 필요 여부
+    "terminationReason",  # 음성 세션이 종료된 이유
+)
+
+EXTRACTION_FIELDS = (
+    "reportedResponsiveCount",  # GMS/폴백이 발화에서 추출한 인원 수
+    "mobilityStatus",  # GMS/폴백이 발화에서 추출한 이동 가능 여부
+    "urgentConditionReported",  # GMS/폴백이 발화에서 추출한 긴급 언급 여부
+)
 
 ENUMS = {
-    "consciousness": {"명료", "혼미", "통증반응", "무반응", "미확인"},
-    "speech":        {"완전문장", "단어만", "신음만", "불가", "미확인"},
-    "can_move":      {"가능", "불가", "미확인"},
+    "responseScope": {"GROUP"},
+    "reportedCountStatus": {
+        "SELF_REPORTED_GROUP_COUNT",
+        "CONFIRMED_BY_OPERATOR",
+        "UNKNOWN",
+    },
+    "mobilityStatus": {"YES", "NO", "UNKNOWN"},
+    "urgentConditionReported": {"YES", "NO", "UNKNOWN"},
+    "terminationReason": {
+        "NORMAL",
+        "TIMEOUT",
+        "ABORTED_MANUAL",
+        "ABORTED_SAFETY",
+        "AUDIO_DEVICE_ERROR",
+        "GMS_UNAVAILABLE",
+        "UNKNOWN",
+    },
 }
 
 
 def is_valid_stt(text, no_speech_prob, prompt_text=""):
-    """STT 출력이 유효한 발화인지 판정. prompt_text 에는 whisper initial_prompt
-    (config.STT_PROMPT, 도메인 프라이밍 키워드)를 넘긴다.
-
-    프롬프트 복사(echo) 판정은 '부분문자열'이 아니라 '키워드 다수 동시 등장'으로 한다.
-    initial_prompt 는 요구조자가 실제로 외칠 법한 단어("살려주세요" 등)로 구성되므로,
-    부분문자열 검사는 정상 발화("살려주세요")를 환각으로 오탐한다. whisper 의 실제
-    echo 환각은 프라이밍 목록을 통째로 되뱉는 형태이므로, 프라이밍 키워드가 3개 이상
-    한꺼번에 나타날 때만 복사로 본다(단어 하나는 정상 통과)."""
+    """STT 출력이 유효한 발화인지 보수적으로 판정한다."""
     if not text or not text.strip():
         return False, "빈 출력"
     if no_speech_prob > 0.7:
-        return False, "무음확률 높음"
-    toks = text.split()
-    if toks and max(toks.count(t) for t in set(toks)) >= 4:
+        return False, "무음 확률 높음"
+    tokens = text.split()
+    if tokens and max(tokens.count(token) for token in set(tokens)) >= 4:
         return False, "반복 환각"
-    norm = lambda x: x.replace(" ", "").replace(",", "")
-    primes = {norm(k) for k in prompt_text.replace(",", " ").split() if k.strip()}
-    if primes:
-        hit = sum(1 for k in primes if k and k in norm(text))
-        if hit >= 3 or (len(primes) >= 2 and hit == len(primes)):
+
+    normalize = lambda value: value.replace(" ", "").replace(",", "")
+    prompt_tokens = {
+        normalize(token)
+        for token in prompt_text.replace(",", " ").split()
+        if token.strip()
+    }
+    if prompt_tokens:
+        hits = sum(
+            1 for token in prompt_tokens if token and token in normalize(text)
+        )
+        if hits >= 3 or (
+            len(prompt_tokens) >= 2 and hits == len(prompt_tokens)
+        ):
             return False, "프롬프트 복사"
     return True, "ok"
 
 
+def report_defaults() -> dict[str, Any]:
+    """개인 자동 귀속과 진단을 피하는 33-6 안전 기본값."""
+    return {
+        "responseScope": "GROUP",
+        # null은 마이크 오류 등으로 관찰 자체를 완료하지 못한 경우다.
+        "anyResponseDetected": None,
+        "reportedResponsiveCount": None,
+        "reportedCountStatus": "UNKNOWN",
+        "countConfidence": None,
+        "mobilityStatus": "UNKNOWN",
+        "urgentConditionReported": "UNKNOWN",
+        "operatorReviewRequired": True,
+        "terminationReason": "UNKNOWN",
+    }
+
+
+def coerce_report(value: Any) -> dict[str, Any]:
+    """외부 JSON을 허용 필드만 가진 33-6 보고값으로 보정한다."""
+    source = value if isinstance(value, dict) else {}
+    report = report_defaults()
+
+    for key in REPORT_FIELDS:
+        if key in source:
+            report[key] = source[key]
+
+    for key, allowed in ENUMS.items():
+        if not isinstance(report[key], str) or report[key] not in allowed:
+            report[key] = report_defaults()[key]
+
+    if report["anyResponseDetected"] is not None and not isinstance(
+        report["anyResponseDetected"], bool
+    ):
+        report["anyResponseDetected"] = None
+
+    count = report["reportedResponsiveCount"]
+    if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+        report["reportedResponsiveCount"] = None
+        report["reportedCountStatus"] = "UNKNOWN"
+    elif report["reportedCountStatus"] == "UNKNOWN":
+        report["reportedCountStatus"] = "SELF_REPORTED_GROUP_COUNT"
+
+    confidence = report["countConfidence"]
+    if isinstance(confidence, bool) or not isinstance(confidence, (int, float)):
+        report["countConfidence"] = None
+    elif not 0.0 <= float(confidence) <= 1.0:
+        report["countConfidence"] = None
+    else:
+        report["countConfidence"] = float(confidence)
+
+    if not isinstance(report["operatorReviewRequired"], bool):
+        report["operatorReviewRequired"] = True
+
+    # 단일 BRIO 100 마이크의 발화를 특정 개인에게 자동 귀속하지 않는다.
+    report["responseScope"] = "GROUP"
+    return report
+
+
+def coerce_extraction(value: Any) -> dict[str, Any]:
+    """GMS·폴백이 책임지는 세 가지 발화 추출 필드만 검증한다."""
+    report = coerce_report(value)
+    return {key: report[key] for key in EXTRACTION_FIELDS}
+
+
+# 이전 호출부가 새 계약으로 점진적으로 이동할 수 있도록 이름만 호환한다.
+coerce_defaults = coerce_report
+
+
 def strip_hallucinated(info, source_text):
-    def clean(items):
-        return [x for x in (items or [])
-                if x and x != "미확인" and (x in source_text or x[:2] in source_text)]
-    info["hazard"] = clean(info.get("hazard"))
-    info["pain_location"] = clean(info.get("pain_location"))
+    """새 계약에는 자유형 신체 부위·위험 배열이 없어 추가 제거가 필요 없다."""
     return info
 
 
-def coerce_defaults(info):
-    for k, allowed in ENUMS.items():
-        if info.get(k) not in allowed:      # "미홐정" 같은 글리치 → 미확인
-            info[k] = "미확인"
-    v = info.get("additional_victims")
-    info["additional_victims"] = v if isinstance(v, int) else (int(v) if str(v).isdigit() else 0)
-    for key in ("pain_location", "hazard"):
-        if not isinstance(info.get(key), list):
-            info[key] = []
-    if not isinstance(info.get("raw_note"), str):
-        info["raw_note"] = ""
-    return info
+RISK_RULE_VERSION = "voice-risk-v1.0"
+
+
+def risk_assessment(info):
+    """관제 우선 확인용 위험 신호와 적용 근거를 반환한다."""
+    report = coerce_report(info)
+    if report["terminationReason"] not in {"NORMAL", "UNKNOWN"}:
+        return {
+            "riskLevel": "UNKNOWN",
+            "riskReasons": [f"시스템 종료 사유: {report['terminationReason']}"],
+            "ruleVersion": RISK_RULE_VERSION,
+            "operatorReviewRequired": True,
+        }
+    if report["anyResponseDetected"] is None:
+        return {
+            "riskLevel": "UNKNOWN",
+            "riskReasons": ["응답 여부를 관찰하지 못함"],
+            "ruleVersion": RISK_RULE_VERSION,
+            "operatorReviewRequired": True,
+        }
+    if not report["anyResponseDetected"]:
+        level = "IMMEDIATE"
+        reasons = ["정상 청취 후 음성 응답이 감지되지 않음"]
+    elif report["urgentConditionReported"] == "YES":
+        level = "IMMEDIATE"
+        reasons = ["긴급 상태가 있다고 발화함"]
+    elif report["mobilityStatus"] == "NO":
+        level = "URGENT"
+        reasons = ["자력 이동이 불가능하다고 발화함"]
+    elif (
+        report["mobilityStatus"] == "YES"
+        and report["urgentConditionReported"] == "NO"
+    ):
+        level = "DELAYED"
+        reasons = ["자력 이동이 가능하고 긴급 상태가 없다고 발화함"]
+    else:
+        level = "UNKNOWN"
+        reasons = ["우선 확인 참고값을 계산할 정보가 부족함"]
+
+    return {
+        "riskLevel": level,
+        "riskReasons": reasons,
+        "ruleVersion": RISK_RULE_VERSION,
+        "operatorReviewRequired": True,
+    }
 
 
 def triage_rule(info):
-    """규칙 기반 색상 등급. 최종 판단은 관제의 사람이 한다(참고값)."""
-    c = info.get("consciousness", "미확인")
-    s = info.get("speech", "미확인")
-    move = info.get("can_move", "미확인")
-    if c in ("무반응", "통증반응"):
-        return "적색(즉시)"
-    if s in ("신음만", "불가"):
-        return "적색(즉시)"
-    if c == "혼미":
-        return "황색(응급)"
-    if move == "불가":
-        return "황색(응급)"
-    if s == "단어만":
-        return "황색(응급)"
-    if c == "명료" and move == "가능":
-        return "녹색(경증)"
-    return "미확인"
+    """기존 호출부 호환용. 새 코드에서는 risk_assessment를 사용한다."""
+    return risk_assessment(info)["riskLevel"]

@@ -3,7 +3,7 @@
 젯슨 측정용 다회차 벤치마크.
 
 STT는 시나리오당 1회(음성 고정) 캐싱하고, LLM은 NUM_RUNS회 반복해
-평균/최소/최대 지연과 triage 등급 일관성(%)을 집계한다.
+평균/최소/최대 지연과 구조화 필드·위험도 참고값 일관성(%)을 집계한다.
 device/compute 는 config가 자동 감지(Jetson=int8).
 
   cd ai/stt && python -m bench.pipeline_bench
@@ -26,7 +26,12 @@ from sentinel_voice import config
 from sentinel_voice.audio import load_mono
 from sentinel_voice.config import FS
 from sentinel_voice.llm import llm_extract as gms_extract
-from sentinel_voice.safety import coerce_defaults, is_valid_stt, triage_rule
+from sentinel_voice.safety import (
+    coerce_report,
+    is_valid_stt,
+    report_defaults,
+    risk_assessment,
+)
 
 NUM_RUNS = int(os.getenv("BENCH_RUNS", "3"))
 # 측정할 LLM 후보(GMS 모델명, 쉼표 구분). 확정 모델은 config.LLM_MODEL(gpt-5-nano)
@@ -85,11 +90,31 @@ def llm_extract(text, model):
     return gms_extract(text, model=model)
 
 
+def assemble_report(extraction, *, response_detected, termination_reason):
+    """GMS 추출값과 시스템 관찰값을 33-6 세션 보고로 조립한다."""
+    report = report_defaults()
+    report.update(extraction)
+    report["anyResponseDetected"] = response_detected
+    report["terminationReason"] = termination_reason
+    if report["reportedResponsiveCount"] is not None:
+        report["reportedCountStatus"] = "SELF_REPORTED_GROUP_COUNT"
+    return coerce_report(report)
+
+
 def non_ok_outcome(source):
     if source == "SED":
-        info = coerce_defaults({"consciousness": "무반응", "speech": "신음만", "raw_note": "무응답/무효"})
-        return info, triage_rule(info)
-    return None, "재질문"
+        report = assemble_report(
+            {},
+            response_detected=False,
+            termination_reason="NORMAL",
+        )
+        return report, risk_assessment(report)
+    return None, {
+        "riskLevel": "UNKNOWN",
+        "riskReasons": ["STT 결과가 없어 재질문 필요"],
+        "ruleVersion": "voice-risk-v1.0",
+        "operatorReviewRequired": True,
+    }
 
 
 # 1단계: STT 1회 캐싱
@@ -108,9 +133,13 @@ for name, rel, source in SCENARIOS:
 
 # 2단계: 다회차 LLM
 raw_rows = [["model", "scenario", "run_idx", "source", "stt_status", "stt_ms", "nsp",
-             "llm_ms", "consciousness", "speech", "hazard", "add_victims", "can_move", "severity", "stt_text"]]
+             "llm_ms", "reported_responsive_count", "mobility_status",
+             "urgent_condition_reported", "risk_level", "risk_reasons",
+             "rule_version", "stt_text"]]
 summary_rows = [["model", "scenario", "source", "stt_status", "stt_ms", "avg_llm_ms", "min_llm_ms", "max_llm_ms",
-                 "consistency_pct", "consciousness", "speech", "hazard", "add_victims", "can_move", "severity", "stt_text"]]
+                 "consistency_pct", "reported_responsive_count", "mobility_status",
+                 "urgent_condition_reported", "risk_level", "risk_reasons",
+                 "rule_version", "stt_text"]]
 
 print(f"\n[2단계] 모델별 다회차 LLM 추론 ({NUM_RUNS}회)...")
 for model in MODELS:
@@ -124,45 +153,70 @@ for model in MODELS:
     for name, rel, source in SCENARIOS:
         c = stt_cache[name]
         if c["status"] != "OK":
-            info, sev = non_ok_outcome(source)
-            cons = info["consciousness"] if info else "-"
-            spe = info["speech"] if info else "-"
-            cm = info["can_move"] if info else "-"
-            hz = "|".join(info["hazard"]) if info else "-"
-            av = info["additional_victims"] if info else "-"
+            info, risk = non_ok_outcome(source)
+            count = info["reportedResponsiveCount"] if info else "-"
+            mobility = info["mobilityStatus"] if info else "-"
+            urgent = info["urgentConditionReported"] if info else "-"
             raw_rows.append([model, name, 1, source, c["status"], round(c["stt_ms"], 1), round(c["nsp"], 3),
-                             0.0, cons, spe, hz, av, cm, sev, c["text"]])
+                             0.0, count, mobility, urgent, risk["riskLevel"],
+                             "|".join(risk["riskReasons"]), risk["ruleVersion"], c["text"]])
             summary_rows.append([model, name, source, c["status"], round(c["stt_ms"], 1), 0.0, 0.0, 0.0,
-                                 100.0, cons, spe, hz, av, cm, sev, c["text"]])
-            print(f"  {name:12s}[{source:6s}] {c['status']:12s} ➔ 폴백: {sev}")
+                                 100.0, count, mobility, urgent, risk["riskLevel"],
+                                 "|".join(risk["riskReasons"]), risk["ruleVersion"], c["text"]])
+            print(f"  {name:12s}[{source:6s}] {c['status']:12s} ➔ {risk['riskLevel']}")
             continue
 
-        times, sevs, infos = [], [], []
+        times, outcomes, reports, risks = [], [], [], []
         for run_idx in range(1, NUM_RUNS + 1):
             t = time.time()
             try:
-                info = llm_extract(c["text"], model)
-                sev = triage_rule(info)
+                extraction = llm_extract(c["text"], model)
+                info = assemble_report(
+                    extraction,
+                    response_detected=True,
+                    termination_reason="NORMAL",
+                )
+                risk = risk_assessment(info)
             except Exception as e:
-                info = coerce_defaults({})
-                sev = f"LLM오류:{e}"
+                info = assemble_report(
+                    {},
+                    response_detected=True,
+                    termination_reason="GMS_UNAVAILABLE",
+                )
+                risk = risk_assessment(info)
+                risk["riskReasons"].append(f"GMS 오류: {type(e).__name__}")
             llm_ms = (time.time() - t) * 1000
             times.append(llm_ms)
-            sevs.append(sev)
-            infos.append(info)
+            outcome = (
+                info["reportedResponsiveCount"],
+                info["mobilityStatus"],
+                info["urgentConditionReported"],
+                risk["riskLevel"],
+            )
+            outcomes.append(outcome)
+            reports.append(info)
+            risks.append(risk)
             raw_rows.append([model, name, run_idx, source, c["status"], round(c["stt_ms"], 1), round(c["nsp"], 3),
-                             round(llm_ms, 1), info["consciousness"], info["speech"],
-                             "|".join(info["hazard"]), info["additional_victims"], info["can_move"], sev, c["text"]])
+                             round(llm_ms, 1), info["reportedResponsiveCount"],
+                             info["mobilityStatus"], info["urgentConditionReported"],
+                             risk["riskLevel"], "|".join(risk["riskReasons"]),
+                             risk["ruleVersion"], c["text"]])
 
         avg, mn, mx = float(np.mean(times)), float(np.min(times)), float(np.max(times))
-        top_sev, cnt = Counter(sevs).most_common(1)[0]
+        top_outcome, cnt = Counter(outcomes).most_common(1)[0]
         consistency = cnt / NUM_RUNS * 100.0
-        rep = infos[sevs.index(top_sev)]
+        representative_index = outcomes.index(top_outcome)
+        rep = reports[representative_index]
+        representative_risk = risks[representative_index]
         summary_rows.append([model, name, source, c["status"], round(c["stt_ms"], 1),
                              round(avg, 1), round(mn, 1), round(mx, 1), round(consistency, 1),
-                             rep["consciousness"], rep["speech"], "|".join(rep["hazard"]),
-                             rep["additional_victims"], rep["can_move"], top_sev, c["text"]])
-        print(f"  {name:12s}[{source:6s}] LLM평균 {avg:5.0f}ms (min {mn:.0f}/max {mx:.0f}) | 일관성 {consistency:3.0f}% ➔ {top_sev}")
+                             rep["reportedResponsiveCount"], rep["mobilityStatus"],
+                             rep["urgentConditionReported"], representative_risk["riskLevel"],
+                             "|".join(representative_risk["riskReasons"]),
+                             representative_risk["ruleVersion"], c["text"]])
+        print(f"  {name:12s}[{source:6s}] LLM평균 {avg:5.0f}ms "
+              f"(min {mn:.0f}/max {mx:.0f}) | 일관성 {consistency:3.0f}% "
+              f"➔ {representative_risk['riskLevel']}")
 
 # 3단계: 저장
 os.makedirs(os.path.join(BASE, "results"), exist_ok=True)

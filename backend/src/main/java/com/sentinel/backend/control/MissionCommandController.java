@@ -14,12 +14,15 @@ import com.sentinel.backend.common.response.ApiResponse;
 import com.sentinel.backend.control.dto.CommandResponse;
 import com.sentinel.backend.control.dto.IssueCommandRequest;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 
 /**
  * 임무 제어 명령 API (명세 27.4).
  * 202 는 전달 시작이며, 완결은 젯슨의 COMMAND_ACK 가 결정한다.
  */
+@Tag(name = "임무 제어", description = "로봇에게 임무 명령(시작·일시정지·재개·복귀·정지)을 보냅니다.")
 @RestController
 @RequestMapping("/api/v1/missions/{missionId}/commands")
 public class MissionCommandController {
@@ -31,6 +34,10 @@ public class MissionCommandController {
     }
 
     /** START/PAUSE/RESUME/RETURN/STOP 명령을 젯슨에 전달한다. */
+    @Operation(summary = "임무 명령 보내기 (START/PAUSE/RESUME/RETURN/STOP)",
+            description = "로봇에게 시작(START)·일시정지(PAUSE)·재개(RESUME)·복귀(RETURN)·정지(STOP)를 시킵니다. "
+                    + "202 응답은 '로봇에게 보냈다'는 뜻이고, 로봇이 실제로 받아들이면 그때 임무 상태가 바뀝니다. "
+                    + "이미 끝난 임무면 409, 로봇과의 통신 경로가 끊겨 있으면 503(명령이 전달되지 않음)이 납니다.")
     @PostMapping
     @ResponseStatus(HttpStatus.ACCEPTED)
     public ApiResponse<CommandResponse> issue(

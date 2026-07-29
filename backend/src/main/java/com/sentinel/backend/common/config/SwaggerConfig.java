@@ -23,7 +23,8 @@ public class SwaggerConfig {
                                 .name("Team A301")
                                 .email("a301@ssafy.com")))
                 .servers(List.of(
-                        new Server().url("http://localhost:8080").description("Local Server"),
-                        new Server().url("https://api.sentinel-ugv.xyz:8080").description("Production Server")));
+                        // 운영은 nginx(443) 경유다. 8080 은 보안그룹이 막고 있어 직접 붙을 수 없다.
+                        new Server().url("https://api.sentinel-ugv.xyz").description("Production Server"),
+                        new Server().url("http://localhost:8080").description("Local Server")));
     }
 }

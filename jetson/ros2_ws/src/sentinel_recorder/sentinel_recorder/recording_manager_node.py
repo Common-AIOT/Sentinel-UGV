@@ -272,7 +272,7 @@ class RecordingManagerNode(Node):
             if actual != expected and actual.exists() and not expected.exists():
                 actual.rename(expected)
 
-        media_id = str(report.get('mediaId') or f'm_{uuid.uuid4().hex[:12]}')
+        media_id = str(report.get('mediaId') or uuid.uuid4())
         try:
             result = self.finalizer.finalize(
                 segments,
@@ -395,7 +395,13 @@ class RecordingManagerNode(Node):
         event = self.machine.event
         assert event is not None
 
-        self.media_id = f'm_{uuid.uuid4().hex[:12]}'
+        # UUID여야 한다. 백엔드가 UploadUrlRequest에서 UUID로 받고
+        # media_assets.id 가 UUID PRIMARY KEY 다(31-10, S15P11A301-126).
+        #
+        # 전에는 `m_{hex[:12]}` 형식이었다. media-upload-request.schema.json 의
+        # mediaId에 pattern이 없어 계약이 양쪽을 묶지 못했고, 실물 업로드에서
+        # 400 "잘못된 입력값입니다"로 드러났다(S15P11A301-124).
+        self.media_id = str(uuid.uuid4())
         self.collected = {}
 
         # 완성된 이벤트 디렉터리를 재사용하면 안 된다.

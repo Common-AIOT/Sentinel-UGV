@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import json
 import time
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -56,6 +57,22 @@ from .upload_client import (
 )
 
 BACKOFF_SECONDS = (1.0, 2.0, 4.0, 8.0, 16.0, 30.0)
+
+# 썸네일 mediaId를 영상 mediaId에서 파생할 때 쓰는 이름공간.
+#
+# 백엔드가 mediaId를 UUID로 받고 media_assets.id 가 UUID PRIMARY KEY다(31-10).
+# 그래서 `{mediaId}_thumb` 같은 문자열을 쓸 수 없다. 실물 업로드에서 400으로
+# 드러났다(S15P11A301-124).
+#
+# uuid5를 쓰는 이유는 결정적이기 때문이다. 재시도해도 같은 값이 나오므로 서버가
+# 중복 등록을 막을 수 있다. uuid4로 매번 새로 만들면 재시도마다 새 행이 생긴다.
+THUMBNAIL_NAMESPACE = uuid.UUID('6f9c1a52-3f4e-4b8a-9d21-7c5e0b8f4a13')
+
+
+def thumbnail_media_id(video_media_id: str) -> str:
+    """영상 mediaId에서 썸네일 mediaId를 파생한다. 같은 입력이면 같은 출력이다."""
+    return str(uuid.uuid5(THUMBNAIL_NAMESPACE, f'{video_media_id}:thumbnail'))
+
 
 CONTENT_TYPES = {
     FINAL_NAME: 'video/mp4',
@@ -268,7 +285,7 @@ class UploadWorker:
                 )
                 thumbnail_outcome = self.client.upload(
                     encounter_id=encounter_id,
-                    media_id=f'{media_id}_thumb',
+                    media_id=thumbnail_media_id(media_id),
                     target=thumbnail,
                     suggested_key=self._suggested_key(encounter_id, THUMBNAIL_NAME),
                     skip_complete=self.skip_complete,

@@ -8,7 +8,7 @@ device / compute_type 를 자동 감지한다. 환경 변수로 언제든 덮어
   SENTINEL_DEVICE   = cuda | cpu            (기본: cuda 가능하면 cuda)
   SENTINEL_COMPUTE  = int8 | float16 | ...  (기본: Jetson=int8, 그 외 GPU=float16)
   SENTINEL_STT_MODEL= tiny|base|small|...   (기본: small)
-  SENTINEL_LLM      = GMS 모델명             (기본: gpt-5-nano — 팀 결정 2026-07-24)
+  SENTINEL_LLM      = GMS 모델명             (기본: gpt-5.4-mini — Jira 118 실측 선정)
   GMS_KEY           = GMS API 키 (ai/stt/.env 파일 지원, 커밋 금지)
 """
 import os
@@ -77,9 +77,9 @@ COMPUTE = pick_compute(DEVICE)
 # ── 모델 선택 ────────────────────────────────────────────────
 STT_MODEL = os.getenv("SENTINEL_STT_MODEL", "small")   # faster-whisper
 
-# LLM — 팀 결정(2026-07-24): GMS API(gpt-5-nano). 온디바이스 ollama에서 전환.
-# 근거: 젯슨 실측 피크 5.62GB·page cache OOM (docs/메모리-예산.md)
-LLM_MODEL = os.getenv("SENTINEL_LLM", "gpt-5-nano")
+# LLM — 온디바이스 ollama에서 GMS API로 전환 후 Jira 118 비교로 모델 선정.
+# 근거: 젯슨 로컬 3b 피크 5.62GB·OOM, gpt-5.4-mini 프롬프트 v2 44/44 정답.
+LLM_MODEL = os.getenv("SENTINEL_LLM", "gpt-5.4-mini")
 GMS_BASE_URL = os.getenv("SENTINEL_GMS_BASE",
                          "https://gms.ssafy.io/gmsapi/api.openai.com/v1")
 GMS_KEY = os.getenv("GMS_KEY", "")

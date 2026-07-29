@@ -8,7 +8,7 @@
   - SED는 시연 시나리오에서 제외됨. 트리거는 비전(객체탐지)이 기본.
     (SED 소스가 들어오면 "무응답=중증"으로 보고하는 경로는 유지)
   - LLM은 진단하지 않고 사실만 구조화. 등급은 safety.triage_rule 규칙으로 산출.
-  - LLM은 GMS API(gpt-5-nano) 호출, 네트워크 불가 시 33-8 키워드 폴백(llm.extract).
+  - LLM은 GMS API(gpt-5.4-mini) 호출, 네트워크 불가 시 33-8 키워드 폴백(llm.extract).
   - 안내 음성: 승인된 사전녹음 WAV만 재생한다. 누락·오류 시 임의 TTS로 대체하지 않는다.
   - device/compute 는 config가 자동 감지(Jetson=cuda/int8, PC=cuda/float16).
 

@@ -8,7 +8,7 @@ from typing import Any
 REPORT_FIELDS = (
     "responseScope",  # 발화 적용 범위: 단일 마이크이므로 그룹 단위
     "anyResponseDetected",  # 세션 중 사람의 음성 응답 감지 여부
-    "reportedResponsiveCount",  # 발화자가 직접 말한 응답 가능 인원 수
+    "reportedResponsiveCount",  # 화자 본인을 포함해 직접 보고한 응답 가능 총인원
     "reportedCountStatus",  # 인원 수의 출처·확정 상태
     "countConfidence",  # 인원 수 인식 신뢰도(측정값이 있을 때만 사용)
     "mobilityStatus",  # 그룹이 스스로 이동할 수 있다고 답했는지
@@ -106,7 +106,7 @@ def coerce_report(value: Any) -> dict[str, Any]:
         report["anyResponseDetected"] = None
 
     count = report["reportedResponsiveCount"]
-    if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+    if isinstance(count, bool) or not isinstance(count, int) or count < 1:
         report["reportedResponsiveCount"] = None
         report["reportedCountStatus"] = "UNKNOWN"
     elif report["reportedCountStatus"] == "UNKNOWN":

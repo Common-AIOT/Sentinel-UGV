@@ -86,6 +86,31 @@ class ReportSchemaTest(unittest.TestCase):
         report = llm_extract("한 명이고 움직일 수 있어요")
         self.assert_extraction_schema(report)
         self.assertNotIn("diagnosis", report)
+        kwargs = gms.return_value.chat.completions.create.call_args.kwargs
+        self.assertEqual(kwargs["model"], "gpt-5.4-mini")
+        self.assertEqual(kwargs["reasoning_effort"], "none")
+
+    @patch("sentinel_voice.llm._gms")
+    def test_gpt5_nano_override_uses_minimal_reasoning(self, gms):
+        message = type(
+            "Message",
+            (),
+            {
+                "content": (
+                    '{"reportedResponsiveCount":null,'
+                    '"mobilityStatus":"UNKNOWN",'
+                    '"urgentConditionReported":"UNKNOWN"}'
+                )
+            },
+        )()
+        choice = type("Choice", (), {"message": message})()
+        gms.return_value.chat.completions.create.return_value = type(
+            "Response", (), {"choices": [choice]}
+        )()
+
+        llm_extract("테스트", model="gpt-5-nano")
+        kwargs = gms.return_value.chat.completions.create.call_args.kwargs
+        self.assertEqual(kwargs["reasoning_effort"], "minimal")
 
     @patch("sentinel_voice.llm.llm_extract", side_effect=TimeoutError)
     def test_gms_failure_switches_to_schema_compatible_fallback(self, _):
@@ -93,6 +118,25 @@ class ReportSchemaTest(unittest.TestCase):
         self.assertEqual(source, "FALLBACK")
         self.assert_extraction_schema(report)
         self.assertEqual(report["reportedResponsiveCount"], 3)
+
+    def test_keyword_fallback_includes_speaker_in_count(self):
+        self.assertEqual(
+            keyword_extract("저 말고 대답할 수 있는 사람은 아무도 없어요")[
+                "reportedResponsiveCount"
+            ],
+            1,
+        )
+        self.assertEqual(
+            keyword_extract("사람은 저밖에 없어요")[
+                "reportedResponsiveCount"
+            ],
+            1,
+        )
+
+    def test_zero_responsive_count_is_rejected(self):
+        report = coerce_report({"reportedResponsiveCount": 0})
+        self.assertIsNone(report["reportedResponsiveCount"])
+        self.assertEqual(report["reportedCountStatus"], "UNKNOWN")
 
     def test_system_failure_never_becomes_immediate_risk(self):
         risk = risk_assessment(

@@ -1,0 +1,86 @@
+{
+  "version": "voice-gms-prompt-hard-v1.0",
+  "description": "그룹 이동 상태와 긴급 증상 규칙의 일반화를 검증하는 합성 발화",
+  "cases": [
+    {
+      "caseId": "group-self-mobile-other-immobile-variant",
+      "text": "저는 걸을 수 있는데 같이 있는 한 분은 다리를 움직이지 못해요.",
+      "expected": {
+        "reportedResponsiveCount": null,
+        "mobilityStatus": "NO",
+        "urgentConditionReported": "UNKNOWN"
+      },
+      "tags": ["mobility", "group", "critical", "variant"]
+    },
+    {
+      "caseId": "group-all-mobile-explicit",
+      "text": "여기 있는 세 사람 모두 도움 없이 걸어서 나갈 수 있습니다.",
+      "expected": {
+        "reportedResponsiveCount": null,
+        "mobilityStatus": "YES",
+        "urgentConditionReported": "UNKNOWN"
+      },
+      "tags": ["mobility", "group", "all-explicit"]
+    },
+    {
+      "caseId": "group-partial-status-unknown",
+      "text": "저는 걸을 수 있지만 다른 두 사람은 움직일 수 있는지 아직 모르겠습니다.",
+      "expected": {
+        "reportedResponsiveCount": null,
+        "mobilityStatus": "UNKNOWN",
+        "urgentConditionReported": "UNKNOWN"
+      },
+      "tags": ["mobility", "group", "unknown-preservation"]
+    },
+    {
+      "caseId": "urgent-labored-breathing-variant",
+      "text": "옆 사람이 가쁜 숨을 몰아쉬면서 말도 제대로 못 하고 있어요.",
+      "expected": {
+        "reportedResponsiveCount": null,
+        "mobilityStatus": "UNKNOWN",
+        "urgentConditionReported": "YES"
+      },
+      "tags": ["urgent", "breathing", "critical", "variant"]
+    },
+    {
+      "caseId": "urgent-cannot-catch-breath-variant",
+      "text": "아무리 숨을 쉬어도 공기가 모자란 느낌이 들어요.",
+      "expected": {
+        "reportedResponsiveCount": null,
+        "mobilityStatus": "UNKNOWN",
+        "urgentConditionReported": "YES"
+      },
+      "tags": ["urgent", "breathing", "critical", "variant"]
+    },
+    {
+      "caseId": "pain-without-urgent-facts",
+      "text": "어깨와 허리가 너무 아프지만 다른 증상은 잘 모르겠어요.",
+      "expected": {
+        "reportedResponsiveCount": null,
+        "mobilityStatus": "UNKNOWN",
+        "urgentConditionReported": "UNKNOWN"
+      },
+      "tags": ["symptom", "unknown-preservation"]
+    },
+    {
+      "caseId": "urgent-explicitly-denied",
+      "text": "피가 심하게 나는 곳은 없고 모두 편하게 숨 쉬고 있습니다.",
+      "expected": {
+        "reportedResponsiveCount": null,
+        "mobilityStatus": "UNKNOWN",
+        "urgentConditionReported": "NO"
+      },
+      "tags": ["urgent", "negation"]
+    },
+    {
+      "caseId": "urgent-mixed-negation-variant",
+      "text": "피는 나지 않는데 한 사람이 숨이 막힌다고 계속 말합니다.",
+      "expected": {
+        "reportedResponsiveCount": null,
+        "mobilityStatus": "UNKNOWN",
+        "urgentConditionReported": "YES"
+      },
+      "tags": ["urgent", "mixed-negation", "critical", "variant"]
+    }
+  ]
+}

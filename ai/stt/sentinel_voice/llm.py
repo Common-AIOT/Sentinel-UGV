@@ -42,21 +42,38 @@ def _gms():
     return _client
 
 
+def request_options(model: str) -> dict:
+    """GMS 모델 계열에 맞는 최소 추론 옵션을 반환한다."""
+    normalized = model.lower()
+    if normalized.startswith("gpt-5.4"):
+        return {"reasoning_effort": "none"}
+    if normalized.startswith("gpt-5"):
+        return {"reasoning_effort": "minimal"}
+    return {}
+
+
 def llm_extract(text, model=None):
     """GMS 응답을 허용 필드만 남긴 33-6 보고값으로 반환한다."""
+    selected_model = model or config.LLM_MODEL
     response = _gms().chat.completions.create(
-        model=model or config.LLM_MODEL,
+        model=selected_model,
         messages=[
             {"role": "user", "content": PROMPT.replace("{input_text}", text)}
         ],
         response_format={"type": "json_object"},
-        reasoning_effort="minimal",
         max_completion_tokens=300,
+        **request_options(selected_model),
     )
     return coerce_extraction(json.loads(response.choices[0].message.content))
 
 
 def _reported_count(text: str) -> int | None:
+    if re.search(
+        r"(저\s*(혼자|한\s*명\s*뿐|밖에\s*없)|"
+        r"저\s*말고(?:는)?[^.?!]{0,20}아무도\s*없)",
+        text,
+    ):
+        return 1
     match = re.search(r"(한|하나|두|둘|세|셋|네|넷|다섯|\d+)\s*(명|사람)", text)
     if not match:
         return None

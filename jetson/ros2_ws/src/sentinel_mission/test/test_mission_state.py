@@ -533,3 +533,103 @@ def test_approach_failed_still_moves_to_interaction():
     assert not machine.movement_allowed
     # 상호작용 타임아웃이 걸려야 이벤트가 끝난다.
     assert machine.deadline_hint() == at(5 + 300)
+
+
+def test_absence_during_reporting_does_not_loop_back():
+    """보고 중에 사람이 없어도 POST_RECORDING으로 되돌아가면 안 된다.
+
+    S15P11A301-139의 무한 루프다. 실물 검증에서 이렇게 반복됐다.
+
+        POST_RECORDING → REPORTING  (3s captured)
+        REPORTING → POST_RECORDING  (person lost)
+        POST_RECORDING → REPORTING  (3s captured)
+        ...
+
+    탐지 노드는 사람이 없는 동안 빈 배열을 계속 발행한다. 그것이 REPORTING과
+    만나면 루프가 생긴다. 사람이 5~10초 서 있었는데 이벤트가 마감되지 않아 MP4가
+    46.9초가 됐고 46프레임 중 사람이 보이는 것은 하나뿐이었다.
+    """
+    machine = exploring()
+    confirm(machine)
+    machine.handle_signal(Signal.SAFE_POSE_REACHED, now=at(5))
+    machine.handle_signal(Signal.DIALOGUE_ENDED, now=at(10))
+    assert machine.tick(at(14)).changed
+    assert machine.state is MissionState.REPORTING
+
+    # 빈 배열이 계속 온다. 상태가 바뀌면 안 된다.
+    for index in range(10):
+        result = machine.observe_candidates(
+            now=at(15 + index), track_ids=set(), new_encounter_id=''
+        )
+        assert not result.changed, f'{index}번째 빈 배열에서 되돌아갔다'
+        assert result.phase is None, 'LOST를 다시 내면 녹화 노드가 혼란스럽다'
+        assert machine.state is MissionState.REPORTING
+
+
+def test_every_terminating_state_ignores_absence():
+    """종료 절차 상태가 늘면 이 검사도 함께 늘어야 한다.
+
+    조건문에 상태 이름을 직접 쓰면 새 종료 상태가 추가될 때 빠진다. 그래서
+    TERMINATING_STATES 목록으로 두고 여기서 전부 확인한다.
+    """
+    from sentinel_mission.mission_state import TERMINATING_STATES
+
+    assert MissionState.POST_RECORDING in TERMINATING_STATES
+    assert MissionState.REPORTING in TERMINATING_STATES
+
+    for state in TERMINATING_STATES:
+        machine = exploring()
+        confirm(machine)
+        machine.state = state
+        assert machine.encounter is not None
+        # 유예 시간이 지난 뒤에도 상실로 전이하지 않는다.
+        result = machine.observe_candidates(
+            now=at(1 + 10.0), track_ids=set(), new_encounter_id=''
+        )
+        assert not result.changed, f'{state.value}에서 상실로 전이했다'
+        assert '상실이 정상' in result.ignored_reason
+
+
+def test_one_person_flickering_does_not_inflate_person_count():
+    """한 사람이 들락날락해도 personCount가 늘면 안 된다.
+
+    S15P11A301-139의 실측이다. 사람의 팔 하나가 화면에 세 번 들어왔다 나갔고
+    IoU 추적이 매번 새 trackId를 발급했다. 누적 집합으로 세면 3명이 되고, 관제에
+    "3명 발견"으로 보고돼 구조 판단이 틀어진다.
+
+    32-6의 기준은 "**동시에** 발견된 사람들"이다.
+    """
+    machine = exploring()
+    confirm(machine, tracks=(1,))
+    assert machine.person_count == 1
+
+    # 같은 자리에 새 id로 다시 나타난다. 한 번에 하나씩만 보인다.
+    for index, track in enumerate((2, 3), start=1):
+        machine.observe_candidates(
+            now=at(2 + index * 2), track_ids={track}, new_encounter_id=OTHER
+        )
+        assert machine.person_count == 1, (
+            f'track {track}에서 {machine.person_count}명으로 불어났다'
+        )
+
+    # 누적 track은 보고용으로 남는다. 어떤 track이 관여했는지는 유용하다.
+    assert machine.encounter is not None
+    assert machine.encounter.track_ids == {1, 2, 3}
+
+
+def test_person_count_uses_simultaneous_not_cumulative():
+    """동시에 셋이 보이면 3명, 하나씩 셋이 보이면 1명이다."""
+    simultaneous = exploring()
+    confirm(simultaneous, tracks=(1,))
+    simultaneous.observe_candidates(
+        now=at(3), track_ids={1, 2, 3}, new_encounter_id=OTHER
+    )
+    assert simultaneous.person_count == 3
+
+    sequential = exploring()
+    confirm(sequential, tracks=(1,))
+    for index, track in enumerate((2, 3), start=1):
+        sequential.observe_candidates(
+            now=at(2 + index), track_ids={track}, new_encounter_id=OTHER
+        )
+    assert sequential.person_count == 1

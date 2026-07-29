@@ -6,9 +6,12 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -343,3 +346,53 @@ def test_worker_skips_event_whose_finalize_has_not_registered_checksum(tmp_path)
         {'encounterId': directory.name, 'media': {'sha256': 'a' * 64}},
     )
     assert PendingStore(tmp_path).scan()[0].ready_for_upload
+
+
+# ----------------------------------------------------------------------
+# REPORT_COMMITTED 발행 (S15P11A301-139)
+# ----------------------------------------------------------------------
+
+
+def test_report_committed_body_satisfies_the_mission_signal_schema():
+    """녹화 노드가 내는 REPORT_COMMITTED가 계약을 만족하는지.
+
+    이 신호가 없으면 mission_manager가 REPORTING에서 못 나오고 다음 사람을 찾지
+    못한다(S15P11A301-139). 형식이 틀리면 mission_manager가 조용히 버린다.
+    """
+    jsonschema = pytest.importorskip(
+        'jsonschema', reason='jsonschema가 없으면 계약 검증을 건너뛴다'
+    )
+    repo_root = Path(__file__).resolve().parents[5]
+    schema = json.loads(
+        (repo_root / 'common' / 'schemas' / 'mission-signal.schema.json').read_text(
+            encoding='utf-8'
+        )
+    )
+    validator = jsonschema.Draft202012Validator(
+        schema, format_checker=jsonschema.Draft202012Validator.FORMAT_CHECKER
+    )
+
+    # 노드가 만드는 것과 같은 형태다. 노드 파일은 rclpy를 끌어오므로 여기서
+    # 직접 구성한다.
+    body = {
+        'signal': 'REPORT_COMMITTED',
+        'sentAt': '2026-07-29T04:15:30.123Z',
+        'source': 'PERCEPTION',
+        'encounterId': '924bcd75-7d5c-417c-b1e4-b01d2872d287',
+        'detail': '이벤트 보고서를 로컬에 저장했다',
+        'commandId': None,
+    }
+    errors = list(validator.iter_errors(body))
+    assert not errors, [error.message for error in errors]
+
+
+def test_mission_signal_schema_allows_perception_as_source():
+    """녹화 노드는 PERCEPTION으로 자신을 알린다. enum에 없으면 계약 위반이다."""
+    repo_root = Path(__file__).resolve().parents[5]
+    schema = json.loads(
+        (repo_root / 'common' / 'schemas' / 'mission-signal.schema.json').read_text(
+            encoding='utf-8'
+        )
+    )
+    assert 'PERCEPTION' in schema['properties']['source']['enum']
+    assert 'REPORT_COMMITTED' in schema['properties']['signal']['enum']

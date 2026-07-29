@@ -1,0 +1,401 @@
+"""자세 판정 규칙과 trackId별 persistence 검증.
+
+실제 영상 없이도 검증 가능한 부분을 결정적으로 확인한다.
+합성 keypoint를 쓰므로 모델 정확도가 아니라 **규칙과 배선**을 검증한다.
+
+실행:
+    python -m pytest tests -q
+    python tests/test_posture_persistence.py     (pytest 없이도 동작)
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from src.persistence import PersistenceTracker  # noqa: E402
+from src.pose_estimator import PoseScheduler  # noqa: E402
+from src.posture_classifier import PostureClassifier, PostureSmoother  # noqa: E402
+from src.schemas import (  # noqa: E402
+    POSTURE_STANDING,
+    POSTURE_POSSIBLE_FALLEN,
+    POSTURE_UNKNOWN,
+    Detection,
+    PoseResult,
+    PostureResult,
+)
+
+KPT_COUNT = 17
+
+
+def _pose(points: dict[str, tuple[float, float]], conf: float = 0.9) -> PoseResult:
+    """이름으로 지정한 keypoint만 채운 PoseResult를 만든다."""
+    from src.schemas import KEYPOINT_INDEX
+
+    xy = [(0.0, 0.0)] * KPT_COUNT
+    cf = [0.0] * KPT_COUNT
+    for name, pt in points.items():
+        idx = KEYPOINT_INDEX[name]
+        xy[idx] = pt
+        cf[idx] = conf
+    return PoseResult(keypoints_xy=xy, keypoints_conf=cf)
+
+
+def _standing_pose() -> PoseResult:
+    # 어깨가 위, 엉덩이가 아래 → 상체가 수직
+    return _pose(
+        {
+            "left_shoulder": (100.0, 100.0),
+            "right_shoulder": (140.0, 100.0),
+            "left_hip": (105.0, 260.0),
+            "right_hip": (135.0, 260.0),
+            "left_knee": (105.0, 380.0),
+            "right_knee": (135.0, 380.0),
+        }
+    )
+
+
+def _lying_pose() -> PoseResult:
+    # 어깨와 엉덩이의 y가 비슷하고 x만 벌어짐 → 상체가 수평
+    return _pose(
+        {
+            "left_shoulder": (100.0, 200.0),
+            "right_shoulder": (100.0, 240.0),
+            "left_hip": (260.0, 205.0),
+            "right_hip": (260.0, 235.0),
+            "left_knee": (380.0, 205.0),
+            "right_knee": (380.0, 235.0),
+        }
+    )
+
+
+def _det(w: float, h: float, track_id: int | None = 1) -> Detection:
+    return Detection(
+        class_id=0,
+        class_name="person",
+        confidence=0.9,
+        bbox_xyxy=(0.0, 0.0, w, h),
+        track_id=track_id,
+    )
+
+
+def test_standing_is_normal() -> None:
+    clf = PostureClassifier()
+    # 세로로 긴 bbox (서 있는 사람)
+    result = clf.classify(_det(80, 400), _standing_pose())
+    assert result.status == POSTURE_STANDING, result
+    assert result.signals["torso_angle_deg"] < 20
+
+
+def test_lying_is_possible_fallen() -> None:
+    clf = PostureClassifier()
+    # 가로로 긴 bbox (누운 사람)
+    result = clf.classify(_det(400, 120), _lying_pose())
+    assert result.status == POSTURE_POSSIBLE_FALLEN, result
+    # 단일 신호가 아니라 최소 2개 조합으로 판정해야 한다(AGENTS.md §15)
+    assert result.signals["fallen_votes"] >= 2, result
+
+
+def test_missing_pose_is_unknown() -> None:
+    clf = PostureClassifier()
+    result = clf.classify(_det(400, 120), None)
+    assert result.status == POSTURE_UNKNOWN
+
+
+def test_insufficient_keypoints_is_unknown() -> None:
+    clf = PostureClassifier()
+    sparse = _pose({"nose": (100.0, 100.0)})
+    result = clf.classify(_det(400, 120), sparse)
+    assert result.status == POSTURE_UNKNOWN
+
+
+def test_event_requires_one_second_of_person() -> None:
+    """트리거는 '사람을 1초 관측'이다. 자세가 아니다(명세 25.1)."""
+    tracker = PersistenceTracker(person_confirm_seconds=1.0)
+    fired = []
+    for i in range(10):  # 0.0 ~ 0.9초
+        fired.append(tracker.update(1, POSTURE_STANDING, i * 0.1).event_confirmed)
+    assert not any(fired), "1초 미만인데 이벤트가 발행됨"
+
+    assert tracker.update(1, POSTURE_STANDING, 1.0).event_confirmed, "1초 관측했는데 미발행"
+
+
+def test_standing_person_also_triggers_event() -> None:
+    """서 있는 사람도 구조 대상이므로 반드시 이벤트가 나야 한다.
+
+    자세로 거르면 사람을 찾고도 보고하지 않는 false negative가 된다(AGENTS.md §23).
+    """
+    tracker = PersistenceTracker(person_confirm_seconds=1.0)
+    for i in range(11):
+        state = tracker.update(1, POSTURE_STANDING, i * 0.1)
+    assert state.event_confirmed, "서 있는 사람이 보고되지 않음"
+    assert state.fallen_sec == 0.0
+
+
+def test_unknown_posture_still_triggers_event() -> None:
+    """관절이 부족해 unknown이어도 사람은 찾은 것이므로 보고해야 한다."""
+    tracker = PersistenceTracker(person_confirm_seconds=1.0)
+    for i in range(11):
+        state = tracker.update(1, POSTURE_UNKNOWN, i * 0.1)
+    assert state.event_confirmed, "unknown 자세라고 사람이 누락됨"
+
+
+def test_fallen_seconds_tracked_as_attribute() -> None:
+    """fallen_sec는 트리거가 아니라 속성으로 누적된다."""
+    tracker = PersistenceTracker(person_confirm_seconds=1.0)
+    for i in range(11):
+        state = tracker.update(1, POSTURE_POSSIBLE_FALLEN, i * 0.1)
+    assert state.event_confirmed
+    assert abs(state.fallen_sec - 1.0) < 1e-6, f"fallen_sec={state.fallen_sec}"
+    assert tracker.is_fallen_confirmed(state.fallen_sec)
+
+
+def test_posture_change_resets_fallen_only() -> None:
+    """자세가 바뀌면 fallen_sec만 초기화되고 관측 연속성(seen_sec)은 유지된다."""
+    tracker = PersistenceTracker(person_confirm_seconds=1.0)
+    for i in range(10):
+        tracker.update(1, POSTURE_POSSIBLE_FALLEN, i * 0.1)
+    state = tracker.update(1, POSTURE_STANDING, 1.0)
+    assert state.fallen_sec == 0.0, "자세 변경 후에도 fallen_sec가 남음"
+    assert state.seen_sec >= 1.0, "자세가 바뀌었다고 관측 시간이 초기화됨"
+
+
+def test_two_tracks_do_not_share_persistence() -> None:
+    """ByteTrack을 도입한 핵심 이유.
+
+    A가 0.6초, B가 0.6초 관측돼도 '1초 연속'이 되어서는 안 된다.
+    """
+    tracker = PersistenceTracker(person_confirm_seconds=1.0)
+    fired = []
+    for i in range(7):  # track 1: 0.0 ~ 0.6초
+        fired.append(tracker.update(1, POSTURE_STANDING, i * 0.1).event_confirmed)
+    for i in range(7, 14):  # track 2: 0.7 ~ 1.3초
+        fired.append(tracker.update(2, POSTURE_STANDING, i * 0.1).event_confirmed)
+    assert not any(fired), "서로 다른 사람의 관측 시간이 합산되어 오탐 발생"
+
+
+def test_untracked_detection_does_not_accumulate() -> None:
+    tracker = PersistenceTracker(person_confirm_seconds=1.0)
+    fired = [tracker.update(None, POSTURE_STANDING, i * 0.1).event_confirmed for i in range(20)]
+    assert not any(fired), "trackId가 없는데 지속시간이 누적됨"
+
+
+def test_event_cooldown() -> None:
+    """연속 관측 중인 사람은 쿨다운 간격으로만 재발행된다."""
+    tracker = PersistenceTracker(person_confirm_seconds=1.0, event_cooldown_seconds=15.0)
+    fired_at = []
+    # 0.0 ~ 20.0초를 0.1초 간격으로 연속 관측
+    for i in range(201):
+        t = round(i * 0.1, 3)
+        if tracker.update(1, POSTURE_STANDING, t).event_confirmed:
+            fired_at.append(t)
+    assert len(fired_at) == 2, f"발행 시각: {fired_at}"
+    assert abs(fired_at[0] - 1.0) < 1e-6, f"첫 발행이 1.0초가 아님: {fired_at[0]}"
+    assert abs(fired_at[1] - 16.0) < 1e-6, f"두 번째 발행이 16.0초가 아님: {fired_at[1]}"
+
+
+def test_gap_within_forget_window_continues() -> None:
+    """forget_seconds 안에 돌아오면 같은 사람으로 보고 누적을 이어간다."""
+    tracker = PersistenceTracker(person_confirm_seconds=1.0, forget_seconds=10.0)
+    for i in range(11):
+        tracker.update(1, POSTURE_STANDING, i * 0.1)
+    # 5초 공백은 forget(10초) 이내 → 관측 시간 유지
+    state = tracker.update(1, POSTURE_STANDING, 6.0)
+    assert state.seen_sec >= 6.0, f"forget 이내인데 관측 시간이 끊김: {state.seen_sec}"
+
+
+def test_gap_beyond_forget_window_restarts() -> None:
+    """forget_seconds를 넘겨 사라졌다 돌아오면 처음부터 다시 센다."""
+    tracker = PersistenceTracker(person_confirm_seconds=1.0, forget_seconds=2.0)
+    for i in range(11):
+        tracker.update(1, POSTURE_STANDING, i * 0.1)
+    # 5초 공백은 forget(2초) 초과 → 리셋
+    state = tracker.update(1, POSTURE_STANDING, 6.0)
+    assert state.seen_sec == 0.0, f"forget 초과인데 관측 시간이 이어짐: {state.seen_sec}"
+
+
+def test_id_switch_inherits_persistence() -> None:
+    """가려짐으로 ID가 바뀌어도 관측 시간이 리셋되지 않아야 한다."""
+    tracker = PersistenceTracker(person_confirm_seconds=1.0, forget_seconds=10.0)
+    pos = (300.0, 200.0)
+    for i in range(9):  # track 1로 0.0 ~ 0.8초
+        assert not tracker.update(
+            1, POSTURE_POSSIBLE_FALLEN, i * 0.1, center=pos, size=200.0
+        ).event_confirmed
+    # 0.9초에 가려져 ID가 2로 바뀌었지만 같은 자리
+    state = tracker.update(2, POSTURE_POSSIBLE_FALLEN, 1.0, center=pos, size=200.0)
+    assert state.event_confirmed, "ID가 바뀌자 관측 시간이 초기화되어 이벤트를 놓침"
+
+
+def test_far_away_id_does_not_inherit() -> None:
+    """멀리 떨어진 곳에 나타난 새 ID는 승계하면 안 된다. 다른 사람이다."""
+    tracker = PersistenceTracker(person_confirm_seconds=1.0, forget_seconds=10.0)
+    for i in range(9):
+        tracker.update(1, POSTURE_STANDING, i * 0.1, center=(100.0, 100.0), size=100.0)
+    state = tracker.update(2, POSTURE_STANDING, 1.0, center=(900.0, 700.0), size=100.0)
+    assert not state.event_confirmed, "다른 위치의 사람에게 지속 시간이 잘못 승계됨"
+
+
+def test_stale_track_does_not_inherit() -> None:
+    """forget_seconds를 넘겨 끊긴 트랙은 승계 대상이 아니다."""
+    tracker = PersistenceTracker(person_confirm_seconds=1.0, forget_seconds=2.0)
+    pos = (300.0, 200.0)
+    for i in range(9):
+        tracker.update(1, POSTURE_STANDING, i * 0.1, center=pos, size=200.0)
+    state = tracker.update(2, POSTURE_STANDING, 10.0, center=pos, size=200.0)
+    assert not state.event_confirmed, "승계 허용 시간을 넘겼는데 승계됨"
+
+
+def test_inherit_does_not_duplicate() -> None:
+    """한 트랙의 상태가 두 개의 새 트랙에 중복 승계되면 안 된다."""
+    tracker = PersistenceTracker(person_confirm_seconds=1.0, forget_seconds=10.0)
+    pos = (300.0, 200.0)
+    for i in range(9):
+        tracker.update(1, POSTURE_STANDING, i * 0.1, center=pos, size=200.0)
+    first = tracker.update(2, POSTURE_STANDING, 1.0, center=pos, size=200.0).event_confirmed
+    second = tracker.update(3, POSTURE_STANDING, 1.0, center=pos, size=200.0).event_confirmed
+    assert first, "첫 승계가 동작하지 않음"
+    assert not second, "같은 상태가 두 트랙에 중복 승계됨"
+
+
+def test_prune_removes_stale_tracks() -> None:
+    tracker = PersistenceTracker(forget_seconds=3.0)
+    tracker.update(1, POSTURE_POSSIBLE_FALLEN, 0.0)
+    assert len(tracker._states) == 1
+    tracker.prune(10.0)
+    assert len(tracker._states) == 0, "오래된 트랙 상태가 정리되지 않음"
+
+
+def _smoothed(smoother, statuses, track_id=1):
+    """상태 시퀀스를 완충기에 통과시켜 결과 시퀀스를 얻는다."""
+    out = []
+    for s in statuses:
+        out.append(smoother.smooth(track_id, PostureResult(status=s)).status)
+    return out
+
+
+def test_smoother_absorbs_single_unknown_blip() -> None:
+    """한 프레임 unknown이 튀어도 자세가 흔들리면 안 된다.
+
+    누우면 팔다리가 몸에 가려져 keypoint가 순간 부족해진다. 완충이 없으면
+    그때마다 fallen 누적이 끊겨 이벤트를 놓친다.
+    """
+    sm = PostureSmoother(window=5, unknown_yields_to_known=True)
+    seq = [POSTURE_POSSIBLE_FALLEN] * 3 + [POSTURE_UNKNOWN] + [POSTURE_POSSIBLE_FALLEN]
+    out = _smoothed(sm, seq)
+    assert POSTURE_UNKNOWN not in out, f"unknown 깜빡임이 그대로 통과됨: {out}"
+
+
+def test_smoother_reports_unknown_when_all_unknown() -> None:
+    """계속 unknown이면 그대로 unknown이어야 한다. 완충이 사실을 감추면 안 된다."""
+    sm = PostureSmoother(window=3, unknown_yields_to_known=True)
+    out = _smoothed(sm, [POSTURE_UNKNOWN] * 5)
+    assert out[-1] == POSTURE_UNKNOWN, out
+
+
+def test_smoother_follows_sustained_change() -> None:
+    """자세가 실제로 바뀌면 완충이 지연시키더라도 결국 따라가야 한다."""
+    sm = PostureSmoother(window=3, unknown_yields_to_known=True)
+    seq = [POSTURE_STANDING] * 4 + [POSTURE_POSSIBLE_FALLEN] * 4
+    out = _smoothed(sm, seq)
+    assert out[-1] == POSTURE_POSSIBLE_FALLEN, f"지속된 변화를 따라가지 못함: {out}"
+
+
+def test_smoother_keeps_tracks_separate() -> None:
+    """서로 다른 사람의 자세 이력이 섞이면 안 된다."""
+    sm = PostureSmoother(window=3, unknown_yields_to_known=True)
+    for _ in range(3):
+        sm.smooth(1, PostureResult(status=POSTURE_POSSIBLE_FALLEN))
+    out = sm.smooth(2, PostureResult(status=POSTURE_STANDING)).status
+    assert out == POSTURE_STANDING, f"다른 트랙의 이력이 반영됨: {out}"
+
+
+def test_smoother_disabled_passes_through() -> None:
+    """window=1이면 완충 없이 원본을 그대로 통과시킨다."""
+    sm = PostureSmoother(window=1)
+    out = _smoothed(sm, [POSTURE_POSSIBLE_FALLEN, POSTURE_UNKNOWN, POSTURE_STANDING])
+    assert out == [POSTURE_POSSIBLE_FALLEN, POSTURE_UNKNOWN, POSTURE_STANDING], out
+
+
+def test_pose_needs_consecutive_frames() -> None:
+    """명세 25.6: 사람 3프레임 이상 연속 감지 시에만 Pose를 활성화한다."""
+    sch = PoseScheduler(activate_after_frames=3, max_fps=1000.0)
+    det = _det(200, 400)
+    ran = [sch.should_run(det, i * 0.01) for i in range(5)]
+    assert ran == [False, False, True, True, True], ran
+
+
+def test_pose_rate_limited() -> None:
+    """명세 25.6: Pose는 약 2FPS로 제한한다. 매 프레임 돌지 않아야 한다."""
+    sch = PoseScheduler(activate_after_frames=1, max_fps=2.0)
+    det = _det(200, 400)
+    # 0.0 ~ 1.0초를 0.1초 간격으로: 0.0, 0.5, 1.0 세 번만 실행되어야 한다
+    ran_at = [round(i * 0.1, 2) for i in range(11) if sch.should_run(det, round(i * 0.1, 2))]
+    assert ran_at == [0.0, 0.5, 1.0], ran_at
+
+
+def test_pose_skips_small_bbox() -> None:
+    """작은 bbox는 keypoint를 신뢰할 수 없어 Pose를 돌리지 않는다."""
+    sch = PoseScheduler(activate_after_frames=1, min_bbox_width=80, min_bbox_height=80)
+    assert not sch.should_run(_det(40, 40), 0.0)
+    assert sch.should_run(_det(200, 400), 0.0)
+
+
+def test_pose_skips_untracked() -> None:
+    """추적 ID가 없으면 연속성을 셀 수 없으므로 실행하지 않는다."""
+    sch = PoseScheduler(activate_after_frames=3)
+    assert not sch.should_run(_det(200, 400, track_id=None), 0.0)
+
+
+def test_pose_deactivates_after_absence() -> None:
+    """명세 25.6: 3초 미감지되면 연속성과 캐시를 초기화한다."""
+    sch = PoseScheduler(activate_after_frames=3, max_fps=1000.0, deactivate_after_seconds=3.0)
+    det = _det(200, 400)
+    for i in range(5):
+        sch.should_run(det, i * 0.01)
+    sch.cache(1, PostureResult(status=POSTURE_POSSIBLE_FALLEN))
+    assert sch.cached(1) is not None
+    # 5초 공백 후 재등장 → 다시 3프레임 연속이 필요하고 캐시도 비어 있어야 한다
+    assert not sch.should_run(det, 5.0), "공백 후에도 즉시 실행됨"
+    assert sch.cached(1) is None, "공백 후에도 이전 자세 캐시가 남음"
+
+
+def test_pose_cache_reused_between_runs() -> None:
+    """실행하지 않는 프레임에서는 직전 판정을 재사용한다(자세 깜빡임 방지)."""
+    sch = PoseScheduler(activate_after_frames=1, max_fps=2.0)
+    det = _det(200, 400)
+    assert sch.should_run(det, 0.0)
+    sch.cache(1, PostureResult(status=POSTURE_POSSIBLE_FALLEN))
+    assert not sch.should_run(det, 0.1), "2FPS 제한인데 즉시 재실행됨"
+    assert sch.cached(1).status == POSTURE_POSSIBLE_FALLEN
+
+
+def test_no_person_no_event() -> None:
+    """사람이 없으면 아무 이벤트도 나면 안 된다."""
+    tracker = PersistenceTracker(person_confirm_seconds=1.0)
+    assert not tracker.update(None, POSTURE_UNKNOWN, 0.0).event_confirmed
+    tracker.prune(100.0)
+    assert len(tracker._states) == 0
+
+
+def _run_all() -> int:
+    tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
+    failed = 0
+    for fn in tests:
+        try:
+            fn()
+            print(f"PASS  {fn.__name__}")
+        except AssertionError as exc:
+            failed += 1
+            print(f"FAIL  {fn.__name__}: {exc}")
+        except Exception as exc:  # noqa: BLE001
+            failed += 1
+            print(f"ERROR {fn.__name__}: {type(exc).__name__}: {exc}")
+    print(f"\n{len(tests) - failed}/{len(tests)} passed")
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(_run_all())

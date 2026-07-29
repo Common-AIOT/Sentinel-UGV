@@ -1,0 +1,127 @@
+# Sentinel UGV - 객체탐지 파이프라인 설정 [개발 PC 프로파일]
+#
+# 이 파일은 **개발 PC(Windows, 노트북 웹캠) 기준**이다. 파이프라인 동작 확인용이며,
+# 실제 로봇에 올릴 때는 configs/pipeline.jetson.yaml 을 쓴다.
+#   python -m src.main --config configs/pipeline.jetson.yaml --source 0 --show
+#
+# 모든 threshold는 이 파일에서 관리한다. 코드에 하드코딩하지 않는다(AGENTS.md §15).
+# 초기값이며 ISSUE-06에서 조정한다.
+
+detector:
+  # 사전학습 COCO 모델. 파인튜닝 후에는 --model 인자로 교체한다(AGENTS.md §26).
+  model: models/yolo26n.pt
+  # 탐지 대상 클래스 이름. class id가 아니라 이름으로 판정한다(AGENTS.md §11).
+  target_classes:
+    - person
+  confidence: 0.50
+  iou: 0.70
+  # 추적기 설정 (AGENTS.md §6 결정, 명세 25장).
+  # BoT-SORT 기반 전용 설정. 이동 카메라 보정(GMC)과 긴 track_buffer를 쓴다.
+  # 기본 ByteTrack으로 되돌리려면 bytetrack.yaml 로 바꾼다.
+  tracker: configs/tracker_sentinel.yaml
+
+# 카메라(live) 입력 설정. 파일 입력에는 적용되지 않는다.
+#
+# OpenCV는 해상도를 지정하지 않으면 대개 640x480으로 카메라를 연다.
+# 카메라 성능과 무관하므로 실제 지원 해상도를 명시한다.
+camera:
+  width: 1280
+  height: 720
+  # USB 카메라는 고해상도에서 YUY2(무압축)를 쓰면 FPS가 급락한다. MJPG를 쓴다.
+  fourcc: MJPG
+  # 백엔드: auto | dshow | msmf | v4l2 | gstreamer | any
+  # auto는 Windows→dshow, Linux/Jetson→v4l2로 자동 선택한다.
+  # 이 개발 PC에서는 msmf가 프레임 grab에 실패한다(2026-07-29 실측).
+  backend: auto
+  # 요청한 FPS. 0이면 카메라 기본값을 쓴다.
+  fps: 30
+
+# Pose 실행 조건.
+# 명세 25.6(docs/04-자율주행-AI.md:78)을 따른다.
+#   "사람 3프레임 이상 연속 감지 시 활성, 약 2FPS, 3초 미감지 시 중단"
+# 매 프레임 사람 수만큼 Pose를 돌리면 Detect FPS를 유지할 수 없다.
+# Detect가 사람 발견을 책임지고 Pose는 자세 정보만 보조한다(명세 420행).
+pose_trigger:
+  min_bbox_width: 80
+  min_bbox_height: 80
+  # 이 프레임 수만큼 연속 감지되어야 Pose를 활성화한다.
+  activate_after_frames: 3
+  # 트랙당 Pose 최대 실행 빈도(Hz). 사이 프레임은 직전 판정을 재사용한다.
+  max_fps: 2.0
+  # 이 시간(초) 이상 미감지되면 연속성과 캐시를 초기화한다.
+  deactivate_after_seconds: 3.0
+
+pose:
+  model: models/yolo26n-pose.pt
+  confidence: 0.50
+  # 개별 keypoint를 신뢰할 최소 confidence
+  keypoint_confidence: 0.50
+  # crop 시 bbox 주변 여유 비율 (관절이 경계에 걸리는 것을 완화)
+  crop_margin: 0.10
+
+posture:
+  # 최소 두 개 이상의 신호를 조합해 판정한다(AGENTS.md §15).
+  # torso_angle_deg: 상체(어깨중점→엉덩이중점) 벡터와 수직축이 이루는 각도.
+  #   0에 가까우면 서 있음, 90에 가까우면 누움.
+  torso_horizontal_deg: 55.0
+  # bbox 가로/세로 비. 1.0 이상이면 누웠을 가능성.
+  bbox_aspect_ratio: 1.20
+  # 어깨-엉덩이 y 차이를 사람 높이로 정규화한 값. 작을수록 수평.
+  vertical_extent_ratio: 0.25
+  # 판정에 필요한 최소 유효 keypoint 수. 미달 시 unknown(내부값).
+  min_valid_keypoints: 4
+  # 자세 흔들림 완충(hysteresis). 최근 N프레임의 다수결로 자세를 정한다.
+  # 누우면 팔다리가 몸에 가려져 한두 프레임씩 unknown이 튀는데, 완충이 없으면
+  # 그때마다 fallen 누적이 끊긴다. 1이면 완충 없음(원래 동작).
+  smoothing_window: 5
+  # 창 안에 확정 상태(normal/possible_fallen)가 하나라도 있으면 unknown은 무시한다.
+  # 전부 unknown일 때만 unknown을 출력한다.
+  unknown_yields_to_known: true
+
+# 사람을 "기억"하는 시간. 이 값 하나가 아래 셋을 모두 결정한다.
+#   1) 트래커가 같은 trackId를 유지하는 시간 (tracker의 track_buffer)
+#   2) ID가 바뀌었을 때 누적 시간을 승계하는 시간
+#   3) 트랙 상태를 폐기하는 시간
+#
+# 이전에는 이 셋이 따로 놀았고(트래커는 프레임 단위, 나머지는 초 단위)
+# track_buffer가 프레임 단위라 실제 기억 시간이 FPS에 따라 25~91초로 출렁였다.
+# 이제 초 단위 하나로 통일하고, track_buffer는 실측 FPS로 매 프레임 자동 환산한다.
+memory:
+  forget_seconds: 10.0
+  # 자동 환산된 track_buffer의 하한/상한(프레임). 극단적인 FPS에서의 안전장치.
+  # 하한이 너무 높으면 저FPS에서 기억 시간이 목표보다 길어진다(2 FPS·하한 30 → 15초).
+  # 실행 통계의 memory_actual_sec가 target과 다르면 이 클램프에 걸린 것이다.
+  min_track_buffer: 10
+  max_track_buffer: 900
+
+persistence:
+  # 사람을 이 시간(초) 이상 안정적으로 관측하면 encounter를 확정한다.
+  # **이것이 이벤트 트리거다.** 자세는 트리거가 아니다.
+  # 명세 docs/01-프로젝트-개요.md:156, docs/04-자율주행-AI.md:80을 따른다.
+  # 서 있거나 앉아 있는 요구조자도 구조 대상이므로 자세로 거르지 않는다.
+  person_confirm_seconds: 1.0
+  # POSSIBLE_FALLEN이 이 시간(초) 이상 지속되면 심각도 표시를 붙인다.
+  # 명세 25.6: "동일 자세 약 1.5초 유지 시 이벤트"(docs/04-자율주행-AI.md:78, 444, 454)
+  # 이벤트 발행 조건이 아니라 페이로드의 fallenSec 속성 판단용이다.
+  fallen_seconds: 1.5
+  # 같은 트랙에 대해 이벤트를 다시 발행하기까지의 최소 간격(초).
+  # 명세 25.4의 중복 이벤트 제거(15초)를 로컬에서 1차 억제한다.
+  event_cooldown_seconds: 15.0
+  # 승계를 허용할 거리. 이전 bbox 크기의 배수로 지정한다.
+  inherit_distance_ratio: 1.0
+
+output:
+  # 프레임 단위 로그. 용량이 크므로 기본 비활성.
+  write_frame_log: false
+  jsonl_frames: frames.jsonl
+  jsonl_events: events.jsonl
+  events_dir: events
+  # 이벤트 이미지에 overlay를 그려 저장할지 여부
+  draw_overlay_on_event_image: true
+
+# 관제 보고용 메시지 봉투 (명세 31-5)
+report:
+  schema_version: "1.0"
+  robot_id: SENTINEL-01
+  # mission_id는 Mission Manager가 발급한다. 미연동 상태에서는 null.
+  mission_id: null

@@ -1,0 +1,86 @@
+"""overlay 시각화.
+
+원본 프레임을 수정하지 않는다. 항상 복사본에 그린 뒤 반환한다(AGENTS.md §10).
+"""
+
+from __future__ import annotations
+
+import cv2
+import numpy as np
+
+from .schemas import POSTURE_STANDING, POSTURE_POSSIBLE_FALLEN, PersonObservation
+
+# COCO 17 keypoint 골격 연결. 시각 확인용이며 판정에는 쓰지 않는다.
+SKELETON = (
+    (5, 6), (5, 7), (7, 9), (6, 8), (8, 10),
+    (5, 11), (6, 12), (11, 12),
+    (11, 13), (13, 15), (12, 14), (14, 16),
+)
+
+_COLOR_NORMAL = (0, 200, 0)
+_COLOR_FALLEN = (0, 0, 255)
+_COLOR_UNKNOWN = (128, 128, 128)
+_COLOR_KEYPOINT = (255, 200, 0)
+
+
+def _status_color(status: str) -> tuple[int, int, int]:
+    if status == POSTURE_POSSIBLE_FALLEN:
+        return _COLOR_FALLEN
+    if status == POSTURE_STANDING:
+        return _COLOR_NORMAL
+    return _COLOR_UNKNOWN
+
+
+def draw(
+    frame: np.ndarray,
+    persons: list[PersonObservation],
+    *,
+    keypoint_confidence: float = 0.5,
+) -> np.ndarray:
+    """관측 결과를 그린 새 프레임을 반환한다."""
+    canvas = frame.copy()
+
+    for person in persons:
+        det = person.detection
+        color = _status_color(person.posture.status)
+        x1, y1, x2, y2 = (int(round(v)) for v in det.bbox_xyxy)
+        cv2.rectangle(canvas, (x1, y1), (x2, y2), color, 2)
+
+        track_label = f"ID{det.track_id}" if det.track_id is not None else "ID-"
+        # seen은 encounter 트리거 기준, fallen은 자세 심각도 속성이다.
+        label = f"{track_label} {person.posture.status} {det.confidence:.2f} seen{person.seen_sec:.1f}s"
+        if person.fallen_sec > 0:
+            label += f" fallen{person.fallen_sec:.1f}s"
+        if person.event_confirmed:
+            label += " [EVENT]"
+
+        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+        ty = max(0, y1 - th - 4)
+        cv2.rectangle(canvas, (x1, ty), (x1 + tw + 4, ty + th + 4), color, -1)
+        cv2.putText(
+            canvas, label, (x1 + 2, ty + th),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA,
+        )
+
+        if person.pose is None:
+            continue
+
+        pose = person.pose
+        for i, (x, y) in enumerate(pose.keypoints_xy):
+            if pose.keypoints_conf[i] < keypoint_confidence:
+                continue
+            cv2.circle(canvas, (int(round(x)), int(round(y))), 3, _COLOR_KEYPOINT, -1)
+
+        for a, b in SKELETON:
+            if a >= len(pose.keypoints_xy) or b >= len(pose.keypoints_xy):
+                continue
+            if (
+                pose.keypoints_conf[a] < keypoint_confidence
+                or pose.keypoints_conf[b] < keypoint_confidence
+            ):
+                continue
+            pa = tuple(int(round(v)) for v in pose.keypoints_xy[a])
+            pb = tuple(int(round(v)) for v in pose.keypoints_xy[b])
+            cv2.line(canvas, pa, pb, _COLOR_KEYPOINT, 2)
+
+    return canvas

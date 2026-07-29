@@ -1,0 +1,27 @@
+# Sentinel UGV - Object Detection Environment
+# Python: 3.10.20
+#
+# This file keeps the core object-detection-related versions from the
+# previously shared environment and removes STT, TTS, TensorFlow,
+# FastAPI, Gradio, and other unrelated packages.
+#
+# CUDA 12.8 PyTorch wheels
+--extra-index-url https://download.pytorch.org/whl/cu128
+
+# Deep learning runtime
+torch==2.11.0+cu128
+torchvision==0.26.0+cu128
+
+# YOLO and camera input
+# The original requirements did not contain ultralytics or opencv-python,
+# so their prior exact versions could not be recovered.
+ultralytics
+opencv-python
+
+# Versions retained from the existing shared environment
+numpy==1.26.4
+pillow==12.3.0
+PyYAML==6.0.3
+requests==2.34.2
+scipy==1.15.3
+tqdm==4.69.0

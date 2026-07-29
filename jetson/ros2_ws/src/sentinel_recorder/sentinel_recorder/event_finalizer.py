@@ -28,9 +28,12 @@
 
 ## 오디오
 
-32-5는 "H.264/AAC 재다중화"라고 적었지만 `usb_cam`은 오디오를 발행하지 않고
-파이프라인에 오디오 경로가 없다. 지금은 비디오만 넣는다. 오디오는 음성 상호작용
-티켓과 연계해 정한다(32-6).
+32-5가 "H.264/AAC 재다중화"를 정했고 링 writer가 오디오 브랜치를 가진다
+(S15P11A301-131). 조각에 AAC가 들어 있으면 concat 재다중화가 그대로 유지한다.
+
+**오디오가 없어도 실패로 보지 않는다.** 마이크가 없거나 열리지 않으면 링 writer가
+비디오만 기록하고 계속한다. 보고서의 `media.audio`가 null이면 그 경우다. 오디오
+준비 실패로 이벤트를 잃는 것이 더 나쁘다.
 """
 
 from __future__ import annotations
@@ -151,6 +154,45 @@ def write_concat_list(segments: list[Segment], directory: Path) -> Path:
     return listing
 
 
+def probe_audio_stream(path: Path) -> dict[str, Any] | None:
+    """오디오 스트림 정보를 읽는다. 없으면 None.
+
+    오디오가 없다고 실패로 보지 않는다. 마이크가 없는 기기에서도 비디오만으로
+    이벤트가 성립해야 하고(S15P11A301-131), 32-5는 공간 부족 시에도 남길 것을
+    정했을 뿐 오디오를 필수로 두지 않았다.
+
+    `-count_packets`는 쓰지 않는다. 오디오 패킷은 5분에 수만 개여서 세는 비용이
+    비디오보다 크고, 여기서 필요한 것은 "트랙이 있고 코덱이 무엇인가"다.
+    """
+    result = _run(
+        [
+            FFPROBE, '-v', 'error',
+            '-select_streams', 'a:0',
+            '-show_entries', 'stream=codec_name,sample_rate,channels,duration',
+            '-of', 'json',
+            str(path),
+        ],
+        timeout=PROBE_TIMEOUT_SECONDS,
+    )
+    if result.returncode != 0:
+        return None
+    try:
+        streams = json.loads(result.stdout).get('streams') or []
+    except json.JSONDecodeError:
+        return None
+    if not streams:
+        return None
+    stream = streams[0]
+    return {
+        'codec': stream.get('codec_name'),
+        'sampleRate': int(stream['sample_rate']) if stream.get('sample_rate') else None,
+        'channels': stream.get('channels'),
+        'durationSeconds': (
+            round(float(stream['duration']), 3) if stream.get('duration') else None
+        ),
+    }
+
+
 def probe_playable(path: Path) -> tuple[int, float | None]:
     """실제로 패킷을 읽어 재생 가능한지 확인한다.
 
@@ -198,7 +240,11 @@ class EventFinalizer:
         segment_seconds: int = 1,
         thumbnail_offset_seconds: float = 3.0,
         min_continuity_ratio: float = 0.8,
+        logger: Any | None = None,
     ) -> None:
+        # ROS 로거를 받지만 없어도 된다. 이 클래스는 ROS를 모르는 상태로
+        # 단독 시험할 수 있어야 한다.
+        self._logger = logger
         self.segment_seconds = segment_seconds
         # 썸네일을 사전 영상 길이만큼 들어간 지점에서 뽑는다. 파일 첫 프레임은
         # 사람이 확정되기 전이라 빈 복도일 수 있다. 확정 시점이 썸네일로 더 쓸모
@@ -267,6 +313,25 @@ class EventFinalizer:
         # 3. 재생 검사
         frames, duration = probe_playable(partial)
 
+        #    오디오가 재다중화를 넘어왔는지 확인한다(S15P11A301-131).
+        #
+        #    조각에 AAC가 있는데 MP4에 없으면 `-c copy`가 트랙을 잃은 것이다.
+        #    그 경우 로그만 남기고 이벤트는 살린다. 소리가 빠진 영상은 여전히
+        #    재생되고 사람이 찍혀 있으며, 5분 영상을 통째로 버리는 것이 소리를
+        #    잃는 것보다 나쁘다.
+        #
+        #    조각에 오디오가 없으면(마이크 없는 기기) 검사할 것도 없다.
+        #    `segment.path`는 index.json의 상대 경로다. 실제로 여기 있는 파일은
+        #    hard link한 사본이고 이름이 `local_filename`이다.
+        first_segment = work_directory / segments[0].local_filename
+        audio_expected = probe_audio_stream(first_segment) is not None
+        audio_dropped = audio_expected and probe_audio_stream(partial) is None
+        if audio_dropped and self._logger is not None:
+            self._logger.error(
+                '조각에는 오디오가 있는데 재다중화 결과에 없다. 소리 없이 '
+                '이벤트를 남긴다. ffmpeg concat이 트랙을 잃었는지 확인해야 한다.'
+            )
+
         # 4. SHA-256
         checksum = sha256_of(partial)
         size_bytes = partial.stat().st_size
@@ -295,6 +360,14 @@ class EventFinalizer:
                 'durationSeconds': duration,
                 'frameCount': frames,
                 'thumbnail': THUMBNAIL_NAME if thumbnail else None,
+                # 오디오는 없을 수 있다. 마이크가 없거나 열리지 않으면 링 writer가
+                # 비디오만 기록한다(S15P11A301-131). null이면 "소리 없는 영상"이고
+                # 실패가 아니다.
+                'audio': probe_audio_stream(final),
+                # 조각에 소리가 있었는데 MP4에서 사라졌으면 True. 마이크가 없어
+                # 처음부터 소리가 없던 경우와 구분한다. 둘 다 audio는 null이지만
+                # 전자는 결함이고 후자는 정상이다.
+                'audioDropped': audio_dropped,
             },
             'segments': {
                 'count': continuity['segmentCount'],

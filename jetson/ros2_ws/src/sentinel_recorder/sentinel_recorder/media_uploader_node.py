@@ -48,6 +48,8 @@ class MediaUploaderNode(Node):
         self.declare_parameter('max_per_cycle', 2)
         self.declare_parameter('max_pending_seconds', 1800)
         self.declare_parameter('encoder_bitrate_kbps', 2500)
+        # 이벤트 영상의 AAC 트랙(S15P11A301-131). 오디오를 끈 구성에서는 0을 준다.
+        self.declare_parameter('audio_bitrate_kbps', 64)
         # 백엔드에 /uploads/{mediaId}/complete 가 아직 없다(27.4·31-7이 요구하는데도).
         # 켜면 업로드까지만 하고 완료 등록을 건너뛴다. 업로드 경로를 먼저 검증하기
         # 위한 것이며, 서버가 AVAILABLE을 모르므로 다시보기 목록에 나타나지 않는다.
@@ -57,6 +59,7 @@ class MediaUploaderNode(Node):
             self._param('pending_directory'),
             int(self._param('max_pending_seconds')),
             int(self._param('encoder_bitrate_kbps')),
+            int(self._param('audio_bitrate_kbps')),
         )
         self.client = UploadClient(
             str(self._param('backend_base_url')),

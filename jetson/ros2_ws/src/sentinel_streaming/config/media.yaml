@@ -53,6 +53,42 @@
     segment_seconds: 1
     ring_segments: 8
 
+    # 이벤트 영상 오디오 트랙 (S15P11A301-131, 32-5 「H.264/AAC 재다중화」).
+    #
+    # 관제 스트리밍(RTSP)에는 오디오를 넣지 않는다. 링 분기에만 붙는다. 32-6이
+    # 요구조자와의 대화를 증빙으로 두므로 남겨야 하는 것은 이벤트 파일이고,
+    # 실시간 화면에 소리를 얹으면 지연 예산(32-8)이 늘어난다.
+    #
+    # 마이크가 없거나 열리지 않으면 노드가 오디오를 끄고 비디오만으로 다시
+    # 세운다. 소리 때문에 녹화 전체를 잃지 않는다.
+    #
+    # 소스가 pulsesrc인 이유는 BRIO 100이 PulseAudio에만 잡히기 때문이다.
+    # 마이크는 확정되지 않았다(TBD-AUD-001) — STT 인식률 미달 시 USB 마이크로
+    # 바꾸고 이 값을 alsasrc device=hw:N으로 내린다.
+    enable_audio: true
+
+    # buffer-time과 latency-time을 기본값보다 크게 줍니다. 기본값(200ms / 10ms)으로
+    # 5분 이벤트를 녹화하니 1초 조각마다 오디오가 620ms만 담겼습니다. 38% 손실이며
+    # 로그에 `Can't record audio fast enough`가 반복됐습니다.
+    #
+    # 원인은 스케줄링입니다. x264enc(CPU 인코딩)와 YOLO 탐지가 코어를 다 쓰면
+    # pulsesrc의 읽기 스레드가 늦게 깨고, 그동안 PulseAudio 링버퍼가 넘쳐 샘플이
+    # 버려집니다. 손실은 큐에 닿기 전 소스 안에서 일어나므로 큐를 키워도 소용없습니다.
+    #
+    #   buffer-time  2초   넘치기까지의 여유. 늦게 깨어나도 견딘다
+    #   latency-time 50ms  깨어나는 횟수를 1/5로 줄인다
+    #
+    # 지연이 늘지만 이벤트 파일에만 쓰이므로 상관없습니다. 관제 스트리밍에는
+    # 오디오를 넣지 않습니다.
+    audio_source: pulsesrc buffer-time=2000000 latency-time=50000
+    audio_encoder: voaacenc bitrate=64000
+    audio_rate: 48000
+    audio_channels: 1
+
+    # 오디오 큐 용량을 시간으로 잽니다. 버퍼 개수로 재면 latency-time을 바꿀 때
+    # 실제 용량이 같이 바뀝니다(10ms일 때 64개는 0.64초, 50ms면 3.2초).
+    audio_queue_seconds: 3
+
     # 입력 끊김 복구 — 무한 재시작 금지(32-3)
     restart_backoff_seconds: [1.0, 2.0, 4.0]
     restart_max_attempts: 3

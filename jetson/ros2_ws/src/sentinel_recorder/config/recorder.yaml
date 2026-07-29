@@ -19,12 +19,21 @@
     no_response_timeout_seconds: 30
     max_event_seconds: 300
 
-    # TBD-VID-001에서 확정한 pending 보존 상한. 30분 분량 약 560MB이며
-    # microSD 여유 13GB의 4% 수준이다.
+    # TBD-VID-001에서 확정한 pending 보존 상한. 30분 분량 약 580MB이며
+    # microSD 여유 13GB의 4.5% 수준이다.
     max_pending_seconds: 1800
 
     # 상한을 바이트로 환산하는 데 쓴다. 32-8의 목표 비트레이트와 맞춘다.
     encoder_bitrate_kbps: 2500
+
+    # 이벤트 영상의 AAC 트랙이 디스크에서 차지하는 비트레이트(S15P11A301-131).
+    #
+    # streaming의 audio_encoder는 64000이지만 실측 증가분은 72.7kbps다. AAC 프레임
+    # 헤더와 다중화 몫이 붙는다. 인코더 설정값을 그대로 쓰면 상한을 과소 계산하고,
+    # 그러면 지울 필요가 없는 미업로드 이벤트를 DISK_FULL로 포기한다.
+    #
+    # 오디오를 끈 구성에서는 0으로 내려야 상한을 과대 계산하지 않는다.
+    audio_bitrate_kbps: 80
 
     # 진행 중 이벤트의 조각을 가져오는 주기. 링 버퍼가 8초만 보관하므로
     # 이보다 느리면 긴 이벤트에서 조각을 놓친다.

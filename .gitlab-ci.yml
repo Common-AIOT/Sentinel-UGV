@@ -267,6 +267,7 @@ test:message-contract:
         - jetson/ros2_ws/src/sentinel_mission/**/*
         - jetson/ros2_ws/src/sentinel_recorder/**/*
         - jetson/ros2_ws/src/sentinel_perception/**/*
+        - jetson/ros2_ws/src/sentinel_streaming/**/*
         - scripts/ci/contract-test-requirements.txt
         - scripts/ci/run_contract_tests.sh
         - scripts/ci/validate_schemas.py
@@ -286,8 +287,14 @@ test:message-contract:
     - python -m pytest jetson/ros2_ws/src/sentinel_bridge/test -q
     - python -m pytest jetson/ros2_ws/src/sentinel_mission/test -q
     - python -m pytest jetson/ros2_ws/src/sentinel_recorder/test -q
-    # sentinel_perception은 S15P11A301-136 머지 후 이 줄을 추가합니다.
-    # rules의 changes에는 이미 넣어 두었습니다.
+    # sentinel_streaming은 ring_buffer만 시험합니다. 파이프라인 문자열을 만드는
+    # 순수 모듈이라 gi도 rclpy도 필요 없습니다. 나머지 스트리밍 코드는 GStreamer
+    # 요소를 다루므로 젯슨에서만 검증합니다.
+    - python -m pytest jetson/ros2_ws/src/sentinel_streaming/test -q
+    # sentinel_perception은 아직 넣지 않습니다. detector.py가 모듈 최상위에서
+    # numpy를 import하고, python:3.10-alpine에는 musl용 numpy 휠이 없어 소스
+    # 빌드로 몇 분이 걸립니다. numpy를 지연 import로 바꾸는 것은
+    # S15P11A301-136 쪽 정리이므로 그때 이 줄을 살립니다.
     # - python -m pytest jetson/ros2_ws/src/sentinel_perception/test -q
 
 # ROS 2 패키지의 colcon 빌드는 CI에 넣지 않습니다. Runner가 x86이면

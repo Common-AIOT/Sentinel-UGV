@@ -70,6 +70,8 @@ class RecordingManagerNode(Node):
         self.declare_parameter('max_event_seconds', 300)
         self.declare_parameter('max_pending_seconds', 1800)
         self.declare_parameter('encoder_bitrate_kbps', 2500)
+        # 이벤트 영상의 AAC 트랙(S15P11A301-131). 오디오를 끈 구성에서는 0을 준다.
+        self.declare_parameter('audio_bitrate_kbps', 64)
         self.declare_parameter('collect_period_seconds', 0.5)
         # 이벤트를 마감하면 mission_manager에 알린다(S15P11A301-139). 26.3의
         # REPORTING → EXPLORING 전이가 이 신호로 일어난다.
@@ -80,10 +82,14 @@ class RecordingManagerNode(Node):
             self._param('pending_directory'),
             int(self._param('max_pending_seconds')),
             int(self._param('encoder_bitrate_kbps')),
+            int(self._param('audio_bitrate_kbps')),
         )
         self.finalizer = EventFinalizer(
             segment_seconds=int(self._param('segment_seconds')),
             thumbnail_offset_seconds=float(self._param('pre_seconds')),
+            # 오디오가 재다중화에서 사라지면 로그로 알려야 한다. 보고서의
+            # audioDropped만 두면 아무도 보지 않는다(S15P11A301-131).
+            logger=self.get_logger(),
         )
         self.machine = RecordingStateMachine(
             post_recording_seconds=int(self._param('post_seconds')),
@@ -532,7 +538,10 @@ class RecordingManagerNode(Node):
         # 상한을 먼저 확인한다. 만들고 나서 지우면 디스크를 한 번 더 쓴다.
         estimated = sum(
             (segment.duration_ms / 1000)
-            * int(self._param('encoder_bitrate_kbps'))
+            * (
+                int(self._param('encoder_bitrate_kbps'))
+                + int(self._param('audio_bitrate_kbps'))
+            )
             * 1000
             / 8
             for segment in segments

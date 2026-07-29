@@ -35,6 +35,34 @@ INDEX_FILENAME = 'index.json'
 SEGMENT_PREFIX = 'seg_'
 SEGMENT_SUFFIX = '.ts'
 
+# 오디오 브랜치에 속한 요소 이름 조각. GStreamer가 오류 소스로 이 중 하나를 주면
+# 노드가 오디오만 끄고 파이프라인을 다시 세운다(S15P11A301-131).
+#
+# 이 목록이 여기 있는 이유는 `audio_branch_description`이 요소 이름을 정하기
+# 때문이다. 노드 쪽에 두면 브랜치를 고칠 때 한쪽만 바뀌고, 그러면 마이크 장애가
+# 비디오 장애로 오분류돼 재구성이 무한 반복된다.
+#
+# 요소 이름 문자열로 판단하는 것이 거칠지만, 대안은 파이프라인에서 요소를 되짚어
+# 브랜치 소속을 확인하는 것이고 그쪽이 더 깨지기 쉽다.
+AUDIO_ELEMENT_HINTS = (
+    'audio_queue', 'pulsesrc', 'alsasrc', 'pipewiresrc',
+    'voaacenc', 'avenc_aac', 'opusenc',
+    'audioconvert', 'audioresample', 'aacparse',
+)
+
+
+def is_audio_element(name: str) -> bool:
+    """GStreamer 오류 소스가 오디오 브랜치의 요소인가.
+
+    노드는 `message.src.get_name()`을 넘긴다. 이름 없는 요소에 GStreamer가
+    자동으로 붙이는 형태가 `pulsesrc0`, `voaacenc0`이므로 부분 일치로 본다.
+    실제 실패에서 확인한 값이다.
+
+        ERROR: from element /GstPipeline:pipeline0/GstPulseSrc:pulsesrc0:
+               Failed to connect stream: Invalid argument
+    """
+    return any(hint in name.lower() for hint in AUDIO_ELEMENT_HINTS)
+
 
 def _utc_iso(epoch_seconds: float) -> str:
     """32-5 메타데이터의 시각 형식. UTC만 쓰고 Z로 끝난다."""
@@ -163,12 +191,31 @@ class RingBufferWriter:
         segment_seconds: int,
         ring_segments: int,
         send_keyframe_requests: bool = False,
+        audio_enabled: bool = False,
+        audio_source: str = 'pulsesrc',
+        audio_encoder: str = 'voaacenc bitrate=64000',
+        audio_rate: int = 48000,
+        audio_channels: int = 1,
+        audio_queue_seconds: int = 3,
         logger: Any | None = None,
     ) -> None:
         self.directory = Path(directory)
         self.segment_seconds = max(1, int(segment_seconds))
         self.ring_segments = max(2, int(ring_segments))
         self.send_keyframe_requests = bool(send_keyframe_requests)
+        # 32-5가 "H.264/AAC 재다중화"를 정했고 32-6이 대화 음성을 증빙으로 둔다.
+        # 로봇이 묻고 요구조자가 답하는 대화가 통째로 들리는 것이 구조화 보고서만
+        # 남기는 것보다 완전하다(S15P11A301-131).
+        #
+        # 소스와 인코더를 설정값으로 빼는 이유는 마이크가 확정되지 않았기
+        # 때문이다. BRIO 100 내장 마이크가 잠정이며 STT 인식률 미달 시 USB 마이크로
+        # 바꾼다(TBD-AUD-001).
+        self.audio_enabled = bool(audio_enabled)
+        self.audio_source = str(audio_source)
+        self.audio_encoder = str(audio_encoder)
+        self.audio_rate = int(audio_rate)
+        self.audio_channels = int(audio_channels)
+        self.audio_queue_seconds = max(1, int(audio_queue_seconds))
         self._logger = logger
         self.index = SegmentIndex(self.directory, self.ring_segments)
         self._sink = None
@@ -204,7 +251,7 @@ class RingBufferWriter:
         조각 시작이 키프레임인지는 `firstFrameKey`로 확인하고 경고를 남긴다.
         """
         pattern = str(self.directory / f'{SEGMENT_PREFIX}%06d{SEGMENT_SUFFIX}')
-        return (
+        video = (
             f'queue name=record_queue max-size-buffers={int(queue_buffers)} '
             f'leaky=no '
             f'! splitmuxsink name=ring '
@@ -215,6 +262,63 @@ class RingBufferWriter:
             f'    max-files={self.ring_segments} '
             f'    send-keyframe-requests={str(self.send_keyframe_requests).lower()} '
             f'    async-finalize=true'
+        )
+        if not self.audio_enabled:
+            return video
+        return f'{video} {self.audio_branch_description()}'
+
+    def audio_branch_description(self) -> str:
+        """splitmuxsink의 audio_0 pad에 붙일 오디오 브랜치.
+
+        비디오와 다른 클럭을 쓴다는 점이 이 브랜치의 유일한 실질 위험이다.
+
+            비디오  appsrc do-timestamp=false, PTS = usb_cam stamp - 첫 stamp
+            오디오  pulsesrc, 파이프라인 클럭
+
+        둘 다 CLOCK_MONOTONIC 기반이지만 5분 이벤트(MAX_EVENT_SECONDS)에서
+        드리프트가 쌓일 수 있다. 32-6이 "카메라와 마이크의 monotonic timestamp를
+        기준으로 동기화한다"고 한 이유다. README의 검증 기록에 실측치를 남긴다.
+
+        `queue`를 둔다. 오디오가 막히면 mpegtsmux가 비디오도 기다린다. leaky는
+        쓰지 않는다 — 오디오를 버리면 그 구간이 무음이 되고, 대화 증빙에서 빠진
+        구간은 복구할 수 없다.
+
+        ## 큐를 시간으로 재는 이유
+
+        `max-size-buffers`로 재면 안 된다. 버퍼 하나의 길이가 `pulsesrc`의
+        `latency-time`에 달려 있어서, 그 값을 바꾸면 큐의 실제 용량이 같이
+        바뀐다. 10ms일 때 64개는 0.64초지만 50ms로 올리면 3.2초가 된다.
+
+        `max-size-buffers=0`으로 끄고 시간으로만 잰다. 그래야 소스 설정과
+        무관하게 용량이 일정하다.
+
+        ## 실측: 부하가 높으면 오디오가 사라진다
+
+        `pulsesrc` 기본값(buffer-time 200ms)으로 5분 이벤트를 녹화하니 1초
+        조각마다 오디오가 약 620ms만 담겼다. 38%가 사라졌고 로그에는
+        `Can't record audio fast enough`가 반복됐다.
+
+            videotestsrc만 (부하 낮음)         오디오/비디오 99.5%
+            실제 경로 + YOLO 탐지 동시 구동    오디오/비디오 61.8%
+
+        구조 문제가 아니라 스케줄링 문제다. `x264enc`(CPU 인코딩)와 YOLO가
+        코어를 다 쓰면 `pulsesrc`의 읽기 스레드가 늦게 깨고, 그동안 PulseAudio
+        쪽 링버퍼가 넘쳐 샘플이 버려진다. 큐를 키워도 소용없다 — 손실은 큐에
+        닿기 전, 소스 안에서 일어난다.
+
+        그래서 `audio_source`에 `buffer-time`과 `latency-time`을 준다(media.yaml).
+        buffer-time을 키우면 넘치기까지의 여유가 늘고, latency-time을 키우면
+        깨어나는 횟수가 줄어 늦은 깨어남에 덜 민감해진다.
+        """
+        return (
+            f'{self.audio_source} '
+            f'! queue name=audio_queue '
+            f'    max-size-buffers=0 max-size-bytes=0 '
+            f'    max-size-time={self.audio_queue_seconds * 1_000_000_000} '
+            f'    leaky=no '
+            f'! audioconvert ! audioresample '
+            f'! audio/x-raw,rate={self.audio_rate},channels={self.audio_channels} '
+            f'! {self.audio_encoder} ! aacparse ! ring.audio_0'
         )
 
     def note_input_pts(self, pts_ns: int) -> None:

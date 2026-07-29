@@ -517,3 +517,153 @@ def test_thumbnail_media_id_is_a_uuid_and_deterministic():
     }
     errors = list(_upload_request_validator().iter_errors(body))
     assert not errors, [error.message for error in errors]
+
+
+# ----------------------------------------------------------------------
+# 오디오 트랙 (S15P11A301-131)
+# ----------------------------------------------------------------------
+
+
+def test_pending_cap_includes_audio_bitrate():
+    """상한 환산에 오디오가 들어간다.
+
+    빠뜨리면 실제 사용량이 상한을 넘는다. 실측 증가분이 72.7kbps이므로 30분
+    분량이 562MB에서 약 580MB가 된다. 상한을 과소 계산하면 지울 필요가 없는
+    미업로드 이벤트를 RECORDING_FAILED_DISK_FULL로 포기한다.
+
+    기본값이 인코더 설정값(64k)보다 큰 것이 의도다. AAC 프레임 헤더와 다중화
+    몫이 붙는다.
+    """
+    from sentinel_recorder.pending_store import (
+        DEFAULT_AUDIO_BITRATE_KBPS,
+        DEFAULT_BITRATE_KBPS,
+        bytes_for_seconds,
+    )
+
+    with_audio = bytes_for_seconds(1800)
+    video_only = bytes_for_seconds(1800, DEFAULT_BITRATE_KBPS, 0)
+
+    assert with_audio > video_only
+    assert with_audio - video_only == 1800 * DEFAULT_AUDIO_BITRATE_KBPS * 1000 // 8
+    assert 575_000_000 < with_audio < 585_000_000, '30분 상한은 약 580MB다'
+    assert DEFAULT_AUDIO_BITRATE_KBPS >= 73, (
+        '실측 증가분 72.7kbps를 덮어야 한다. 인코더 설정값 64를 그대로 쓰면 부족하다'
+    )
+
+
+def test_pending_cap_can_drop_audio_for_silent_configurations():
+    """오디오를 끈 구성에서는 0을 줘 상한을 과대 계산하지 않는다."""
+    from sentinel_recorder.pending_store import PendingStore
+
+    loud = PendingStore('/tmp/x', 1800, 2500, 80)
+    quiet = PendingStore('/tmp/x', 1800, 2500, 0)
+    assert loud.cap_bytes > quiet.cap_bytes
+    assert quiet.cap_bytes == 1800 * 2500 * 1000 // 8
+
+
+def test_probe_audio_stream_returns_none_for_video_only_file(tmp_path):
+    """오디오가 없는 파일은 None이다. 예외가 아니다.
+
+    마이크가 없는 기기에서도 비디오만으로 이벤트가 성립해야 한다. 여기서 예외를
+    올리면 마무리가 실패하고, 소리가 없다는 이유로 영상을 통째로 잃는다.
+    """
+    import shutil
+
+    from sentinel_recorder.event_finalizer import probe_audio_stream
+
+    if not shutil.which('ffmpeg') or not shutil.which('ffprobe'):
+        pytest.skip('ffmpeg/ffprobe가 없다')
+
+    silent = tmp_path / 'silent.mp4'
+    _make_test_clip(silent, with_audio=False)
+    assert probe_audio_stream(silent) is None
+
+
+def test_probe_audio_stream_reads_aac_track(tmp_path):
+    """AAC 트랙이 있으면 코덱과 형식을 돌려준다.
+
+    보고서의 `media.audio`가 이 값이다. 관제에서 "소리가 있는 이벤트인가"를
+    파일을 열지 않고 판정할 수 있어야 한다.
+    """
+    import shutil
+
+    from sentinel_recorder.event_finalizer import probe_audio_stream
+
+    if not shutil.which('ffmpeg') or not shutil.which('ffprobe'):
+        pytest.skip('ffmpeg/ffprobe가 없다')
+
+    loud = tmp_path / 'loud.mp4'
+    _make_test_clip(loud, with_audio=True)
+
+    audio = probe_audio_stream(loud)
+    assert audio is not None, 'AAC 트랙을 찾지 못했다'
+    assert audio['codec'] == 'aac'
+    assert audio['sampleRate'] == 48000
+    assert audio['channels'] == 1
+
+
+def test_probe_audio_stream_returns_none_for_unreadable_file(tmp_path):
+    """읽을 수 없는 파일도 None이다.
+
+    비디오 재생 검사(`probe_playable`)가 이미 파일 무결성을 판정한다. 오디오
+    조회가 같은 실패로 다시 예외를 올리면 실패 사유가 두 갈래로 갈린다.
+    """
+    import shutil
+
+    from sentinel_recorder.event_finalizer import probe_audio_stream
+
+    if not shutil.which('ffprobe'):
+        pytest.skip('ffprobe가 없다')
+
+    broken = tmp_path / 'broken.mp4'
+    broken.write_bytes(b'not an mp4')
+    assert probe_audio_stream(broken) is None
+
+
+def _make_test_clip(path: Path, with_audio: bool) -> None:
+    """1초짜리 시험용 MP4. ffmpeg의 합성 소스만 쓰므로 장비가 필요 없다."""
+    import subprocess
+
+    command = [
+        'ffmpeg', '-v', 'error', '-y',
+        '-f', 'lavfi', '-i', 'testsrc=size=320x240:rate=15:duration=1',
+    ]
+    if with_audio:
+        command += [
+            '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000:duration=1',
+            '-ac', '1', '-c:a', 'aac', '-b:a', '64k',
+        ]
+    command += ['-c:v', 'libx264', '-pix_fmt', 'yuv420p', str(path)]
+    subprocess.run(command, capture_output=True, check=True, timeout=60)
+
+
+def test_report_distinguishes_missing_microphone_from_dropped_audio(tmp_path):
+    """소리가 없는 두 경우를 구분해야 한다.
+
+    마이크가 없어 처음부터 소리가 없던 것은 정상이고, 조각에는 있었는데
+    재다중화가 잃은 것은 결함이다. 보고서에서 둘 다 `audio: null`이면 구분할 수
+    없고, 그러면 조용한 데이터 손실을 아무도 알아채지 못한다.
+
+    `audioDropped`가 그 구분입니다.
+    """
+    import shutil
+
+    from sentinel_recorder.event_finalizer import probe_audio_stream
+
+    if not shutil.which('ffmpeg') or not shutil.which('ffprobe'):
+        pytest.skip('ffmpeg/ffprobe가 없다')
+
+    silent = tmp_path / 'silent.mp4'
+    loud = tmp_path / 'loud.mp4'
+    _make_test_clip(silent, with_audio=False)
+    _make_test_clip(loud, with_audio=True)
+
+    # 마이크 없음: 조각에도 없고 결과에도 없다 → 결함이 아니다.
+    assert probe_audio_stream(silent) is None
+    audio_expected = probe_audio_stream(silent) is not None
+    assert not (audio_expected and probe_audio_stream(silent) is None)
+
+    # 트랙 유실: 조각에는 있는데 결과에는 없다 → 결함이다.
+    audio_expected = probe_audio_stream(loud) is not None
+    assert audio_expected
+    assert audio_expected and probe_audio_stream(silent) is None

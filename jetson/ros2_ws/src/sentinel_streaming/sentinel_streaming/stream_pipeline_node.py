@@ -36,7 +36,7 @@ from rclpy.qos import (  # noqa: E402
 from sensor_msgs.msg import CompressedImage  # noqa: E402
 from std_msgs.msg import String  # noqa: E402
 
-from .ring_buffer import RingBufferWriter  # noqa: E402
+from .ring_buffer import RingBufferWriter, is_audio_element  # noqa: E402
 
 
 class StreamPipelineNode(Node):
@@ -96,6 +96,12 @@ class StreamPipelineNode(Node):
                 send_keyframe_requests=bool(
                     self._param('send_keyframe_requests')
                 ),
+                audio_enabled=bool(self._param('enable_audio')),
+                audio_source=str(self._param('audio_source')),
+                audio_encoder=str(self._param('audio_encoder')),
+                audio_rate=int(self._param('audio_rate')),
+                audio_channels=int(self._param('audio_channels')),
+                audio_queue_seconds=int(self._param('audio_queue_seconds')),
                 logger=self.get_logger(),
             )
             try:
@@ -151,6 +157,17 @@ class StreamPipelineNode(Node):
         # true면 splitmuxsink가 상류에 force-keyframe을 보내 조각이 한 번 더
         # 쪼개진다. 실측에서 1001ms와 30ms가 번갈아 나왔다. ring_buffer.py 주석 참고.
         self.declare_parameter('send_keyframe_requests', False)
+        # 이벤트 영상 오디오 (S15P11A301-131, 명세 32-5·32-6).
+        #
+        # 소스와 인코더를 설정값으로 둔다. 마이크가 확정되지 않았다 —
+        # BRIO 100 내장이 잠정이고 STT 인식률 미달 시 USB 마이크로 바꾼다
+        # (TBD-AUD-001).
+        self.declare_parameter('enable_audio', False)
+        self.declare_parameter('audio_source', 'pulsesrc')
+        self.declare_parameter('audio_encoder', 'voaacenc bitrate=64000')
+        self.declare_parameter('audio_rate', 48000)
+        self.declare_parameter('audio_channels', 1)
+        self.declare_parameter('audio_queue_seconds', 3)
         self.declare_parameter('restart_backoff_seconds', [1.0, 2.0, 4.0])
         self.declare_parameter('restart_max_attempts', 3)
         self.declare_parameter('input_timeout_seconds', 3.0)
@@ -426,6 +443,14 @@ class StreamPipelineNode(Node):
                 source = message.src.get_name() if message.src else 'unknown'
                 self.get_logger().error(
                     f'GStreamer 오류 [{source}]: {error.message} / {debug}')
+                if self._disable_audio_on_error(source):
+                    # 오디오만 문제다. 끄고 다시 세우면 비디오는 계속 기록된다.
+                    # 이 분기가 없으면 마이크가 없는 기기에서 파이프라인 재구성이
+                    # 무한히 반복되고 녹화가 영구히 멈춘다(S15P11A301-131).
+                    self.get_logger().warn(
+                        '오디오 없이 다시 세운다. 이벤트 영상에 소리가 담기지 '
+                        '않지만 녹화와 스트리밍은 유지된다.'
+                    )
                 self._schedule_sink_restart(source)
             elif message.type == Gst.MessageType.EOS:
                 self.get_logger().warn('GStreamer EOS. 파이프라인을 재시작한다.')
@@ -434,6 +459,26 @@ class StreamPipelineNode(Node):
                 warning, debug = message.parse_warning()
                 self.get_logger().warn(
                     f'GStreamer 경고: {warning.message} / {debug}')
+
+    def _disable_audio_on_error(self, source: str) -> bool:
+        """오디오 요소가 낸 오류면 오디오를 끈다. 껐으면 True.
+
+        마이크가 없거나 다른 프로세스가 배타적으로 잡고 있으면 `pulsesrc`가
+        PLAYING 전환에서 실패한다. 그때 오디오를 그대로 두고 재구성하면 같은
+        실패가 반복되고, 파이프라인이 서지 못해 녹화까지 멈춘다.
+
+        `RingBufferWriter`를 재구성 때 새로 만들지 않는다는 점이 이 방식의
+        전제다. 그것은 `__init__`에서 한 번만 만들어지고 `_build_pipeline`은
+        `sink_description()`만 다시 부른다. 그래서 여기서 끈 값이 재구성 뒤에도
+        남고 같은 실패를 되풀이하지 않는다. 만약 `_build_pipeline`이 writer를
+        다시 만들게 바뀌면 `enable_audio` 파라미터가 되살아나 무한 반복이 된다.
+        """
+        if self.ring is None or not self.ring.audio_enabled:
+            return False
+        if not is_audio_element(source):
+            return False
+        self.ring.audio_enabled = False
+        return True
 
     def _schedule_sink_restart(self, reason: str) -> None:
         """출력 경로 장애로 파이프라인을 다시 세운다.

@@ -25,7 +25,11 @@ PACKAGES=(
   sentinel_bridge
   sentinel_mission
   sentinel_recorder
+  sentinel_streaming
 )
+
+# sentinel_perception은 빠져 있습니다. numpy가 필요해 alpine 이미지에서 소스
+# 빌드가 걸리므로 CI에 넣지 않았습니다. 젯슨에서는 그냥 pytest로 돌립니다.
 
 if [[ ! -x "$VENV/bin/python" ]]; then
   echo "CI 환경을 흉내낼 venv를 만든다: $VENV"

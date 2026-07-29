@@ -235,9 +235,23 @@ class MissionManagerNode(Node):
             signal,
             now=sent_at,
             encounter_id=payload.get('encounterId'),
+            mission_id=payload.get('missionId'),
             command_id=payload.get('commandId'),
             detail=str(payload.get('detail') or ''),
         )
+        if signal is Signal.MISSION_START and transition.changed:
+            if self.machine.mission_id:
+                self.get_logger().info(
+                    f'임무 시작. missionId={self.machine.mission_id[:8]}'
+                )
+            else:
+                # 임무 없이 시작하면 발행하는 encounter가 서버에 기록되지 않는다.
+                # 조용히 넘기면 "왜 관제에 안 보이나"를 한참 찾게 된다.
+                self.get_logger().warn(
+                    'missionId 없이 임무를 시작했다. encounter는 발행되지만 '
+                    '백엔드가 적재하지 않는다(encounters.mission_id NOT NULL). '
+                    '관제에서 임무를 만들어 MISSION_START에 missionId를 담는다.'
+                )
         source = payload.get('source') or '?'
         if transition.ignored_reason:
             # 무시한 것을 조용히 넘기지 않는다. "수신하지 못한 것"과 "무시한 것"을
@@ -316,7 +330,7 @@ class MissionManagerNode(Node):
             'confidence': encounter.confidence,
             # SLAM과 위치 추정이 붙기 전에는 null이다(25.3). 스키마가 허용한다.
             'pose': None,
-            'missionId': None,
+            'missionId': self.machine.mission_id,
         }
         message = String()
         message.data = json.dumps(body, ensure_ascii=False)

@@ -84,6 +84,15 @@ class CloudBridgeNode(Node):
         self.declare_parameter('map_frame', 'map')
         self.declare_parameter('base_frame', 'base_footprint')
         self.declare_parameter('map_topic', '/map')
+        # 사람 발견 이벤트를 관제로 중계한다(S15P11A301-140). mission_manager가
+        # 발행하는 것을 그대로 31-5 봉투에 담아 MQTT events 채널로 보낸다.
+        self.declare_parameter('encounter_topic', '/perception/encounter')
+        # 한 번에 재전송할 Outbox 항목 수. 재연결 직후 수백 건을 몰아 보내면
+        # Wi-Fi를 점유해 관제 영상이 밀린다(32장 우선순위).
+        self.declare_parameter('outbox_batch_size', 20)
+        # 보관분을 흘려보내는 주기. 재연결 시 한 배치만 보내므로 그보다 많이
+        # 쌓였을 때 남은 것을 이 타이머가 이어서 보낸다.
+        self.declare_parameter('outbox_flush_period_seconds', 5.0)
         self.declare_parameter(
             'outbox_path', '/var/lib/sentinel/bridge/outbox.sqlite3'
         )
@@ -162,6 +171,19 @@ class CloudBridgeNode(Node):
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
 
+        # encounter는 잃으면 사람을 발견한 사실이 사라진다. RELIABLE로 구독한다.
+        # mission_manager가 같은 설정으로 발행한다(S15P11A301-133).
+        self.create_subscription(
+            String,
+            self._param('encounter_topic'),
+            self._on_encounter,
+            QoSProfile(
+                reliability=QoSReliabilityPolicy.RELIABLE,
+                history=QoSHistoryPolicy.KEEP_LAST,
+                depth=10,
+            ),
+        )
+
         self.mqtt = MqttPublisher(
             robot_id,
             self._param('broker_host'),
@@ -181,6 +203,9 @@ class CloudBridgeNode(Node):
         self.mqtt.start()
 
         self.create_timer(float(self._param('state_period_seconds')), self._publish_state)
+        self.create_timer(
+            float(self._param('outbox_flush_period_seconds')), self._on_outbox_tick
+        )
         self.create_timer(
             float(self._param('telemetry_period_seconds')), self._publish_telemetry
         )
@@ -326,15 +351,124 @@ class CloudBridgeNode(Node):
     # 발행
     # ------------------------------------------------------------------
 
+    def _on_encounter(self, message: String) -> None:
+        """사람 발견 이벤트를 관제로 중계한다 (S15P11A301-140).
+
+        본문을 조립하지 않고 그대로 넘긴다. `mission_manager`가 이미
+        `encounter.schema.json` 형식으로 만들었고, 여기서 다시 만들면 두 곳이
+        어긋난다.
+
+        `missionId`가 없으면 발행하지 않는다. 백엔드가 `encounters.mission_id`를
+        NOT NULL FK로 두고 임무 없는 encounter를 적재하지 않으므로
+        (S15P11A301-138), 보내도 버려진다. 그런 것을 Outbox에 쌓으면 재전송이
+        영원히 실패하며 디스크만 먹는다.
+        """
+        try:
+            payload = json.loads(message.data)
+        except json.JSONDecodeError as error:
+            self.get_logger().warn(f'encounter JSON 해석 실패: {error}')
+            return
+        if not isinstance(payload, dict) or 'phase' not in payload:
+            self.get_logger().warn(
+                'encounter 본문에 phase가 없다. encounter.schema.json을 확인한다.'
+            )
+            return
+
+        phase = payload.get('phase')
+        if not payload.get('missionId'):
+            self.get_logger().warn(
+                f'{phase}를 관제로 보내지 않는다. missionId가 없어 백엔드가 '
+                '적재하지 않는다. 녹화는 영향받지 않는다.'
+            )
+            return
+
+        envelope = self.mapper.encounter(payload)
+        if self.mqtt.publish('events', envelope):
+            self.get_logger().info(
+                f'events 발행 {phase} {str(payload.get("encounterId"))[:8]}'
+            )
+            return
+
+        # 브로커가 없다. 31-10이 "중요 이벤트는 Outbox에 보관한 뒤 연결 복구 후
+        # 재전송한다"고 정했다. 재난 현장에서 Wi-Fi가 끊기는 것이 전제이므로
+        # 그 동안 발견한 사람이 기록에서 사라지면 안 된다.
+        if self.outbox is None:
+            self.get_logger().error(
+                f'{phase}를 보낼 수도 보관할 수도 없다. Outbox가 열리지 않았다. '
+                '이 이벤트는 관제에 기록되지 않는다.'
+            )
+            return
+        try:
+            self.outbox.enqueue(envelope, 'events')
+        except Exception as error:  # noqa: BLE001
+            self.get_logger().error(f'Outbox 보관 실패: {error}')
+            return
+        self.get_logger().warn(
+            f'브로커 없음. {phase}를 Outbox에 보관했다 (대기 {self.outbox.count()}건)'
+        )
+
+    def _flush_outbox(self) -> int:
+        """31-10 복구 순서 4번. 보관한 이벤트를 재전송한다.
+
+        한 번에 배치 크기만큼만 보낸다. 재연결 직후 수백 건을 몰아 보내면 Wi-Fi를
+        점유해 관제 영상이 밀린다(32장 우선순위). 남은 것은 다음 재연결이나
+        타이머가 이어서 보낸다.
+        """
+        if self.outbox is None:
+            return 0
+        sent = 0
+        try:
+            items = self.outbox.pending(limit=int(self._param('outbox_batch_size')))
+        except Exception as error:  # noqa: BLE001
+            self.get_logger().error(f'Outbox 조회 실패: {error}')
+            return 0
+
+        for message_id, channel, payload in items:
+            if not self.mqtt.publish(channel, payload):
+                # 다시 끊겼다. 남은 것은 그대로 두고 다음 기회에 보낸다.
+                break
+            try:
+                self.outbox.mark_sent(message_id)
+            except Exception as error:  # noqa: BLE001
+                self.get_logger().error(f'Outbox 표시 실패: {error}')
+                break
+            sent += 1
+        return sent
+
+    def _on_outbox_tick(self) -> None:
+        """보관분이 남아 있으면 조금씩 흘려보낸다.
+
+        재연결 콜백이 한 배치만 보내므로 그보다 많이 쌓였을 때 이 타이머가 이어
+        보낸다. 브로커가 없으면 `_flush_outbox`가 첫 발행에서 멈추므로 여기서
+        연결 여부를 다시 확인하지 않는다.
+        """
+        if self.outbox is None or not self.mqtt.connected:
+            return
+        if self.outbox.count() == 0:
+            return
+        sent = self._flush_outbox()
+        if sent:
+            self.get_logger().info(
+                f'Outbox {sent}건 재전송 (남은 {self.outbox.count()}건)'
+            )
+
     def _on_broker_connected(self) -> None:
         """31-10 복구 순서. paho 콜백 스레드에서 호출된다.
 
-        3~5번(임무 비교, Outbox 재전송, 영상 업로드 재개)은 해당 기능이 아직
-        없으므로 자리만 남긴다. 6번 telemetry는 타이머가 알아서 재개한다.
+        presence → state → 임무 비교 → Outbox → 영상 → telemetry 순서다. 3번(임무
+        비교)과 5번(영상 업로드 재개)은 해당 기능이 아직 없으므로 자리만 남긴다.
+        영상 업로드는 `media_uploader`가 별 프로세스로 알아서 재시도한다.
+        6번 telemetry는 타이머가 재개한다.
         """
         self.mqtt.publish('presence', self.mapper.presence_online())
         self._publish_state()
-        self.get_logger().info('복구 순서 완료: presence, state 발행')
+        sent = self._flush_outbox()
+        summary = 'presence, state 발행'
+        if sent:
+            summary += f', Outbox {sent}건 재전송'
+        if self.outbox is not None and self.outbox.count():
+            summary += f' (남은 {self.outbox.count()}건은 다음 기회에)'
+        self.get_logger().info(f'복구 순서 완료: {summary}')
 
     def _publish_state(self) -> None:
         if not self.mqtt.connected:

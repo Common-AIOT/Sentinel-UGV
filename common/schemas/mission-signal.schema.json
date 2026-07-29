@@ -4,7 +4,10 @@
   "title": "/mission/signal 본문",
   "description": "주행·음성·관제가 `mission_manager_node`에 사실을 알리는 통로다. `std_msgs/String`에 이 JSON을 담아 발행한다.\n\n26.1이 \"Nav2, AI, 음성, 관제 명령이 각자 모터와 상태를 직접 바꾸지 않고 이벤트를 Mission Manager에 전달한다\"고 정했다. 이 토픽이 그 \"이벤트를 전달한다\"의 구현이다.\n\n**보내는 쪽은 자기가 아는 사실만 적는다.** 어떤 상태로 가야 하는지는 적지 않는다. 주행 노드는 정지한 것을 알고, 음성 노드는 대화가 끝난 것을 알지만, 그것이 `INTERACTING`으로 가야 한다는 판단은 `mission_manager_node`의 몫이다. 보내는 쪽이 목표 상태를 지정하면 26.1의 단일 권한이 무의미해진다.\n\n## 사람 후보는 이 토픽이 아니다\n\n`/perception/person_candidates`를 따로 둔 이유는 주기가 다르기 때문이다. 후보는 프레임마다 오고 신호는 사건이 있을 때만 온다. 한 토픽에 섞으면 후보 갱신이 신호 처리 경로를 계속 깨운다.\n\n## 멱등성\n\n같은 `signal`이 두 번 와도 상태가 두 번 바뀌지 않는다. `mission_manager_node`가 현재 상태에서 의미 없는 신호를 무시한다(예: `INTERACTING`이 아닌데 `DIALOGUE_ENDED`가 오면 무시하고 사유를 로그에 남긴다). 26.4가 명령 멱등성을 요구한 것과 같은 취지다.\n\n무시한 것을 조용히 넘기지 않는다. `S15P11A301-123`에서 무시된 encounter가 아무 로그를 남기지 않아 \"수신하지 못한 것\"과 \"무시한 것\"을 구별할 수 없었다.",
   "type": "object",
-  "required": ["signal", "sentAt"],
+  "required": [
+    "signal",
+    "sentAt"
+  ],
   "additionalProperties": false,
   "properties": {
     "signal": {
@@ -30,22 +33,50 @@
     },
     "encounterId": {
       "description": "어느 encounter에 대한 신호인가. encounter와 무관한 신호(MISSION_START, ESTOP 등)는 null이다.\n\n값이 있으면 `mission_manager_node`가 진행 중 encounter와 비교한다. 다르면 무시하고 사유를 로그에 남긴다. 옛 encounter의 지연된 신호가 새 이벤트를 흔드는 것을 막는다.",
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "missionId": {
+      "description": "어느 임무에 속한 신호인가. `MISSION_START`에는 반드시 있어야 한다.\n\n관제가 `POST /api/v1/missions`로 임무를 만들고 그 식별자를 여기 담아 보낸다. `mission_manager`는 그것을 보관해 이후 발행하는 encounter의 `missionId`로 쓴다.\n\n**없으면 발견한 사람이 서버에 기록되지 않는다.** 백엔드가 `encounters.mission_id`를 NOT NULL FK로 두고 임무 없는 encounter를 적재하지 않기 때문이다(S15P11A301-138). 처음 이 스키마를 만들 때 이 필드를 빠뜨려 그 사실이 실물 업로드에서야 드러났다(S15P11A301-140).\n\n`MISSION_START` 외의 신호에서는 null이어도 된다. 진행 중 임무는 `mission_manager`가 들고 있다.",
+      "type": [
+        "string",
+        "null"
+      ],
       "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
     },
     "source": {
       "description": "보낸 주체. 로그 추적용이다.",
-      "type": ["string", "null"],
-      "enum": ["NAVIGATION", "VOICE", "OPERATOR", "SAFETY", "PERCEPTION", "TEST", null]
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "NAVIGATION",
+        "VOICE",
+        "OPERATOR",
+        "SAFETY",
+        "PERCEPTION",
+        "TEST",
+        null
+      ]
     },
     "detail": {
       "description": "사람이 읽을 사유. APPROACH_FAILED나 SENSOR_FAULT에서 무엇이 실패했는지 적는다.",
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "maxLength": 500
     },
     "commandId": {
       "description": "관제에서 온 명령이면 그 식별자다(26.4). 같은 commandId를 두 번 처리하지 않는다.",
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "maxLength": 100
     }
   }

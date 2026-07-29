@@ -112,6 +112,18 @@ MOVEMENT: dict[MissionState, tuple[bool, float | None]] = {
 # 이 티켓에서 전이 트리거를 받지 않는 상태. 36장·23.5가 필요하다.
 UNIMPLEMENTED = frozenset({MissionState.MANUAL, MissionState.RETURNING})
 
+# 종료 절차에 들어간 상태. 사람이 안 보이는 것이 정상이므로 상실로 다시 끝내지
+# 않는다.
+#
+# `REPORTING`을 빠뜨렸다가 무한 루프를 만들었다(S15P11A301-139). 보고 단계는 사람이
+# 이미 떠난 뒤인데 상실을 다시 처리해 `POST_RECORDING`으로 되돌아갔다.
+#
+# 목록으로 두는 이유는 상태가 늘 때 함께 검토하게 하기 위해서다. 조건문에 상태
+# 이름을 직접 쓰면 새 종료 상태가 추가될 때 이 검사에서 빠진다.
+TERMINATING_STATES = frozenset(
+    {MissionState.POST_RECORDING, MissionState.REPORTING}
+)
+
 POST_RECORDING_SECONDS = 3
 # 30.5의 "최대 상호작용 시간". 32-5의 MAX_EVENT_SECONDS(300초)와 같은 값을 쓴다.
 # 다른 값을 쓰면 한쪽이 먼저 끊어 이벤트가 반쪽이 된다.
@@ -314,9 +326,21 @@ class MissionStateMachine:
 
         fresh = track_ids - encounter.track_ids
         encounter.track_ids |= track_ids
-        # personCount는 지금까지 본 사람 수의 최대다. 한 명이 잠깐 가려도 줄이지
-        # 않는다. 보고서의 "몇 명을 발견했는가"가 흔들리면 관제가 신뢰할 수 없다.
-        encounter.person_count = max(encounter.person_count, len(encounter.track_ids))
+        # personCount는 **한 관측에 동시에 보인** 사람 수의 최대다. 누적 track 수가
+        # 아니다.
+        #
+        # 32-6이 "동시에 발견된 사람들은 encounter 하나를 공유한다"고 정했고 기준은
+        # "동시에"다. 누적 집합을 쓰면 한 사람이 들락날락할 때마다 새 trackId가
+        # 발급돼 사람 수가 불어난다. 실측에서 사람의 팔 하나가 세 번 들락날락하자
+        # personCount가 3이 됐다(S15P11A301-139). 관제에 "3명 발견"으로 보고되면
+        # 구조 판단이 틀어진다.
+        #
+        # 줄이지 않는 것은 유지한다. 한 명이 잠깐 가려도 최대값이 남아야 보고서의
+        # "몇 명을 발견했는가"가 흔들리지 않는다.
+        #
+        # trackId 자체가 갈리는 것은 여기서 고칠 문제가 아니다. 25.4가 "정밀
+        # 재식별은 범위에서 제외한다"고 했고 ByteTrack이 붙으면 개선된다.
+        encounter.person_count = max(encounter.person_count, len(track_ids))
 
         # 사후 3초 안에 다시 보이면 상호작용으로 되돌린다(32-5 REDETECTED).
         if self.state == MissionState.POST_RECORDING:
@@ -370,9 +394,19 @@ class MissionStateMachine:
         if elapsed < self.person_lost_seconds:
             return self._ignore(f'상실 판정 대기 {elapsed:.1f}초')
 
-        if self.state == MissionState.POST_RECORDING:
+        if self.state in TERMINATING_STATES:
             # 이미 종료 절차다. 사람이 없는 것이 정상이므로 다시 끝내지 않는다.
-            return self._ignore('POST_RECORDING에서는 상실이 정상이다')
+            #
+            # `REPORTING`을 빠뜨렸다가 무한 루프를 만들었다(S15P11A301-139).
+            #
+            #   POST_RECORDING → REPORTING  (3s captured)
+            #   REPORTING → POST_RECORDING  (person lost)   ← 되돌아간다
+            #   POST_RECORDING → REPORTING  (3s captured)
+            #   ...
+            #
+            # 실물 검증에서 사람이 5~10초 서 있었는데 이벤트가 마감되지 않아 MP4가
+            # 46.9초가 됐다. 46프레임 중 사람이 보이는 것은 하나뿐이었다.
+            return self._ignore(f'{self.state.value}에서는 상실이 정상이다')
 
         # 접근 중이나 상호작용 중에 사람을 놓쳤다. 32-5의 LOST다.
         encounter.post_recording_started_at = now

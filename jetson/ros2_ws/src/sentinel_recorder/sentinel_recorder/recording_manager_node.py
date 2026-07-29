@@ -71,6 +71,9 @@ class RecordingManagerNode(Node):
         self.declare_parameter('max_pending_seconds', 1800)
         self.declare_parameter('encoder_bitrate_kbps', 2500)
         self.declare_parameter('collect_period_seconds', 0.5)
+        # 이벤트를 마감하면 mission_manager에 알린다(S15P11A301-139). 26.3의
+        # REPORTING → EXPLORING 전이가 이 신호로 일어난다.
+        self.declare_parameter('mission_signal_topic', '/mission/signal')
 
         self.segments = SegmentStore(self._param('buffer_directory'))
         self.pending = PendingStore(
@@ -103,6 +106,11 @@ class RecordingManagerNode(Node):
         self.media_id: str | None = None
 
         self.status_pub = self.create_publisher(String, '~/status', 10)
+        # mission_manager가 RELIABLE로 구독한다. 잃으면 REPORTING에서 못 나오고
+        # 다음 사람을 찾지 못한다(S15P11A301-139).
+        self.signal_pub = self.create_publisher(
+            String, self._param('mission_signal_topic'), 10
+        )
         self.create_subscription(
             String, self._param('encounter_topic'), self._on_encounter, 10
         )
@@ -548,7 +556,7 @@ class RecordingManagerNode(Node):
             )
             self.pending.cleanup_segments(self.work_directory)
             self._publish_status(self.machine.finish(False))
-            self._reset_event()
+            self._reset_event(event.encounter_id)
             return
 
         try:
@@ -572,7 +580,7 @@ class RecordingManagerNode(Node):
             )
             self.pending.cleanup_segments(self.work_directory)
             self._publish_status(self.machine.finish(False))
-            self._reset_event()
+            self._reset_event(event.encounter_id)
             return
         except (OSError, subprocess.TimeoutExpired) as error:
             self.get_logger().error(f'MP4 생성 중 예외: {error}')
@@ -584,7 +592,7 @@ class RecordingManagerNode(Node):
             )
             self.pending.cleanup_segments(self.work_directory)
             self._publish_status(self.machine.finish(False))
-            self._reset_event()
+            self._reset_event(event.encounter_id)
             return
 
         # 조각은 hard link이므로 지워도 링 버퍼 원본에 영향이 없다. 남기면
@@ -598,7 +606,7 @@ class RecordingManagerNode(Node):
             f'{result.frame_count}프레임 조각 {result.continuity["segmentCount"]}개'
         )
         self._publish_status(self.machine.finish(True))
-        self._reset_event()
+        self._reset_event(event.encounter_id)
 
     def _mark_upload_pending(self, result) -> None:
         """보고서에 업로드 상태를 넣는다. S15P11A301-124가 이 값을 바꾼다."""
@@ -678,10 +686,46 @@ class RecordingManagerNode(Node):
             report['mediaState'] = f'RECORDING_FAILED_{failure}'
         write_report(report_path, report)
 
-    def _reset_event(self) -> None:
+    def _reset_event(self, encounter_id: str | None = None) -> None:
+        """이벤트 상태를 비우고 mission_manager에 마감을 알린다.
+
+        `REPORT_COMMITTED`를 여기서 내는 이유는 마감 경로가 넷이기 때문이다.
+        정상 완료, 디스크 상한 초과, MP4 생성 실패, 예상 밖 예외. 각 경로에
+        따로 넣으면 하나를 빠뜨리고, 빠뜨린 경로에서는 `REPORTING`에 갇혀 다음
+        사람을 찾지 못한다(S15P11A301-139).
+
+        영상이 없어도 발행한다. 32-5가 공간 부족·실패 시에도 "썸네일과 JSON
+        보고서는 남긴다"고 정했고, 그것이 로컬 보고 저장 완료다. 영상 유무로
+        신호를 나누면 실패한 이벤트에서 임무가 멈춘다.
+        """
+        if encounter_id:
+            self._publish_report_committed(encounter_id)
         self.work_directory = None
         self.collected = {}
         self.media_id = None
+
+    def _publish_report_committed(self, encounter_id: str) -> None:
+        """26.3의 REPORTING → EXPLORING 을 일으킨다.
+
+        26.1이 "각 노드는 자신이 관찰한 사실만 알린다"고 정했다. 이 노드는 "영상과
+        보고서를 로컬에 저장했다"는 사실만 알리고, 그것으로 어떤 상태로 갈지는
+        mission_manager가 결정한다. 그래서 목표 상태를 적지 않는다.
+        """
+        body = {
+            'signal': 'REPORT_COMMITTED',
+            'sentAt': format_utc(self._now()),
+            'source': 'PERCEPTION',
+            'encounterId': encounter_id,
+            'detail': '이벤트 보고서를 로컬에 저장했다',
+            'commandId': None,
+        }
+        message = String()
+        message.data = json.dumps(body, ensure_ascii=False)
+        self.signal_pub.publish(message)
+        self.get_logger().info(
+            f'REPORT_COMMITTED 발행 {encounter_id[:8]} — mission_manager가 '
+            '탐사를 재개한다'
+        )
 
     def _publish_status(self, transition: str) -> None:
         message = String()

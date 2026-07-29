@@ -86,5 +86,9 @@ jetson/ros2_ws/src/usb_cam/
 # Runtime data and backups
 data/
 backups/
+
+# AI detection local runtime outputs
+ai/detection/runs/
+ai/detection/.claude/
 *.dump
 *.sql.gz

@@ -1,0 +1,114 @@
+# Sentinel UGV - 객체탐지 파이프라인 설정 [Jetson Orin Nano 8GB 프로파일]
+#
+# 사용:
+#   python -m src.main --config configs/pipeline.jetson.yaml --source 0
+#
+# 개발 PC 프로파일(configs/pipeline.yaml)과 다른 점만 주석으로 설명한다.
+# 판정 임계값은 두 프로파일이 같아야 한다. 다르면 PC에서 맞춘 값이 로봇에서 달라진다.
+#
+# ⚠️ 자원 전제
+# Orin Nano 8GB는 SLAM·Nav2·WebRTC와 메모리·연산을 나눠 쓴다
+# (docs/04-자율주행-AI.md, ai/README.md). 비전이 자원을 독점하면 주행이 멈춘다.
+# 명세 목표는 Detect 상시 약 15FPS, Pose 조건부 약 2FPS다(25.6).
+
+detector:
+  # TensorRT 엔진으로 변환하면 여기를 .engine 경로로 바꾼다(ISSUE-06).
+  #   yolo export model=yolo26n.pt format=engine half=True device=0
+  # 모델 경로는 --model 인자로도 덮어쓸 수 있다.
+  model: models/yolo26n.pt
+  target_classes:
+    - person
+  confidence: 0.50
+  iou: 0.70
+  # 로봇용 트래커는 ReID를 끈 명세 준수 설정을 쓴다(configs/tracker_jetson.yaml 주석 참고).
+  tracker: configs/tracker_jetson.yaml
+  # 추론 해상도. 개발 PC 실측(사람 4명): 640 → 19.7 FPS / 480 → 23.5 FPS (약 +19%)
+  # 480은 작은 사람(멀리 있는 요구조자) 탐지력이 떨어진다. 재난 탐색에서
+  # person false negative가 최우선 리스크이므로(AGENTS.md §23) 640을 유지하고,
+  # FPS가 부족하면 해상도보다 TensorRT를 먼저 시도한다.
+  imgsz: 640
+
+  # ⚠️ FP16 — Jetson에서 반드시 실측 후 결정할 것
+  #
+  # 개발 PC(x86 데스크톱 GPU) 실측에서는 FP16이 **오히려 4배 느렸다**.
+  #     FP32 19.69 FPS  vs  FP16 4.86 FPS
+  # 이 GPU에 빠른 FP16 경로가 없어서로 보이며, **Orin Nano에는 해당하지 않는다.**
+  # Jetson은 메모리 대역폭 제약이 커서 FP16이 통상 유리하다.
+  #
+  # 즉 이 값은 "Jetson에서 유리할 것"이라는 통념에 따른 설정이며 **미검증이다.**
+  # Jetson에서 아래 두 조건으로 각각 재보고 느린 쪽을 제거한다.
+  #     quantize: 16   (FP16)
+  #     (줄 삭제)      (FP32)
+  # 개발 PC에서 이 프로파일을 돌릴 때는 반드시 이 줄을 지운다. 안 그러면 4배 느리다.
+  quantize: 16
+
+# USB 카메라 (BRIO 100). 명세 PoC 실측: /dev/video0, 1280x720 MJPEG 약 29.93 FPS
+# (docs/05-통신-서버-영상.md:26)
+#
+# ⚠️ 실제 로봇 통합 시에는 이 경로를 쓰지 않는다.
+# 명세 32-3: "카메라를 OpenCV, YOLO 프로세스, MediaMTX가 각각 열지 않는다.
+#             usb_cam 노드만 /dev/video*를 열고 압축 토픽으로 발행한다."
+# 카메라 하나를 AI·WebRTC·이벤트 녹화가 나눠 쓰므로, 우리가 직접 열면 다른 소비자가 막힌다.
+# 아래 설정은 **ROS2 통합 전 단독 검증용**이다.
+camera:
+  width: 1280
+  height: 720
+  # USB 대역폭 한계상 720p 이상에서 무압축(YUY2)은 FPS가 급락한다.
+  fourcc: MJPG
+  # Linux/Jetson USB 카메라 표준 경로
+  backend: v4l2
+  fps: 30
+
+# Pose 실행 조건 (명세 25.6). Jetson에서 특히 중요하다.
+# 매 프레임 사람 수만큼 Pose를 돌리면 Detect FPS를 유지할 수 없다.
+pose_trigger:
+  min_bbox_width: 80
+  min_bbox_height: 80
+  activate_after_frames: 3
+  max_fps: 2.0
+  deactivate_after_seconds: 3.0
+
+pose:
+  model: models/yolo26n-pose.pt
+  confidence: 0.50
+  keypoint_confidence: 0.50
+  crop_margin: 0.10
+  # crop 입력이라 640은 과하다. 개발 PC 실측(FP16 기준): 320 → 4.86 / 640 → 7.38 FPS.
+  # FP16 영향이 섞인 수치이므로 Jetson에서 재측정한다. 320을 기본으로 둔다.
+  imgsz: 320
+  # detector의 quantize와 동일한 주의사항이 적용된다. Jetson에서 실측 후 결정.
+  quantize: 16
+
+# 판정 임계값은 개발 PC 프로파일과 동일하게 유지한다.
+# 실측 근거가 없는 임의값이므로(AGENTS.md §15) 테스트 영상으로 조정한 뒤 양쪽에 같이 반영한다.
+posture:
+  torso_horizontal_deg: 55.0
+  bbox_aspect_ratio: 1.20
+  vertical_extent_ratio: 0.25
+  min_valid_keypoints: 4
+  smoothing_window: 5
+  unknown_yields_to_known: true
+
+memory:
+  forget_seconds: 10.0
+  min_track_buffer: 10
+  max_track_buffer: 900
+
+persistence:
+  person_confirm_seconds: 1.0
+  fallen_seconds: 1.5
+  event_cooldown_seconds: 15.0
+  inherit_distance_ratio: 1.0
+
+output:
+  # 프레임 로그는 SD카드 수명과 용량을 잡아먹는다. Jetson에서는 기본 비활성.
+  write_frame_log: false
+  jsonl_frames: frames.jsonl
+  jsonl_events: events.jsonl
+  events_dir: events
+  draw_overlay_on_event_image: true
+
+report:
+  schema_version: "1.0"
+  robot_id: SENTINEL-01
+  mission_id: null

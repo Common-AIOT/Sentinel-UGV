@@ -28,7 +28,13 @@ public enum ErrorCode {
     // 로봇/임무
     ROBOT_NOT_FOUND(HttpStatus.NOT_FOUND, "ROBOT-001", "등록된 로봇을 찾을 수 없습니다."),
     MISSION_NOT_FOUND(HttpStatus.NOT_FOUND, "MISSION-001", "임무를 찾을 수 없습니다."),
-    MISSION_ALREADY_ACTIVE(HttpStatus.CONFLICT, "MISSION-002", "해당 로봇에 진행 중인 임무가 이미 있습니다.");
+    MISSION_ALREADY_ACTIVE(HttpStatus.CONFLICT, "MISSION-002", "해당 로봇에 진행 중인 임무가 이미 있습니다."),
+    MISSION_ALREADY_ENDED(HttpStatus.CONFLICT, "MISSION-003", "이미 종료된 임무입니다."),
+
+    // 제어 (11.4, 27.5)
+    CONTROL_SESSION_DENIED(HttpStatus.CONFLICT, "CONTROL-001", "다른 운영자가 제어권을 보유 중입니다."),
+    CONTROL_SESSION_NOT_FOUND(HttpStatus.NOT_FOUND, "CONTROL-002", "제어 세션을 찾을 수 없습니다."),
+    BROKER_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "MQTT-001", "메시지 브로커에 연결할 수 없어 명령을 전달하지 못했습니다.");
 
     private final HttpStatus httpStatus;
     private final String code;

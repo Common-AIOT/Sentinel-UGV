@@ -13,8 +13,10 @@ import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
 
+import com.sentinel.backend.messaging.dto.CommandAckData;
 import com.sentinel.backend.messaging.dto.EncounterData;
 import com.sentinel.backend.messaging.dto.MessageEnvelope;
+import com.sentinel.backend.messaging.dto.MissionCommandData;
 import com.sentinel.backend.messaging.dto.PresenceData;
 import com.sentinel.backend.messaging.dto.TelemetryData;
 
@@ -138,6 +140,30 @@ class MessageContractTest {
         assertNull(data.trackIds());
         assertNull(data.confidence());
         assertEquals(0, data.personCount());
+    }
+
+    @Test
+    void missionCommandSampleParsesIntoMissionCommandData() throws Exception {
+        MessageEnvelope envelope = envelope("mission-command-start.json");
+        MissionCommandData data = mapper.treeToValue(envelope.data(), MissionCommandData.class);
+
+        // 서버가 발행하는 봉투다. 젯슨 mission_manager_node 가 이 형태를 받는다.
+        assertEquals(MissionCommandData.TYPE_START, data.type());
+        assertNotNull(data.commandId());
+        assertNotNull(envelope.missionId());
+    }
+
+    @Test
+    void commandAckSamplesParseIntoCommandAckData() throws Exception {
+        CommandAckData accepted = mapper.treeToValue(
+                envelope("command-ack-accepted.json").data(), CommandAckData.class);
+        assertEquals(CommandAckData.STATUS_ACCEPTED, accepted.status());
+        assertNull(accepted.reasonCode());
+
+        CommandAckData rejected = mapper.treeToValue(
+                envelope("command-ack-rejected.json").data(), CommandAckData.class);
+        assertEquals("REJECTED", rejected.status());
+        assertEquals("ESTOP_ACTIVE", rejected.reasonCode());
     }
 
     private List<Path> sampleFiles() throws Exception {

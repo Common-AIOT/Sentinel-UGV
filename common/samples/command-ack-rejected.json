@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "1.0",
+  "messageId": "f49c3df9-cd97-4835-99fe-82559f377110",
+  "messageType": "COMMAND_ACK",
+  "robotId": "SENTINEL-01",
+  "missionId": "4a43f45c-779f-4df5-ac04-1695724829a4",
+  "sequence": 10251,
+  "sentAt": "2026-07-29T05:10:05.000Z",
+  "data": {
+    "commandId": "51bd22fc-5e13-4325-a0bf-7d77a55a2a75",
+    "status": "REJECTED",
+    "reasonCode": "ESTOP_ACTIVE",
+    "message": "E-Stop 해제 전에는 임무를 시작할 수 없다"
+  }
+}

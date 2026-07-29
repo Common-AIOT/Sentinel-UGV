@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sentinel-ugv.xyz/schemas/command-ack.schema.json",
+  "title": "COMMAND_ACK 본문",
+  "description": "명령 처리 결과다. 젯슨이 `acks`(QoS 1)로 발행하고 서버가 control_commands.result 를 갱신한다(31-6). 임무·모드·정지·E-Stop 명령은 개별 ACK 를 보내고, 고주기 cmd/drive 는 ACK 없이 state 에 반영한다.\n\n제어 API 의 HTTP 202 는 전달 시작일 뿐이며 이 ACK 가 도착해야 수락·거부가 확정된다(27.4).",
+  "type": "object",
+  "required": ["commandId", "status"],
+  "additionalProperties": false,
+  "properties": {
+    "commandId": {
+      "description": "응답 대상 명령의 멱등 키. mission-command 의 commandId 와 같다.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "status": {
+      "description": "ACCEPTED 수락, EXECUTED 실행 완료, REJECTED 거부, EXPIRED 만료, FAILED 실패 (31-6).",
+      "type": "string",
+      "enum": ["ACCEPTED", "EXECUTED", "REJECTED", "EXPIRED", "FAILED"]
+    },
+    "reasonCode": {
+      "description": "거부·실패 사유 코드 (예: ESTOP_ACTIVE, SENSOR_FAULT). 수락이면 null.",
+      "type": ["string", "null"],
+      "maxLength": 64
+    },
+    "message": {
+      "description": "사람이 읽을 부가 설명.",
+      "type": ["string", "null"],
+      "maxLength": 512
+    }
+  }
+}

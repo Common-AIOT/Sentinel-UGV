@@ -18,7 +18,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import com.sentinel.backend.common.exception.BusinessException;
+import com.sentinel.backend.common.exception.ErrorCode;
+import com.sentinel.backend.control.CommandAckWriter;
 import com.sentinel.backend.encounter.EncounterWriter;
+import com.sentinel.backend.messaging.dto.CommandAckData;
 import com.sentinel.backend.messaging.dto.EncounterData;
 import com.sentinel.backend.messaging.dto.MessageEnvelope;
 import com.sentinel.backend.messaging.dto.PresenceData;
@@ -47,10 +51,11 @@ public class MqttGateway implements MqttCallback {
     private static final String TOPIC_PREFIX = "sentinel/v1/robots";
     private static final String TELEMETRY_FILTER = TOPIC_PREFIX + "/+/telemetry";
     private static final String PRESENCE_FILTER = TOPIC_PREFIX + "/+/presence";
-    // 젯슨은 encounter 를 events 채널로 QoS 1 발행한다 (31-4, sentinel_bridge mqtt_client).
+    // 젯슨은 encounter 를 events 채널로, 명령 결과를 acks 채널로 QoS 1 발행한다 (31-4).
     private static final String EVENTS_FILTER = TOPIC_PREFIX + "/+/events";
-    private static final String[] FILTERS = {TELEMETRY_FILTER, PRESENCE_FILTER, EVENTS_FILTER};
-    private static final int[] QOS = {0, 1, 1};
+    private static final String ACKS_FILTER = TOPIC_PREFIX + "/+/acks";
+    private static final String[] FILTERS = {TELEMETRY_FILTER, PRESENCE_FILTER, EVENTS_FILTER, ACKS_FILTER};
+    private static final int[] QOS = {0, 1, 1, 1};
 
     private static final int KEEP_ALIVE_SECONDS = 30;
     private static final long RETRY_DELAY_SECONDS = 10;
@@ -60,6 +65,7 @@ public class MqttGateway implements MqttCallback {
     private final TelemetryWriter telemetryWriter;
     private final RobotPresenceWriter presenceWriter;
     private final EncounterWriter encounterWriter;
+    private final CommandAckWriter commandAckWriter;
 
     private final ScheduledExecutorService retryScheduler =
             Executors.newSingleThreadScheduledExecutor(r -> new Thread(r, "mqtt-connect-retry"));
@@ -70,12 +76,34 @@ public class MqttGateway implements MqttCallback {
                        ObjectMapper objectMapper,
                        TelemetryWriter telemetryWriter,
                        RobotPresenceWriter presenceWriter,
-                       EncounterWriter encounterWriter) {
+                       EncounterWriter encounterWriter,
+                       CommandAckWriter commandAckWriter) {
         this.props = props;
         this.objectMapper = objectMapper;
         this.telemetryWriter = telemetryWriter;
         this.presenceWriter = presenceWriter;
         this.encounterWriter = encounterWriter;
+        this.commandAckWriter = commandAckWriter;
+    }
+
+    /**
+     * 봉투를 {@code sentinel/v1/robots/{robotId}/{channel}} 로 QoS 1 발행한다.
+     *
+     * <p>cmd/* 는 Retain 을 쓰지 않는다 — 과거 명령이 재연결 직후 실행되는 것을 막는다(31-4).
+     * 브로커 미접속이면 즉시 실패한다. 명령은 지연 실행보다 명확한 실패가 안전하다.
+     */
+    public void publish(String robotId, String channel, MessageEnvelope envelope) {
+        if (client == null || !client.isConnected()) {
+            throw new BusinessException(ErrorCode.BROKER_UNAVAILABLE);
+        }
+        try {
+            MqttMessage message = new MqttMessage(objectMapper.writeValueAsBytes(envelope));
+            message.setQos(1);
+            client.publish(TOPIC_PREFIX + "/" + robotId + "/" + channel, message);
+        } catch (MqttException e) {
+            throw new BusinessException(ErrorCode.BROKER_UNAVAILABLE,
+                    "명령 발행에 실패했습니다: " + e.getMessage());
+        }
     }
 
     @PostConstruct
@@ -168,6 +196,8 @@ public class MqttGateway implements MqttCallback {
                         envelope, objectMapper.treeToValue(envelope.data(), PresenceData.class));
                 case MessageEnvelope.TYPE_ENCOUNTER -> encounterWriter.write(
                         envelope, objectMapper.treeToValue(envelope.data(), EncounterData.class));
+                case MessageEnvelope.TYPE_COMMAND_ACK -> commandAckWriter.write(
+                        envelope, objectMapper.treeToValue(envelope.data(), CommandAckData.class));
                 default -> log.debug("처리 대상이 아닌 messageType: {}", envelope.messageType());
             }
         } catch (Exception e) {

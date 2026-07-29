@@ -197,6 +197,12 @@ class MissionStateMachine:
         self.person_lost_seconds = person_lost_seconds
         self.state = start_state
         self.encounter: Encounter | None = None
+        # 진행 중 임무 식별자. MISSION_START 가 주고 관제가 만든 값이다.
+        #
+        # 이것이 없으면 발견한 사람이 서버에 기록되지 않는다. 백엔드가
+        # encounters.mission_id 를 NOT NULL FK 로 두고 임무 없는 encounter 를
+        # 적재하지 않기 때문이다(S15P11A301-138·140).
+        self.mission_id: str | None = None
         # 26.4 명령 멱등성. 이미 처리한 commandId는 다시 실행하지 않는다.
         self._handled_commands: set[str] = set()
 
@@ -424,6 +430,7 @@ class MissionStateMachine:
         *,
         now: datetime,
         encounter_id: str | None = None,
+        mission_id: str | None = None,
         command_id: str | None = None,
         detail: str = '',
     ) -> Transition:
@@ -466,6 +473,8 @@ class MissionStateMachine:
             Signal.PAUSE_REQUESTED: self._pause_requested,
             Signal.RESUME_APPROVED: self._resume_approved,
         }[signal]
+        if signal is Signal.MISSION_START:
+            return self._mission_start(now, detail, mission_id)
         return handler(now, detail)
 
     def _estop(self, detail: str) -> Transition:
@@ -482,11 +491,20 @@ class MissionStateMachine:
             return self._ignore('이미 PAUSED 상태다')
         return self._to(MissionState.PAUSED, f'SENSOR_FAULT {detail}'.strip())
 
-    def _mission_start(self, now: datetime, detail: str) -> Transition:
+    def _mission_start(
+        self, now: datetime, detail: str, mission_id: str | None = None
+    ) -> Transition:
+        """임무를 시작한다. missionId를 보관해 이후 encounter에 담는다.
+
+        `missionId`가 없어도 시작은 허용한다. 개발 중에는 관제 없이 젯슨만 띄워
+        녹화를 검증하는 일이 잦고, 그때 임무를 만들 수단이 없다. 대신 그 상태에서
+        발행한 encounter는 서버에 기록되지 않으므로 호출자가 경고를 남긴다.
+        """
         if self.state is not MissionState.SAFE_IDLE:
             return self._ignore(
                 f'MISSION_START는 SAFE_IDLE에서만 유효하다(현재 {self.state.value})'
             )
+        self.mission_id = mission_id
         return self._to(MissionState.EXPLORING, 'MISSION_START')
 
     def _safe_pose_reached(self, now: datetime, detail: str) -> Transition:

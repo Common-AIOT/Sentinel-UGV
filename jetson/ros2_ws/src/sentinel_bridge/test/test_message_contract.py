@@ -474,3 +474,171 @@ def test_pose_body_satisfies_the_telemetry_schema():
     absent = mapper.telemetry(pose=None)
     assert absent['data']['pose'] is None
     assert not list(validator.iter_errors(absent['data']))
+
+
+def test_encounter_envelope_satisfies_the_contract():
+    """encounter를 events 채널로 보낼 때 봉투와 본문이 계약을 만족하는지.
+
+    본문은 mission_manager가 만든 것을 그대로 넘긴다. 여기서 다시 조립하면 두
+    곳이 어긋난다(S15P11A301-140).
+    """
+    jsonschema = pytest.importorskip('jsonschema')
+    from sentinel_bridge.message_mapper import MessageMapper
+
+    envelope_schema = _load_schema('envelope.schema.json')
+    data_schema = _load_schema('encounter.schema.json')
+    checker = jsonschema.Draft202012Validator.FORMAT_CHECKER
+    envelope_validator = jsonschema.Draft202012Validator(
+        envelope_schema, format_checker=checker
+    )
+    data_validator = jsonschema.Draft202012Validator(data_schema, format_checker=checker)
+
+    body = {
+        'encounterId': 'b9c43b74-e7f9-4f74-8358-9656293bc1af',
+        'phase': 'CONFIRMED',
+        'detectedAt': '2026-07-29T05:12:30.100Z',
+        'personCount': 2,
+        'trackIds': [7, 8],
+        'confidence': 0.91,
+        'pose': None,
+        'missionId': '4a43f45c-779f-4df5-ac04-1695724829a4',
+    }
+    message = MessageMapper('SENTINEL-01').encounter(body)
+
+    assert message['messageType'] == 'ENCOUNTER_CONFIRMED'
+    # 봉투의 missionId를 본문과 맞춘다. 백엔드가 봉투를 우선하고 없으면 본문을 본다.
+    assert message['missionId'] == body['missionId']
+    assert not list(envelope_validator.iter_errors(message))
+    assert not list(data_validator.iter_errors(message['data']))
+
+
+def test_encounter_envelope_carries_every_phase():
+    """phase가 달라도 messageType은 ENCOUNTER_CONFIRMED다.
+
+    봉투 enum이 그것 하나이고 백엔드는 본문의 phase로 INSERT와 UPDATE를 가른다
+    (S15P11A301-138). CONFIRMED만 보내면 관제가 상호작용 진행과 종료를 못 본다.
+    """
+    jsonschema = pytest.importorskip('jsonschema')
+    from sentinel_bridge.message_mapper import MessageMapper
+
+    data_validator = jsonschema.Draft202012Validator(
+        _load_schema('encounter.schema.json'),
+        format_checker=jsonschema.Draft202012Validator.FORMAT_CHECKER,
+    )
+    mapper = MessageMapper('SENTINEL-01')
+    for phase in ('CONFIRMED', 'APPROACHED', 'ENDED', 'REDETECTED', 'LOST'):
+        body = {
+            'encounterId': 'b9c43b74-e7f9-4f74-8358-9656293bc1af',
+            'phase': phase,
+            'detectedAt': '2026-07-29T05:12:30.100Z',
+            'personCount': 1,
+            'missionId': '4a43f45c-779f-4df5-ac04-1695724829a4',
+        }
+        message = mapper.encounter(body)
+        assert message['messageType'] == 'ENCOUNTER_CONFIRMED', phase
+        assert not list(data_validator.iter_errors(message['data'])), phase
+
+
+def test_events_channel_policy_is_qos1_without_retain():
+    """31-4: events는 QoS 1, Retain 없음.
+
+    Retain을 켜면 새 구독자가 옛 이벤트를 현재 상태로 오해한다. QoS 0으로 내리면
+    사람을 발견한 사실이 유실될 수 있다.
+    """
+    from sentinel_bridge.mqtt_client import CHANNEL_POLICY
+
+    assert CHANNEL_POLICY['events'] == (1, False)
+
+
+def test_mission_signal_schema_has_mission_id():
+    """MISSION_START가 missionId를 담을 자리가 있어야 한다.
+
+    없으면 젯슨이 임무를 모르고, 발행한 encounter가 백엔드에서 버려진다
+    (encounters.mission_id NOT NULL FK).
+    """
+    schema = _load_schema('mission-signal.schema.json')
+    field = schema['properties'].get('missionId')
+    assert field is not None, 'missionId 필드가 없다'
+    assert 'null' in field['type']
+    assert field['pattern'].startswith('^[0-9a-f]{8}-')
+
+
+def test_log_helper_survives_severity_changes():
+    """같은 `_log` 헬퍼로 info와 warn을 번갈아 써도 터지면 안 된다.
+
+    rclpy 로거는 호출 위치를 캐싱해 중복 제거를 지원한다. `getattr(logger, level)`
+    한 줄로 감싸면 모든 severity가 같은 위치에서 나가고, 두 번째 severity에서
+    이렇게 거부한다.
+
+        ValueError: Logger severity cannot be changed between calls.
+
+    이 예외가 재연결 콜백을 죽여 Outbox 재전송이 실행되지 않았다
+    (S15P11A301-140). 브로커가 붙었다 끊기는 순간 터지므로 단절 복구 경로 전체가
+    무너진다.
+    """
+    from sentinel_bridge import mqtt_client as module
+
+    calls = []
+
+    class StrictLogger:
+        """rclpy와 같은 제약을 흉내낸다. 호출 위치별로 severity를 고정한다."""
+
+        def __init__(self):
+            self._severity_by_site = {}
+
+        def _record(self, severity, message):
+            import inspect
+
+            frame = inspect.stack()[2]
+            site = (frame.filename, frame.lineno)
+            previous = self._severity_by_site.setdefault(site, severity)
+            if previous != severity:
+                raise ValueError(
+                    'Logger severity cannot be changed between calls.'
+                )
+            calls.append((severity, message))
+
+        def info(self, message):
+            self._record('info', message)
+
+        def warn(self, message):
+            self._record('warn', message)
+
+        def error(self, message):
+            self._record('error', message)
+
+    class FakeClient:
+        def __init__(self, *_a, **_k):
+            pass
+
+        def ws_set_options(self, *_a, **_k):
+            pass
+
+        def username_pw_set(self, *_a, **_k):
+            pass
+
+        def tls_set(self, *_a, **_k):
+            pass
+
+        def will_set(self, *_a, **_k):
+            pass
+
+        def reconnect_delay_set(self, **_k):
+            pass
+
+    original = module.mqtt.Client
+    module.mqtt.Client = FakeClient
+    try:
+        publisher = module.MqttPublisher(
+            'SENTINEL-01', '127.0.0.1', 443, logger=StrictLogger()
+        )
+    finally:
+        module.mqtt.Client = original
+
+    # 같은 헬퍼로 세 severity를 번갈아 쓴다. 터지면 재연결 경로가 무너진다.
+    publisher._log('info', '연결됨')
+    publisher._log('warn', '끊김')
+    publisher._log('error', '실패')
+    publisher._log('info', '다시 연결됨')
+
+    assert [level for level, _ in calls] == ['info', 'warn', 'error', 'info']

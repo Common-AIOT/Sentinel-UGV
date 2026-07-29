@@ -269,6 +269,23 @@ class MqttPublisher:
         return info.rc == mqtt.MQTT_ERR_SUCCESS
 
     def _log(self, level: str, message: str) -> None:
+        """rclpy 로거에 남긴다. severity별로 호출 지점을 나눠야 한다.
+
+        `getattr(logger, level)(message)` 한 줄로 감싸면 안 된다. rclpy 로거는
+        호출 위치를 캐싱해 중복 제거를 지원하므로, 같은 위치에서 severity가 바뀌면
+        이렇게 거부한다.
+
+            ValueError: Logger severity cannot be changed between calls.
+
+        이 예외가 재연결 콜백을 죽여 Outbox 재전송이 실행되지 않았다
+        (S15P11A301-140). 브로커 연결이 info로 한 번 남고 끊김이 warn으로 남는
+        순간 터진다. 조용히 실패하지 않고 콜백 전체를 무너뜨리므로 위험하다.
+        """
         if self._logger is None:
             return
-        getattr(self._logger, level, self._logger.info)(message)
+        if level == 'warn':
+            self._logger.warn(message)
+        elif level == 'error':
+            self._logger.error(message)
+        else:
+            self._logger.info(message)

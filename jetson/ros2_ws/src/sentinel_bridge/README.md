@@ -206,6 +206,90 @@ Spring 계정 전체     허용
 > 오판했습니다. **메시지가 실제로 도착하는지만이 진실을 말합니다.** 구독자를
 > 붙여 확인하세요.
 
+## 검증 기록 (2026-07-29) — events 실물 적재 (S15P11A301-140)
+
+`POST /api/v1/missions`(S15P11A301-105)가 배포되어 실물 백엔드로 이어서 검증했습니다.
+로컬 브로커가 아니라 `wss://api.sentinel-ugv.xyz:443/mqtt`입니다.
+
+| 완료 조건 | 결과 |
+|---|---|
+| encounter가 events로 나가고 `encounters` 행이 생긴다 | 합격 |
+| `APPROACHED`·`ENDED`·`LOST`로 `status`가 갱신된다 | **확인 불가** — 아래 참조 |
+| Outbox에 쌓이고 복구 후 재전송되어 적재된다 | 합격 |
+| 같은 `encounterId`가 두 번 가도 중복 행이 안 생긴다 | 합격 |
+| `missionId` null이면 MQTT를 건너뛰고 로그에 남긴다 | 합격 |
+| S15P11A301-124 업로드가 404 없이 성공한다 | 합격 |
+| `run_contract_tests.sh` 통과 | 합격 (129건) |
+
+### 적재를 어떻게 확인했는가
+
+`encounters`를 읽는 엔드포인트가 백엔드에 없습니다. 대신 `MediaService.findMissionId`가
+
+```sql
+SELECT mission_id FROM encounters WHERE id = ?
+```
+
+를 돌리고 행이 없으면 `ENCOUNTER_NOT_FOUND`를 던지므로, **업로드 발급 성공이 곧 행
+존재 증명**입니다. 판정 수단이 유효한지 대조군으로 확인했습니다.
+
+```text
+실제 encounterId    → 200  objectKey=missions/4bde8ad1-.../encounters/6a75f497-.../event.mp4
+없는 encounterId    → ENCOUNTER-001 "encounter 를 찾을 수 없습니다"
+```
+
+`objectKey`에 제가 만든 `missionId`가 박혀 있는 것이 `missionId` 중계까지 맞았다는
+뜻입니다. 그 값은 젯슨이 보낸 것이 아니라 백엔드가 `encounters.mission_id`에서 읽은
+것입니다.
+
+### Outbox 복구
+
+브로커 호스트를 라우팅되지 않는 주소로 바꿔 단절을 만들었습니다. `iptables`가 필요
+없고 같은 코드 경로를 탑니다.
+
+```text
+브로커 없음        events 10건 Outbox 보관 (대기 1 → 10건)
+프로세스 재시작     보관분 10건 유지  ← 디스크에 남는지가 핵심이다
+실제 브로커 복구    "복구 순서 완료: presence, state 발행, Outbox 10건 재전송"
+                  Outbox 남은 0건
+재전송분 적재 확인  a2f6a0e0 업로드 발급 200, objectKey에 missionId 일치
+```
+
+`events`는 QoS 1이지만 paho의 재전송 큐는 프로세스가 죽으면 사라집니다. 그래서
+"프로세스 재시작 후에도 남는가"가 31-10을 만족하는지의 실제 기준입니다.
+
+### 중복 방지
+
+`encounters.id`가 `UUID PRIMARY KEY`이고 `EncounterWriter`가
+`ON CONFLICT (id) DO NOTHING`을 씁니다. 같은 `encounterId`로 `CONFIRMED`를 4~9회
+보낸 뒤에도 `findMissionId`가 단일 행을 반환했습니다.
+
+### status 갱신을 확인할 수 없는 이유
+
+젯슨이 `LOST`를 발행한 것은 로그로 확인했습니다.
+
+```text
+[INFO] [cloud_bridge]: events 발행 LOST 6a75f497
+```
+
+그런데 `encounters.status`를 읽을 방법이 없습니다. 백엔드 엔드포인트 전체를 훑어
+확인했습니다.
+
+```text
+/api/v1/control-sessions          POST, DELETE
+/api/v1/missions                  POST, GET, GET /{id}, GET /{id}/telemetry
+/api/v1/missions/{id}/commands    POST
+/api/v1/media                     POST /uploads, POST /uploads/{id}/complete,
+                                  GET /{id}/view-url
+```
+
+`GET /api/v1/missions/{id}`의 `detectionCount`는 `mission_results`에서 오고 그
+테이블을 **쓰는 코드가 백엔드에 없습니다**(LEFT JOIN으로 읽기만 합니다). 그래서 항상
+null입니다. DB 5432도 외부에서 닫혀 있습니다.
+
+즉 이것은 젯슨 쪽 미구현이 아니라 **관측 수단이 없는 것**입니다. 관제 화면이
+발견 목록을 보여줘야 하므로 `encounters` 조회 API는 어차피 필요합니다. 그것이
+생기면 이 한 줄을 채웁니다.
+
 ## 문제 해결
 
 ### `ros2 run`이 패키지를 못 찾는다

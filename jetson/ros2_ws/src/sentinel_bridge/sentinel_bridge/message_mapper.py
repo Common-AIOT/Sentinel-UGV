@@ -26,6 +26,7 @@ SCHEMA_VERSION = "1.0"
 MESSAGE_TYPE_PRESENCE = "ROBOT_PRESENCE"
 MESSAGE_TYPE_STATE = "ROBOT_STATE"
 MESSAGE_TYPE_TELEMETRY = "ROBOT_TELEMETRY"
+MESSAGE_TYPE_ENCOUNTER = "ENCOUNTER_CONFIRMED"
 
 # 26.2의 임무 상태를 31-5 state 채널의 `safetyState` enum으로 옮긴다.
 #
@@ -169,6 +170,30 @@ class MessageMapper:
     # ------------------------------------------------------------------
     # telemetry
     # ------------------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    # events (S15P11A301-140)
+    # ------------------------------------------------------------------
+
+    def encounter(self, data: dict[str, Any]) -> dict[str, Any]:
+        """`/perception/encounter` 본문을 31-5 봉투에 담는다.
+
+        본문을 그대로 넘긴다. `mission_manager`가 이미
+        `common/schemas/encounter.schema.json` 형식으로 만들었으므로 여기서 다시
+        조립하면 두 곳이 어긋날 자리가 생긴다.
+
+        `messageType`은 phase와 무관하게 `ENCOUNTER_CONFIRMED`다. 봉투 스키마의
+        enum이 그것 하나이고, 백엔드는 본문의 `phase`를 보고 INSERT와 UPDATE를
+        가른다(S15P11A301-138의 `EncounterWriter`).
+
+        봉투의 `missionId`는 본문 값을 쓴다. 백엔드가 봉투를 우선하고 없으면 본문을
+        보므로 둘을 맞춰 두는 편이 안전하다.
+        """
+        return self.envelope(
+            MESSAGE_TYPE_ENCOUNTER,
+            data,
+            mission_id=data.get("missionId"),
+        )
 
     def telemetry(
         self,

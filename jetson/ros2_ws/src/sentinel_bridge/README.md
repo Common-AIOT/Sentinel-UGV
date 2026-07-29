@@ -290,6 +290,122 @@ null입니다. DB 5432도 외부에서 닫혀 있습니다.
 발견 목록을 보여줘야 하므로 `encounters` 조회 API는 어차피 필요합니다. 그것이
 생기면 이 한 줄을 채웁니다.
 
+## 관제 명령 (S15P11A301-143)
+
+관제의 제어 버튼이 여기를 지나갑니다.
+
+```text
+관제 START 클릭
+  → POST /api/v1/missions/{id}/commands       HTTP 202, result='PENDING'
+  → Spring MqttGateway → cmd/mission (QoS 1, Retain 금지)
+  → cloud_bridge 구독 → /mission/signal 의 MISSION_START
+  → mission_manager  SAFE_IDLE → EXPLORING
+  → /mission/command_result → acks (QoS 1)
+  → Spring CommandAckWriter → control_commands.result, missions.status
+```
+
+HTTP 202는 **전달 시작**일 뿐입니다. 수락·거부는 이 ACK가 확정합니다(27.4).
+
+### 명령 → 신호
+
+```text
+START   → MISSION_START
+PAUSE   → PAUSE_REQUESTED
+RESUME  → RESUME_APPROVED     RESUME_REQUESTED가 아닙니다
+STOP    → MISSION_COMPLETED
+RETURN  → 거부 (NOT_IMPLEMENTED)
+```
+
+`RESUME`이 `RESUME_APPROVED`인 것은 두 재개 신호의 역할이 다르기 때문입니다.
+`RESUME_REQUESTED`는 음성 쪽이 보고를 마치고 탐사를 이어가겠다는 요청이며
+REPORTING에서만 유효합니다. `PAUSED`를 푸는 것은 30.5가 자동 재개를 금지했으므로
+운영자의 명시적 재개뿐입니다.
+
+`RETURN`은 계약에 있지만 `RETURNING`이 미구현입니다(home pose 복귀 주행 필요).
+조용히 무시하면 관제가 영원히 `PENDING`을 보므로 `NOT_IMPLEMENTED`로 거부합니다.
+
+### 판단은 bridge가 하지 않습니다
+
+명령이 지금 상태에서 유효한지는 `mission_manager`가 정합니다(26.1 단일 권한).
+bridge가 거부하는 것은 상태와 무관한 사유뿐입니다.
+
+```text
+MALFORMED_COMMAND       형식이 틀렸다
+NOT_IMPLEMENTED         매핑이 없다 (RETURN)
+MISSION_MANAGER_DOWN    받을 노드가 없다 — 넣고 기다리면 ACK가 오지 않는다
+```
+
+상태 머신이 내는 사유는 `ESTOP_ACTIVE`, `ERROR_LATCHED`, `INVALID_STATE`,
+`DUPLICATE_COMMAND` 입니다.
+
+### 중복 명령
+
+QoS 1은 같은 메시지를 두 번 줍니다(31-4). 그때 신호를 다시 넣으면
+`mission_manager`가 `DUPLICATE_COMMAND`로 거부하고, **그 거부가 백엔드의 EXECUTED
+기록을 REJECTED로 덮어씁니다.** 관제에는 "거부됨"이 뜨는데 로봇은 그 명령을 이미
+수행한 상태입니다.
+
+그래서 `CommandRelay`가 회신한 ACK를 기억하고 **같은 ACK를 그대로 다시 보냅니다.**
+재전송에 같은 응답을 주는 것이 멱등의 정의입니다.
+
+이 경로는 **실물로 재현할 수 없습니다.** 브로커 재전송에서만 생기고, 브로커 ACL이
+로봇 계정의 `cmd/*` 발행을 막습니다(옳은 설정입니다). 그래서 판단을
+`command_relay.py`로 떼어 CI 시험으로 고정했습니다.
+
+### 젯슨이 꺼져 있을 때 온 명령은 사라집니다
+
+`cmd/mission`은 Retain을 쓰지 않고 세션도 clean입니다. 그래서 젯슨이 오프라인인
+동안 온 명령은 브로커가 보관하지 않고, 관제는 `PENDING`을 계속 봅니다.
+
+이것은 의도입니다. 31-4가 Retain을 금지한 이유가 "과거 명령이 재연결 직후 실행되는
+것을 막는다"이고, 세션 보관은 같은 문제를 다른 방식으로 만듭니다 — 10분 전에 누른
+STOP이 로봇이 돌아온 순간 실행되면 위험합니다. 조작자가 다시 누르는 것이 안전합니다.
+
+`acks`는 반대입니다. 응답을 잃으면 관제가 명령이 먹혔는지 알 수 없으므로 브로커가
+없으면 Outbox에 보관하고 복구 후 재전송합니다(31-10).
+
+## 검증 기록 (2026-07-29) — 관제 명령 (S15P11A301-143)
+
+실물 백엔드와 브로커입니다. `POST /api/v1/missions/{id}/commands`를 직접 호출했고
+젯슨은 `wss://api.sentinel-ugv.xyz:443/mqtt`에 붙어 있었습니다.
+
+| 완료 조건 | 결과 |
+|---|---|
+| START → EXPLORING, ACK 도착 | 합격. 백엔드 `status=EXPLORING`, `startedAt` 채워짐 |
+| PAUSE·RESUME → PAUSED·EXPLORING | 합격 |
+| STOP → COMPLETED, `endedAt` 채워짐 | 합격 |
+| RETURN → `NOT_IMPLEMENTED` 거부 | 합격 |
+| 같은 `commandId` 중복 → 한 번만 실행 | 합격 (시험. 실물 재현 불가 — 위 참조) |
+| ESTOP latch에서 명령 거부 | 합격. `ESTOP_ACTIVE`, 백엔드 상태 불변 |
+| 재연결 후 구독 유지 | 합격 (시험). 노드 재시작 시 재구독은 실물 확인 |
+| 터미널 주입 없이 관제만으로 시작 | 합격 |
+
+```text
+START   명령 처리 c4f9b5d6 EXECUTED → EXPLORING
+        백엔드 status=EXPLORING  startedAt=2026-07-29T07:27:20.713Z
+PAUSE   명령 처리 2d7de205 EXECUTED → PAUSED      백엔드 status=PAUSED
+RESUME  명령 처리 6c2ba6e4 EXECUTED → EXPLORING   백엔드 status=EXPLORING
+RETURN  명령 거부 dab1abe5 NOT_IMPLEMENTED        백엔드 status 불변
+ESTOP   명령 거부 45255931 ESTOP_ACTIVE           백엔드 status 불변
+STOP    명령 처리 0e5defc8 EXECUTED → COMPLETED
+        백엔드 status=COMPLETED  endedAt=2026-07-29T07:32:23.199Z
+```
+
+`missions.status`가 바뀌는 것이 ACK 도착의 증거입니다. `CommandAckWriter`는
+`ACCEPTED`나 `EXECUTED`일 때만 상태를 전이합니다.
+
+### ACK를 EXECUTED로 보내는 이유
+
+`ACCEPTED`를 쓰지 않습니다. 여기서 다루는 명령이 전부 동기적으로 끝나기 때문입니다.
+접수만 하고 나중에 완료되는 것은 `RETURN`(복귀 주행)뿐이고 미구현입니다. 실제로
+끝났는데 `ACCEPTED`를 보내면 관제가 완료를 기다리며 멈춥니다.
+
+### 버튼을 두 번 눌러도 거부가 아닙니다
+
+이미 `PAUSED`인데 `PAUSE`가 또 오면 성공으로 회신합니다. 원하는 상태에 이미 있으므로
+거부가 뜨면 조작자가 무엇이 잘못됐는지 찾게 됩니다. 상태 머신이 그 경우
+`reason_code`를 비워 두므로 그것으로 구분합니다.
+
 ## 문제 해결
 
 ### `ros2 run`이 패키지를 못 찾는다

@@ -77,6 +77,12 @@ class Signal(str, Enum):
     RESUME_APPROVED = 'RESUME_APPROVED'
     ESTOP = 'ESTOP'
     SENSOR_FAULT = 'SENSOR_FAULT'
+    # 관제의 STOP 명령(27.4). 26.3의 COMPLETED로 보낸다.
+    #
+    # cmd/mission 의 STOP 에 대응하는 신호가 없어서 추가했다(S15P11A301-143).
+    # RETURN 은 추가하지 않았다. RETURNING 은 home pose 복귀 주행이 필요해
+    # UNIMPLEMENTED 로 남아 있고, 신호만 만들면 갈 수 없는 상태로 보내게 된다.
+    MISSION_COMPLETED = 'MISSION_COMPLETED'
 
 
 class Phase(str, Enum):
@@ -120,6 +126,28 @@ UNIMPLEMENTED = frozenset({MissionState.MANUAL, MissionState.RETURNING})
 #
 # 목록으로 두는 이유는 상태가 늘 때 함께 검토하게 하기 위해서다. 조건문에 상태
 # 이름을 직접 쓰면 새 종료 상태가 추가될 때 이 검사에서 빠진다.
+# COMMAND_ACK 의 reasonCode (31-6). 관제가 이 값으로 화면을 분기한다.
+#
+# 문자열을 여기 모아 두는 이유는 백엔드·관제와 공유하는 값이기 때문이다. 코드
+# 안에 흩어 두면 오타를 잡을 수 없고, 관제가 어떤 값이 올 수 있는지 알 수 없다.
+REASON_ESTOP_ACTIVE = 'ESTOP_ACTIVE'
+REASON_ERROR_LATCHED = 'ERROR_LATCHED'
+REASON_INVALID_STATE = 'INVALID_STATE'
+REASON_DUPLICATE_COMMAND = 'DUPLICATE_COMMAND'
+REASON_NOT_IMPLEMENTED = 'NOT_IMPLEMENTED'
+
+# COMMAND_ACK 의 status (31-6). command-ack.schema.json 의 enum 과 같아야 한다.
+#
+# ACCEPTED 는 여기서 쓰지 않는다. 접수만 하고 나중에 끝나는 명령이 RETURN(복귀
+# 주행)뿐이고 그것은 미구현이다. 나머지는 상태 전이가 곧 실행이므로 EXECUTED 다.
+# 실제로 끝났는데 ACCEPTED 를 보내면 관제가 완료를 기다리며 멈춘다.
+ACK_ACCEPTED = 'ACCEPTED'
+ACK_EXECUTED = 'EXECUTED'
+ACK_REJECTED = 'REJECTED'
+ACK_EXPIRED = 'EXPIRED'
+ACK_FAILED = 'FAILED'
+
+
 TERMINATING_STATES = frozenset(
     {MissionState.POST_RECORDING, MissionState.REPORTING}
 )
@@ -164,6 +192,11 @@ class Transition:
     reason: str = ''
     phase: Phase | None = None
     ignored_reason: str = ''
+    # 거부 사유를 기계가 읽을 코드로도 남긴다. `ignored_reason`은 사람이 읽는
+    # 문장이고 로그용이다. COMMAND_ACK 의 `reasonCode`가 이 값이며 관제가 그것으로
+    # 화면을 분기한다(31-6, S15P11A301-143). 문장을 파싱해 코드를 만들면 문구를
+    # 고칠 때마다 관제가 깨진다.
+    reason_code: str | None = None
 
 
 @dataclass
@@ -260,9 +293,12 @@ class MissionStateMachine:
             phase=phase,
         )
 
-    def _ignore(self, reason: str) -> Transition:
+    def _ignore(self, reason: str, code: str | None = None) -> Transition:
         return Transition(
-            changed=False, state=self.state, ignored_reason=reason
+            changed=False,
+            state=self.state,
+            ignored_reason=reason,
+            reason_code=code,
         )
 
     # ------------------------------------------------------------------
@@ -441,7 +477,10 @@ class MissionStateMachine:
         """
         if command_id:
             if command_id in self._handled_commands:
-                return self._ignore(f'이미 처리한 commandId {command_id}')
+                return self._ignore(
+                    f'이미 처리한 commandId {command_id}',
+                    REASON_DUPLICATE_COMMAND,
+                )
             self._handled_commands.add(command_id)
 
         # 26.5 우선순위. E-Stop과 센서 결함은 상태와 무관하게 먼저 처리한다.
@@ -454,7 +493,10 @@ class MissionStateMachine:
 
         if self.state in {MissionState.ESTOP, MissionState.ERROR}:
             return self._ignore(
-                f'{self.state.value}는 latch 상태다. 운영자 조치가 필요하다'
+                f'{self.state.value}는 latch 상태다. 운영자 조치가 필요하다',
+                REASON_ESTOP_ACTIVE
+                if self.state is MissionState.ESTOP
+                else REASON_ERROR_LATCHED,
             )
 
         if encounter_id is not None and encounter_id != self.encounter_id:
@@ -472,6 +514,7 @@ class MissionStateMachine:
             Signal.RESUME_REQUESTED: self._resume_requested,
             Signal.PAUSE_REQUESTED: self._pause_requested,
             Signal.RESUME_APPROVED: self._resume_approved,
+            Signal.MISSION_COMPLETED: self._mission_completed,
         }[signal]
         if signal is Signal.MISSION_START:
             return self._mission_start(now, detail, mission_id)
@@ -500,12 +543,41 @@ class MissionStateMachine:
         녹화를 검증하는 일이 잦고, 그때 임무를 만들 수단이 없다. 대신 그 상태에서
         발행한 encounter는 서버에 기록되지 않으므로 호출자가 경고를 남긴다.
         """
+        if self.state is MissionState.EXPLORING:
+            # 이미 탐사 중이다. 관제 버튼을 두 번 눌렀거나, 서로 다른 commandId로
+            # 두 번 온 경우다(멱등 가드는 같은 commandId만 막는다). 원하는 상태에
+            # 이미 있으므로 거부로 보지 않는다 — 조작자에게는 성공이 맞다.
+            return self._ignore('이미 EXPLORING 상태다')
         if self.state is not MissionState.SAFE_IDLE:
             return self._ignore(
-                f'MISSION_START는 SAFE_IDLE에서만 유효하다(현재 {self.state.value})'
+                f'MISSION_START는 SAFE_IDLE에서만 유효하다(현재 {self.state.value})',
+                REASON_INVALID_STATE,
             )
         self.mission_id = mission_id
         return self._to(MissionState.EXPLORING, 'MISSION_START')
+
+    def _mission_completed(self, now: datetime, detail: str) -> Transition:
+        """관제의 STOP. 26.3의 COMPLETED로 보낸다 (S15P11A301-143).
+
+        어느 상태에서든 받는다. 조작자가 임무를 끝내겠다고 했으면 탐사 중이든
+        상호작용 중이든 끝나야 한다. 23.4가 "사용자 종료"를 종료 조건으로 명시했다.
+
+        진행 중 encounter는 버린다. 상호작용이 끝나지 않은 상태로 임무가 끝나므로
+        그 발견을 완결된 것으로 보고하면 잘못된 기록이 된다. 이미 마감된 encounter는
+        recording_manager가 별도로 처리했으므로 영향받지 않는다.
+
+        `mission_id`는 지운다. 임무가 끝났으므로 이후 encounter가 그 임무에 붙으면
+        안 된다. 백엔드도 종료된 임무의 명령을 MISSION_ALREADY_ENDED로 거부한다.
+
+        latch 상태(ESTOP·ERROR)는 여기 오지 않는다. `handle_signal`이 먼저
+        걸러낸다 — 비상 정지를 STOP으로 풀 수는 없고, 그것은 운영자가 물리적으로
+        확인한 뒤 해제할 일이다(26.5).
+        """
+        if self.state is MissionState.COMPLETED:
+            return self._ignore('이미 COMPLETED 상태다')
+        self.encounter = None
+        self.mission_id = None
+        return self._to(MissionState.COMPLETED, f'MISSION_COMPLETED {detail}'.strip())
 
     def _safe_pose_reached(self, now: datetime, detail: str) -> Transition:
         if self.state is not MissionState.PERSON_APPROACHING:
@@ -586,7 +658,8 @@ class MissionStateMachine:
     def _resume_approved(self, now: datetime, detail: str) -> Transition:
         if self.state is not MissionState.PAUSED:
             return self._ignore(
-                f'RESUME_APPROVED는 PAUSED에서만 유효하다(현재 {self.state.value})'
+                f'RESUME_APPROVED는 PAUSED에서만 유효하다(현재 {self.state.value})',
+                REASON_INVALID_STATE,
             )
         # 26.3: PAUSED → EXPLORING: explicit resume.
         # 진행 중이던 encounter는 버린다. 일시정지 사이에 상황이 바뀌었을 수 있고,

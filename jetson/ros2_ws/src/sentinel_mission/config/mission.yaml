@@ -6,6 +6,10 @@ mission_manager:
     encounter_topic: /perception/encounter
     status_topic: /mission/status
 
+    # 관제 명령 처리 결과 (S15P11A301-143). cloud_bridge가 이것을 MQTT acks로
+    # 회신합니다. 본문 형식은 common/schemas/command-ack.schema.json 입니다.
+    command_result_topic: /mission/command_result
+
     # 32-5가 정한 사후 녹화 3초. sentinel_recorder의 post_seconds와 같아야 한다.
     # 다르면 한쪽이 먼저 끊어 영상과 상태가 어긋난다.
     post_recording_seconds: 3

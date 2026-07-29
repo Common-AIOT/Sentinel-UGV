@@ -57,6 +57,8 @@ from rclpy.qos import (
 from std_msgs.msg import String
 
 from .mission_state import (
+    ACK_EXECUTED,
+    ACK_REJECTED,
     UNIMPLEMENTED,
     MissionState,
     MissionStateMachine,
@@ -76,6 +78,10 @@ class MissionManagerNode(Node):
         self.declare_parameter('signal_topic', '/mission/signal')
         self.declare_parameter('encounter_topic', '/perception/encounter')
         self.declare_parameter('status_topic', '/mission/status')
+        # 관제 명령 처리 결과 (S15P11A301-143)
+        self.declare_parameter(
+            'command_result_topic', '/mission/command_result'
+        )
         self.declare_parameter('post_recording_seconds', 3)
         self.declare_parameter('max_interaction_seconds', 300)
         self.declare_parameter('person_lost_seconds', 3.0)
@@ -118,6 +124,19 @@ class MissionManagerNode(Node):
         )
         self.status_pub = self.create_publisher(
             String, self._param('status_topic'), status_qos
+        )
+
+        # 관제 명령 처리 결과 (S15P11A301-143). `cloud_bridge`가 이것을 MQTT `acks`로
+        # 회신한다.
+        #
+        # 본문 형식이 `command-ack.schema.json`과 같다. bridge가 봉투만 씌운다.
+        # encounter를 그렇게 다루는 것과 같은 구조다 — 판단은 상태 머신이 하고
+        # bridge는 전달만 한다(26.1의 단일 권한).
+        #
+        # RELIABLE이어야 한다. 잃으면 관제의 control_commands.result가 영원히
+        # PENDING으로 남고 조작자는 명령이 먹혔는지 알 수 없다.
+        self.command_result_pub = self.create_publisher(
+            String, self._param('command_result_topic'), reliable
         )
 
         # 사람 후보는 프레임마다 오고 한 프레임을 놓쳐도 다음이 온다. 탐지 노드가
@@ -252,6 +271,13 @@ class MissionManagerNode(Node):
                     '백엔드가 적재하지 않는다(encounters.mission_id NOT NULL). '
                     '관제에서 임무를 만들어 MISSION_START에 missionId를 담는다.'
                 )
+        command_id = payload.get('commandId')
+        if command_id:
+            # 관제에서 온 명령이다. 결과를 회신해야 control_commands.result가
+            # PENDING에서 벗어난다(27.4). ROS 내부 신호는 commandId가 없으므로
+            # 여기 걸리지 않는다.
+            self._publish_command_result(str(command_id), transition)
+
         source = payload.get('source') or '?'
         if transition.ignored_reason:
             # 무시한 것을 조용히 넘기지 않는다. "수신하지 못한 것"과 "무시한 것"을
@@ -263,6 +289,49 @@ class MissionManagerNode(Node):
 
     def _on_tick(self) -> None:
         self._apply(self.machine.tick(self._now()))
+
+    # ------------------------------------------------------------------
+    # 관제 명령 결과 (S15P11A301-143)
+    # ------------------------------------------------------------------
+
+    def _publish_command_result(self, command_id: str, transition) -> None:
+        """명령 하나의 처리 결과를 낸다. 계약은 `command-ack.schema.json`이다.
+
+        상태가 바뀌었으면 `EXECUTED`다. `ACCEPTED`를 쓰지 않는 이유는 여기서 다루는
+        명령이 전부 동기적으로 끝나기 때문이다. 접수만 하고 나중에 완료되는 것은
+        `RETURN`(복귀 주행)뿐이고 그것은 아직 구현하지 않았다. 실제로 끝났는데
+        `ACCEPTED`를 보내면 관제가 완료를 기다리며 멈춘다.
+
+        상태가 안 바뀌었어도 **원하는 상태에 이미 있으면 성공으로 본다.** 조작자가
+        PAUSE를 두 번 눌렀을 때 거부가 뜨면 무엇이 잘못됐는지 찾게 된다. 상태 머신이
+        그 경우 `reason_code`를 비워 두므로 그것으로 구분한다.
+
+        거부는 `reason_code`가 있을 때뿐이다. 그 값이 관제 화면의 분기 기준이다.
+        """
+        rejected = transition.reason_code is not None
+        body = {
+            'commandId': command_id,
+            'status': ACK_REJECTED if rejected else ACK_EXECUTED,
+            'reasonCode': transition.reason_code,
+            # 사람이 읽을 설명. 상태 머신이 남긴 사유를 그대로 넘긴다.
+            'message': (
+                transition.ignored_reason
+                or transition.reason
+                or None
+            ) or None,
+        }
+        self.command_result_pub.publish(
+            String(data=json.dumps(body, ensure_ascii=False))
+        )
+        if rejected:
+            self.get_logger().warn(
+                f'명령 거부 {command_id[:8]} {transition.reason_code}: '
+                f'{transition.ignored_reason}'
+            )
+        else:
+            self.get_logger().info(
+                f'명령 처리 {command_id[:8]} EXECUTED → {transition.state.value}'
+            )
 
     @staticmethod
     def _parse_time(raw) -> datetime | None:

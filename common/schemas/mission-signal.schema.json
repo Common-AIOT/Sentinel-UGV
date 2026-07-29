@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://sentinel-ugv.xyz/schemas/mission-signal.schema.json",
   "title": "/mission/signal 본문",
-  "description": "주행·음성·관제가 `mission_manager_node`에 사실을 알리는 통로다. `std_msgs/String`에 이 JSON을 담아 발행한다.\n\n26.1이 \"Nav2, AI, 음성, 관제 명령이 각자 모터와 상태를 직접 바꾸지 않고 이벤트를 Mission Manager에 전달한다\"고 정했다. 이 토픽이 그 \"이벤트를 전달한다\"의 구현이다.\n\n**보내는 쪽은 자기가 아는 사실만 적는다.** 어떤 상태로 가야 하는지는 적지 않는다. 주행 노드는 정지한 것을 알고, 음성 노드는 대화가 끝난 것을 알지만, 그것이 `INTERACTING`으로 가야 한다는 판단은 `mission_manager_node`의 몫이다. 보내는 쪽이 목표 상태를 지정하면 26.1의 단일 권한이 무의미해진다.\n\n## 사람 후보는 이 토픽이 아니다\n\n`/perception/person_candidates`를 따로 둔 이유는 주기가 다르기 때문이다. 후보는 프레임마다 오고 신호는 사건이 있을 때만 온다. 한 토픽에 섞으면 후보 갱신이 신호 처리 경로를 계속 깨운다.\n\n## 멱등성\n\n같은 `signal`이 두 번 와도 상태가 두 번 바뀌지 않는다. `mission_manager_node`가 현재 상태에서 의미 없는 신호를 무시한다(예: `INTERACTING`이 아닌데 `DIALOGUE_ENDED`가 오면 무시하고 사유를 로그에 남긴다). 26.4가 명령 멱등성을 요구한 것과 같은 취지다.\n\n무시한 것을 조용히 넘기지 않는다. `S15P11A301-123`에서 무시된 encounter가 아무 로그를 남기지 않아 \"수신하지 못한 것\"과 \"무시한 것\"을 구별할 수 없었다.",
+  "description": "주행·음성·관제가 `mission_manager_node`에 사실을 알리는 통로다. `std_msgs/String`에 이 JSON을 담아 발행한다.\n\n26.1이 \"Nav2, AI, 음성, 관제 명령이 각자 모터와 상태를 직접 바꾸지 않고 이벤트를 Mission Manager에 전달한다\"고 정했다. 이 토픽이 그 \"이벤트를 전달한다\"의 구현이다.\n\n**보내는 쪽은 자기가 아는 사실만 적는다.** 어떤 상태로 가야 하는지는 적지 않는다. 주행 노드는 정지한 것을 알고, 음성 노드는 대화가 끝난 것을 알지만, 그것이 `INTERACTING`으로 가야 한다는 판단은 `mission_manager_node`의 몫이다. 보내는 쪽이 목표 상태를 지정하면 26.1의 단일 권한이 무의미해진다.\n\n## 사람 후보는 이 토픽이 아니다\n\n`/perception/person_candidates`를 따로 둔 이유는 주기가 다르기 때문이다. 후보는 프레임마다 오고 신호는 사건이 있을 때만 온다. 한 토픽에 섞으면 후보 갱신이 신호 처리 경로를 계속 깨운다.\n\n## 멱등성\n\n같은 `signal`이 두 번 와도 상태가 두 번 바뀌지 않는다. `mission_manager_node`가 현재 상태에서 의미 없는 신호를 무시한다(예: `INTERACTING`이 아닌데 `DIALOGUE_ENDED`가 오면 무시하고 사유를 로그에 남긴다). 26.4가 명령 멱등성을 요구한 것과 같은 취지다.\n\n무시한 것을 조용히 넘기지 않는다. `S15P11A301-123`에서 무시된 encounter가 아무 로그를 남기지 않아 \"수신하지 못한 것\"과 \"무시한 것\"을 구별할 수 없었다.\n\n## 관제 명령이 들어오는 경로\n\n`cmd/mission`(31-4)으로 온 MQTT 명령을 `cloud_bridge_node`가 이 토픽의 신호로 바꿔 넣는다(S15P11A301-143). 관제가 이 토픽을 직접 쓰지 않는 이유는 26.1이 정한 단일 권한 때문이다. 명령도 다른 입력과 같은 통로로 들어와야 `mission_manager_node`가 우선순위(26.5)를 한곳에서 판단할 수 있다.\n\n```text\nSTART   → MISSION_START\nPAUSE   → PAUSE_REQUESTED\nRESUME  → RESUME_APPROVED     RESUME_REQUESTED가 아니다. 아래 참고\nSTOP    → MISSION_COMPLETED\nRETURN  → 신호를 만들지 않는다. RETURNING이 미구현이라 bridge가 거부한다\n```\n\n`RESUME`이 `RESUME_APPROVED`인 것은 두 신호의 역할이 다르기 때문이다. `RESUME_REQUESTED`는 음성 쪽이 보고를 마치고 탐사를 이어가겠다는 요청이며 REPORTING에서만 유효하다. `PAUSED`를 푸는 것은 30.5가 자동 재개를 금지했으므로 운영자의 명시적 재개, 즉 `RESUME_APPROVED`뿐이다. 관제 버튼이 하나여도 들어가는 자리는 후자다.\n\n`commandId`가 있으면 `mission_manager_node`가 처리 결과를 `/mission/command_result`(계약은 `command-ack.schema.json`)로 내고 `cloud_bridge_node`가 그것을 `acks`로 회신한다. 27.4가 HTTP 202를 \"전달 시작\"으로 정했고 확정은 이 ACK가 한다.",
   "type": "object",
   "required": [
     "signal",
@@ -11,7 +11,7 @@
   "additionalProperties": false,
   "properties": {
     "signal": {
-      "description": "무슨 일이 있었는가. 어떤 상태로 가야 하는지가 아니다.\n\n  MISSION_START      운영자가 임무를 시작했다. SAFE_IDLE에서 EXPLORING으로 간다\n  SAFE_POSE_REACHED  안전 관측 위치에 정지했다(30.3). PERSON_APPROACHING에서 INTERACTING으로 간다\n  APPROACH_FAILED    접근 경로를 만들 수 없다(30.3). 현재 위치에서 상호작용으로 넘어간다\n  DIALOGUE_ENDED     대화가 종료됐다(30.5). INTERACTING에서 POST_RECORDING으로 간다\n  REPORT_COMMITTED   로컬 보고 저장까지 끝났다. REPORTING에서 EXPLORING으로 돌아간다\n  RESUME_REQUESTED   음성 쪽 재개 요청이다(report_lifecycle의 request_exploration_resume)\n  PAUSE_REQUESTED    운영자 일시정지 또는 결함이다\n  RESUME_APPROVED    운영자가 명시적으로 재개했다. PAUSED에서만 의미가 있다\n  ESTOP              비상 정지다. 어느 상태에서든 ESTOP으로 latch한다\n  SENSOR_FAULT       핵심 센서 실패다(26.5). PAUSED나 ERROR로 간다",
+      "description": "무슨 일이 있었는가. 어떤 상태로 가야 하는지가 아니다.\n\n  MISSION_START      운영자가 임무를 시작했다. SAFE_IDLE에서 EXPLORING으로 간다\n  SAFE_POSE_REACHED  안전 관측 위치에 정지했다(30.3). PERSON_APPROACHING에서 INTERACTING으로 간다\n  APPROACH_FAILED    접근 경로를 만들 수 없다(30.3). 현재 위치에서 상호작용으로 넘어간다\n  DIALOGUE_ENDED     대화가 종료됐다(30.5). INTERACTING에서 POST_RECORDING으로 간다\n  REPORT_COMMITTED   로컬 보고 저장까지 끝났다. REPORTING에서 EXPLORING으로 돌아간다\n  RESUME_REQUESTED   음성 쪽 재개 요청이다(report_lifecycle의 request_exploration_resume)\n  PAUSE_REQUESTED    운영자 일시정지 또는 결함이다\n  RESUME_APPROVED    운영자가 명시적으로 재개했다. PAUSED에서만 의미가 있다\n  ESTOP              비상 정지다. 어느 상태에서든 ESTOP으로 latch한다\n  SENSOR_FAULT       핵심 센서 실패다(26.5). PAUSED나 ERROR로 간다\n  MISSION_COMPLETED  운영자가 임무를 종료했다(cmd/mission의 STOP). COMPLETED로 간다",
       "type": "string",
       "enum": [
         "MISSION_START",
@@ -23,7 +23,8 @@
         "PAUSE_REQUESTED",
         "RESUME_APPROVED",
         "ESTOP",
-        "SENSOR_FAULT"
+        "SENSOR_FAULT",
+        "MISSION_COMPLETED"
       ]
     },
     "sentAt": {

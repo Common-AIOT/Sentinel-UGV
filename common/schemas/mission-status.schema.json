@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sentinel-ugv.xyz/schemas/mission-status.schema.json",
+  "title": "/mission/status 본문",
+  "description": "`mission_manager_node`가 발행하는 임무 상태다(명세 04장 노드 표, 26장). `std_msgs/String`에 이 JSON을 담는다.\n\n상태를 바꾸는 것은 `mission_manager_node`뿐이고(26.1) 나머지 노드는 이것을 **읽기만** 한다. 주행 노드는 `movementAllowed`를 보고 모터를 낼지 정하고, 관제는 `state`를 화면에 표시한다.\n\n## MQTT state 채널과 다르다\n\n`state.schema.json`은 관제로 나가는 로봇 상태이고 이것은 젯슨 내부 토픽이다. `cloud_bridge`가 이 토픽을 읽어 31-5 봉투에 담아 MQTT로 보낸다. 두 스키마를 하나로 합치지 않은 이유는 관제에 필요한 것과 내부 노드에 필요한 것이 다르기 때문이다. 관제는 배터리와 연결 상태를 보고, 주행 노드는 `movementAllowed`를 본다.\n\n26.2의 주의도 그대로 적용된다. `OFFLINE`은 서버가 보는 연결 상태이며 이 `state`에는 나타나지 않는다.\n\n## 변할 때마 발행한다\n\n상태가 바뀌지 않았으면 발행하지 않는다. 주기 발행이 필요한 것은 관제 쪽이고, 그것은 `cloud_bridge`가 telemetry 주기로 처리한다. 내부 노드에는 전이 시점이 중요하다.",
+  "type": "object",
+  "required": ["state", "movementAllowed", "changedAt"],
+  "additionalProperties": false,
+  "properties": {
+    "state": {
+      "description": "26.2의 최종 상태다. MVP에서 구현하는 것과 자리만 둔 것이 나뉘며, 어느 쪽인지는 sentinel_mission/README.md에 적었다.",
+      "type": "string",
+      "enum": [
+        "SAFE_IDLE",
+        "EXPLORING",
+        "PERSON_APPROACHING",
+        "INTERACTING",
+        "POST_RECORDING",
+        "REPORTING",
+        "PAUSED",
+        "MANUAL",
+        "RETURNING",
+        "COMPLETED",
+        "ESTOP",
+        "ERROR"
+      ]
+    },
+    "movementAllowed": {
+      "description": "이동을 허용하는가. 26.2 표의 세 번째 열이다.\n\n주행 노드가 이 값만 보고 판단할 수 있어야 한다. state를 보고 각자 판단하면 상태가 늘어날 때마다 모든 노드를 고쳐야 하고, 한 곳이라도 빠뜨리면 정지해야 할 상태에서 모터가 돈다.\n\n`PERSON_APPROACHING`은 저속만 허용하므로 true이며 `speedLimit`이 함께 온다.",
+      "type": "boolean"
+    },
+    "speedLimit": {
+      "description": "허용 최고 속도(m/s). `movementAllowed`가 false면 null이다. 30.3이 접근 속도를 0.10m/s 이하로 제한한다.",
+      "type": ["number", "null"],
+      "minimum": 0
+    },
+    "changedAt": {
+      "description": "이 상태로 바뀐 시각. UTC만 허용한다.",
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?Z$"
+    },
+    "previousState": {
+      "description": "직전 상태. 첫 발행이면 null이다. 전이 로그를 관제에서 재구성할 수 있게 한다.",
+      "type": ["string", "null"]
+    },
+    "reason": {
+      "description": "무엇 때문에 바뀌었는가. mission-signal의 `signal` 값이거나 내부 사유(TIMEOUT, PERSON_LOST 등)다.",
+      "type": ["string", "null"],
+      "maxLength": 200
+    },
+    "encounterId": {
+      "description": "진행 중 encounter가 있으면 그 식별자다. 없으면 null이다.",
+      "type": ["string", "null"],
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "personCount": {
+      "description": "진행 중 encounter의 사람 수. encounter가 없으면 0이다.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "recoveryRequired": {
+      "description": "재시작 후 복구 판단이 필요한가(26.4). true면 운영자가 재개·복귀·종료를 선택해야 하며 자동 주행을 시작하지 않는다.",
+      "type": "boolean",
+      "default": false
+    }
+  }
+}

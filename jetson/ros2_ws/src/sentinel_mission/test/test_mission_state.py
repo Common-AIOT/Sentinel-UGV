@@ -1,0 +1,538 @@
+"""임무 상태 머신 시험 (S15P11A301-133, 명세 26장).
+
+시간을 주입하므로 최대 상호작용 5분을 5분 기다리지 않는다.
+
+계약 시험도 함께 둔다. 이 노드가 발행하는 JSON이 `common/schemas`를 만족하는지
+확인해야 한다. 스키마를 문서로만 두면 다른 팀원이 맞출 대상이 실제 코드와
+어긋나도 아무도 모른다(S15P11A301-128에서 확립한 방식).
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from sentinel_mission.mission_state import (  # noqa: E402
+    MOVEMENT,
+    MissionState,
+    MissionStateMachine,
+    Phase,
+    Signal,
+)
+
+REPO_ROOT = Path(__file__).resolve().parents[5]
+SCHEMA_DIR = REPO_ROOT / 'common' / 'schemas'
+
+T0 = datetime(2026, 7, 28, 8, 0, 0, tzinfo=timezone.utc)
+EID = 'c81f6d20-5a47-4e93-b2d8-1f70e4a95c33'
+OTHER = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
+
+
+def at(seconds: float) -> datetime:
+    return T0 + timedelta(seconds=seconds)
+
+
+def exploring() -> MissionStateMachine:
+    machine = MissionStateMachine()
+    machine.handle_signal(Signal.MISSION_START, now=T0)
+    assert machine.state is MissionState.EXPLORING
+    return machine
+
+
+def confirm(machine: MissionStateMachine, *, seconds: float = 1.0, tracks=(7,)):
+    return machine.observe_candidates(
+        now=at(seconds),
+        track_ids=set(tracks),
+        confidence=0.9,
+        new_encounter_id=EID,
+    )
+
+
+# ----------------------------------------------------------------------
+# 정상 경로 (26.3)
+# ----------------------------------------------------------------------
+
+
+def test_full_normal_path_emits_phases_in_order():
+    machine = exploring()
+    phases = []
+
+    result = confirm(machine)
+    phases.append(result.phase)
+    assert machine.state is MissionState.PERSON_APPROACHING
+
+    result = machine.handle_signal(Signal.SAFE_POSE_REACHED, now=at(5))
+    phases.append(result.phase)
+    assert machine.state is MissionState.INTERACTING
+
+    result = machine.handle_signal(Signal.DIALOGUE_ENDED, now=at(20))
+    phases.append(result.phase)
+    assert machine.state is MissionState.POST_RECORDING
+
+    # 3초가 지나기 전에는 넘어가지 않는다.
+    assert not machine.tick(at(22)).changed
+    assert machine.tick(at(23)).changed
+    assert machine.state is MissionState.REPORTING
+
+    machine.handle_signal(Signal.REPORT_COMMITTED, now=at(24))
+    assert machine.state is MissionState.EXPLORING
+    assert machine.encounter is None, 'encounter를 정리하지 않으면 다음 사람을 못 만든다'
+
+    assert phases == [Phase.CONFIRMED, Phase.APPROACHED, Phase.ENDED]
+
+
+def test_encounter_id_is_stable_across_the_whole_event():
+    machine = exploring()
+    confirm(machine)
+    first = machine.encounter_id
+    machine.handle_signal(Signal.SAFE_POSE_REACHED, now=at(5))
+    machine.handle_signal(Signal.DIALOGUE_ENDED, now=at(10))
+    assert machine.encounter_id == first, 'encounterId가 바뀌면 이벤트가 쪼개진다'
+
+
+# ----------------------------------------------------------------------
+# 32-6 그룹 (25.4 중복 제거)
+# ----------------------------------------------------------------------
+
+
+def test_three_people_share_one_encounter():
+    machine = exploring()
+    confirm(machine, tracks=(21,))
+    first = machine.encounter_id
+
+    # 사람이 둘 더 보인다. 새 encounter를 만들면 안 된다.
+    result = machine.observe_candidates(
+        now=at(3), track_ids={21, 22, 23}, new_encounter_id=OTHER
+    )
+    assert not result.changed
+    assert machine.encounter_id == first
+    assert machine.person_count == 3
+
+
+def test_person_count_does_not_shrink_when_someone_is_occluded():
+    """한 명이 잠깐 가려도 personCount를 줄이지 않는다.
+
+    보고서의 "몇 명을 발견했는가"가 흔들리면 관제가 신뢰할 수 없다.
+    """
+    machine = exploring()
+    confirm(machine, tracks=(21, 22, 23))
+    assert machine.person_count == 3
+    machine.observe_candidates(now=at(4), track_ids={21}, new_encounter_id=OTHER)
+    assert machine.person_count == 3
+
+
+def test_already_tracked_ids_are_ignored_with_a_reason():
+    machine = exploring()
+    confirm(machine, tracks=(7,))
+    result = machine.observe_candidates(
+        now=at(3), track_ids={7}, new_encounter_id=OTHER
+    )
+    assert not result.changed
+    assert result.ignored_reason, '무시한 이유를 남기지 않으면 원인을 못 찾는다'
+
+
+# ----------------------------------------------------------------------
+# 상실과 재감지 (32-5)
+# ----------------------------------------------------------------------
+
+
+def test_person_lost_after_grace_period_goes_to_post_recording():
+    machine = exploring()
+    confirm(machine)
+
+    # 빈 배열이 와도 유예 시간 안에는 종료하지 않는다.
+    assert not machine.observe_candidates(
+        now=at(2), track_ids=set(), new_encounter_id=''
+    ).changed
+    assert machine.state is MissionState.PERSON_APPROACHING
+
+    result = machine.observe_candidates(
+        now=at(1 + 3.0), track_ids=set(), new_encounter_id=''
+    )
+    assert result.changed
+    assert result.phase is Phase.LOST
+    assert machine.state is MissionState.POST_RECORDING
+
+
+def test_redetection_within_post_recording_returns_to_interaction():
+    machine = exploring()
+    confirm(machine)
+    machine.handle_signal(Signal.SAFE_POSE_REACHED, now=at(5))
+    machine.handle_signal(Signal.DIALOGUE_ENDED, now=at(10))
+    assert machine.state is MissionState.POST_RECORDING
+
+    result = machine.observe_candidates(
+        now=at(11), track_ids={7}, new_encounter_id=OTHER
+    )
+    assert result.phase is Phase.REDETECTED
+    assert machine.state is MissionState.INTERACTING
+    assert machine.encounter_id == EID, '재감지가 새 encounter를 만들면 안 된다'
+
+
+def test_redetection_after_post_recording_window_is_a_new_encounter():
+    machine = exploring()
+    confirm(machine)
+    machine.handle_signal(Signal.DIALOGUE_ENDED, now=at(5))
+    # 아직 INTERACTING이 아니었으므로 무시된다. 정상 경로로 다시 만든다.
+    machine.handle_signal(Signal.SAFE_POSE_REACHED, now=at(6))
+    machine.handle_signal(Signal.DIALOGUE_ENDED, now=at(7))
+    machine.tick(at(11))
+    assert machine.state is MissionState.REPORTING
+    machine.handle_signal(Signal.REPORT_COMMITTED, now=at(12))
+
+    result = machine.observe_candidates(
+        now=at(20), track_ids={7}, new_encounter_id=OTHER
+    )
+    assert result.phase is Phase.CONFIRMED
+    assert machine.encounter_id == OTHER, '보고가 끝난 뒤의 재감지는 새 이벤트다'
+
+
+def test_absence_during_post_recording_does_not_end_twice():
+    machine = exploring()
+    confirm(machine)
+    machine.handle_signal(Signal.SAFE_POSE_REACHED, now=at(5))
+    machine.handle_signal(Signal.DIALOGUE_ENDED, now=at(10))
+    result = machine.observe_candidates(
+        now=at(20), track_ids=set(), new_encounter_id=''
+    )
+    assert not result.changed
+    assert machine.state is MissionState.POST_RECORDING
+
+
+# ----------------------------------------------------------------------
+# 순서를 어긴 신호 (26.1의 존재 이유)
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    'signal',
+    [Signal.SAFE_POSE_REACHED, Signal.DIALOGUE_ENDED, Signal.REPORT_COMMITTED],
+)
+def test_signals_before_any_encounter_are_ignored(signal):
+    """사람을 보기 전에 온 신호는 무시한다.
+
+    여러 노드가 각자 발행하면 실제로 이 순서가 온다. 그대로 처리하면 CONFIRMED
+    없이 이벤트가 진행돼 대화 구간이 빠진 영상이 나온다.
+    """
+    machine = exploring()
+    result = machine.handle_signal(signal, now=at(1))
+    assert not result.changed
+    assert result.ignored_reason
+    assert machine.state is MissionState.EXPLORING
+
+
+def test_signal_for_a_different_encounter_is_ignored():
+    """옛 encounter의 지연된 신호가 새 이벤트를 흔들지 않는다."""
+    machine = exploring()
+    confirm(machine)
+    result = machine.handle_signal(
+        Signal.SAFE_POSE_REACHED, now=at(5), encounter_id=OTHER
+    )
+    assert not result.changed
+    assert 'encounterId' in result.ignored_reason
+    assert machine.state is MissionState.PERSON_APPROACHING
+
+
+def test_repeated_command_id_is_handled_once():
+    """26.4 명령 멱등성."""
+    machine = MissionStateMachine()
+    first = machine.handle_signal(
+        Signal.MISSION_START, now=T0, command_id='cmd-1'
+    )
+    assert first.changed
+    machine.handle_signal(Signal.PAUSE_REQUESTED, now=at(1))
+    second = machine.handle_signal(
+        Signal.MISSION_START, now=at(2), command_id='cmd-1'
+    )
+    assert not second.changed
+    assert 'cmd-1' in second.ignored_reason
+
+
+def test_no_new_encounter_while_paused_or_idle():
+    """26.2가 이동을 허용하지 않는 상태에서는 접근하지 않는다.
+
+    encounter를 만들면 녹화만 돌다 타임아웃으로 끝난다.
+    """
+    for state in (MissionState.SAFE_IDLE, MissionState.PAUSED):
+        machine = MissionStateMachine(start_state=state)
+        result = machine.observe_candidates(
+            now=T0, track_ids={7}, new_encounter_id=EID
+        )
+        assert not result.changed, f'{state.value}에서 encounter를 만들었다'
+        assert machine.encounter is None
+
+
+# ----------------------------------------------------------------------
+# 안전 (26.5)
+# ----------------------------------------------------------------------
+
+
+def test_estop_latches_from_any_state():
+    machine = exploring()
+    confirm(machine)
+    machine.handle_signal(Signal.SAFE_POSE_REACHED, now=at(5))
+
+    machine.handle_signal(Signal.ESTOP, now=at(6), detail='물리 버튼')
+    assert machine.state is MissionState.ESTOP
+    assert not machine.movement_allowed
+
+    # latch. 재개도 후보도 통하지 않는다.
+    assert not machine.handle_signal(Signal.RESUME_APPROVED, now=at(7)).changed
+    assert not machine.observe_candidates(
+        now=at(8), track_ids={7}, new_encounter_id=OTHER
+    ).changed
+    assert machine.state is MissionState.ESTOP
+
+
+def test_estop_keeps_encounter_so_recorder_can_finalize():
+    """E-Stop이 encounter를 버리지 않는다.
+
+    이미 모은 조각으로 녹화 노드가 이벤트를 마감할 수 있어야 한다(32-5).
+    """
+    machine = exploring()
+    confirm(machine)
+    result = machine.handle_signal(Signal.ESTOP, now=at(5))
+    assert machine.encounter is not None
+    assert result.phase is None, 'E-Stop은 phase를 내지 않는다'
+
+
+def test_paused_does_not_auto_resume_from_voice_request():
+    """30.5: 안전 장애가 있으면 자동 재개하지 않고 PAUSED를 유지한다."""
+    machine = exploring()
+    machine.handle_signal(Signal.PAUSE_REQUESTED, now=at(1), detail='운영자')
+    assert machine.state is MissionState.PAUSED
+
+    result = machine.handle_signal(Signal.RESUME_REQUESTED, now=at(2))
+    assert not result.changed
+    assert machine.state is MissionState.PAUSED
+
+    assert machine.handle_signal(Signal.RESUME_APPROVED, now=at(3)).changed
+    assert machine.state is MissionState.EXPLORING
+
+
+def test_sensor_fault_goes_to_paused_not_error():
+    """복구 가능한 것을 ERROR로 만들면 운영자가 재개할 방법이 없다."""
+    machine = exploring()
+    machine.handle_signal(Signal.SENSOR_FAULT, now=at(1), detail='라이다 무응답')
+    assert machine.state is MissionState.PAUSED
+
+
+# ----------------------------------------------------------------------
+# 시간 전이 (30.5)
+# ----------------------------------------------------------------------
+
+
+def test_max_interaction_time_closes_the_event():
+    machine = exploring()
+    confirm(machine)
+    machine.handle_signal(Signal.SAFE_POSE_REACHED, now=at(5))
+
+    assert not machine.tick(at(5 + 299)).changed
+    result = machine.tick(at(5 + 300))
+    assert result.changed
+    assert result.phase is Phase.ENDED
+    assert machine.state is MissionState.POST_RECORDING
+
+
+def test_deadline_hint_points_at_the_next_time_transition():
+    machine = exploring()
+    confirm(machine)
+    assert machine.deadline_hint() is None, '접근 중에는 시간 전이가 없다'
+    machine.handle_signal(Signal.SAFE_POSE_REACHED, now=at(5))
+    assert machine.deadline_hint() == at(5 + 300)
+    machine.handle_signal(Signal.DIALOGUE_ENDED, now=at(10))
+    assert machine.deadline_hint() == at(13)
+
+
+# ----------------------------------------------------------------------
+# 26.2 이동 허용 표
+# ----------------------------------------------------------------------
+
+
+def test_every_state_declares_movement():
+    """상태를 추가하고 MOVEMENT를 빠뜨리면 KeyError가 나야 한다.
+
+    조용히 잘못된 값을 쓰면 정지해야 할 상태에서 모터가 돈다.
+    """
+    for state in MissionState:
+        assert state in MOVEMENT, f'{state.value}의 이동 허용이 정의되지 않았다'
+
+
+def test_interaction_states_forbid_movement():
+    """사람과 대화하는 동안 로봇이 움직이면 안 된다(26.2)."""
+    for state in (
+        MissionState.INTERACTING,
+        MissionState.POST_RECORDING,
+        MissionState.REPORTING,
+        MissionState.ESTOP,
+    ):
+        machine = MissionStateMachine(start_state=state)
+        assert not machine.movement_allowed, f'{state.value}에서 이동을 허용했다'
+
+
+def test_person_approaching_is_speed_limited():
+    """30.3이 접근 속도를 0.10m/s 이하로 제한한다."""
+    machine = MissionStateMachine(start_state=MissionState.PERSON_APPROACHING)
+    assert machine.movement_allowed
+    assert machine.speed_limit is not None
+    assert machine.speed_limit <= 0.10
+
+
+# ----------------------------------------------------------------------
+# 계약 (common/schemas)
+# ----------------------------------------------------------------------
+
+
+def _validator(name: str):
+    jsonschema = pytest.importorskip(
+        'jsonschema', reason='jsonschema가 없으면 계약 검증을 건너뛴다'
+    )
+    schema = json.loads((SCHEMA_DIR / name).read_text(encoding='utf-8'))
+    return jsonschema.Draft202012Validator(
+        schema, format_checker=jsonschema.Draft202012Validator.FORMAT_CHECKER
+    )
+
+
+def test_published_encounter_satisfies_the_schema():
+    """이 노드가 내는 encounter가 계약을 만족하는지.
+
+    녹화 노드가 이것을 받으므로 어긋나면 이벤트가 만들어지지 않는다.
+    """
+    from sentinel_mission.mission_manager_node import format_utc
+
+    machine = exploring()
+    confirm(machine, tracks=(7, 8))
+    encounter = machine.encounter
+    assert encounter is not None
+
+    body = {
+        'encounterId': encounter.encounter_id,
+        'phase': Phase.CONFIRMED.value,
+        'detectedAt': format_utc(encounter.detected_at),
+        'personCount': encounter.person_count,
+        'trackIds': sorted(encounter.track_ids),
+        'confidence': encounter.confidence,
+        'pose': None,
+        'missionId': None,
+    }
+    errors = list(_validator('encounter.schema.json').iter_errors(body))
+    assert not errors, [error.message for error in errors]
+
+
+def test_published_status_satisfies_the_schema():
+    from sentinel_mission.mission_manager_node import format_utc
+
+    machine = exploring()
+    confirm(machine)
+    body = {
+        'state': machine.state.value,
+        'movementAllowed': machine.movement_allowed,
+        'speedLimit': machine.speed_limit,
+        'changedAt': format_utc(T0),
+        'previousState': MissionState.EXPLORING.value,
+        'reason': 'encounter confirmed',
+        'encounterId': machine.encounter_id,
+        'personCount': machine.person_count,
+        'recoveryRequired': False,
+    }
+    errors = list(_validator('mission-status.schema.json').iter_errors(body))
+    assert not errors, [error.message for error in errors]
+
+
+def test_state_machine_enums_match_the_schemas():
+    """코드의 enum과 스키마의 enum이 갈라지지 않게 한다.
+
+    한쪽만 고치면 다른 팀원이 맞출 대상이 실제 코드와 달라진다.
+    """
+    status = json.loads(
+        (SCHEMA_DIR / 'mission-status.schema.json').read_text(encoding='utf-8')
+    )
+    assert set(status['properties']['state']['enum']) == {
+        state.value for state in MissionState
+    }
+
+    signal = json.loads(
+        (SCHEMA_DIR / 'mission-signal.schema.json').read_text(encoding='utf-8')
+    )
+    assert set(signal['properties']['signal']['enum']) == {
+        item.value for item in Signal
+    }
+
+    encounter = json.loads(
+        (SCHEMA_DIR / 'encounter.schema.json').read_text(encoding='utf-8')
+    )
+    assert set(encounter['properties']['phase']['enum']) == {
+        phase.value for phase in Phase
+    }
+
+
+def test_growing_group_reemits_confirmed_so_person_count_reaches_the_report():
+    """사람이 늘면 CONFIRMED를 다시 낸다.
+
+    phase를 내지 않으면 녹화 보고서의 personCount가 처음 값에 멈춘다. 3명을
+    발견했는데 보고서에 1명으로 남으면 32-6이 기록에서 사라진다.
+    """
+    machine = exploring()
+    first = confirm(machine, tracks=(21,))
+    assert first.phase is Phase.CONFIRMED
+    assert machine.person_count == 1
+
+    grown = machine.observe_candidates(
+        now=at(3), track_ids={21, 22, 23}, new_encounter_id=OTHER
+    )
+    assert grown.phase is Phase.CONFIRMED, 'personCount 변화가 녹화에 전달되지 않는다'
+    assert not grown.changed, '상태는 바뀌지 않는다'
+    assert machine.person_count == 3
+    assert machine.encounter_id == EID
+
+    # 상호작용 중에 늘어도 같다.
+    machine.handle_signal(Signal.SAFE_POSE_REACHED, now=at(5))
+    more = machine.observe_candidates(
+        now=at(6), track_ids={21, 22, 23, 24}, new_encounter_id=OTHER
+    )
+    assert more.phase is Phase.CONFIRMED
+    assert machine.person_count == 4
+
+
+def test_reporting_does_not_reemit_confirmed():
+    """보고 중에는 CONFIRMED를 내지 않는다.
+
+    사후 3초가 끝나 녹화 노드가 마감하는 중이므로 새 CONFIRMED가 이벤트를
+    되살린다.
+    """
+    machine = exploring()
+    confirm(machine, tracks=(21,))
+    machine.handle_signal(Signal.SAFE_POSE_REACHED, now=at(5))
+    machine.handle_signal(Signal.DIALOGUE_ENDED, now=at(10))
+    machine.tick(at(14))
+    assert machine.state is MissionState.REPORTING
+
+    result = machine.observe_candidates(
+        now=at(15), track_ids={21, 22}, new_encounter_id=OTHER
+    )
+    assert result.phase is None
+
+
+def test_approach_failed_still_moves_to_interaction():
+    """30.3: 접근이 불가능하면 현재 안전 위치에서 음성을 송출한다.
+
+    사람을 향해 무리하게 직진하지 않으므로 접근 상태에 머물러서는 안 된다.
+    머물면 최대 상호작용 타임아웃도 걸리지 않아 이벤트가 끝나지 않는다.
+    """
+    machine = exploring()
+    confirm(machine)
+    result = machine.handle_signal(
+        Signal.APPROACH_FAILED, now=at(5), detail='costmap에 자유 공간이 없다'
+    )
+    assert result.changed
+    assert result.phase is Phase.APPROACHED
+    assert machine.state is MissionState.INTERACTING
+    assert not machine.movement_allowed
+    # 상호작용 타임아웃이 걸려야 이벤트가 끝난다.
+    assert machine.deadline_hint() == at(5 + 300)

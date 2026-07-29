@@ -1,0 +1,24 @@
+# mission_manager 파라미터 (S15P11A301-133, 명세 26장).
+mission_manager:
+  ros__parameters:
+    candidates_topic: /perception/person_candidates
+    signal_topic: /mission/signal
+    encounter_topic: /perception/encounter
+    status_topic: /mission/status
+
+    # 32-5가 정한 사후 녹화 3초. sentinel_recorder의 post_seconds와 같아야 한다.
+    # 다르면 한쪽이 먼저 끊어 영상과 상태가 어긋난다.
+    post_recording_seconds: 3
+
+    # 30.5의 최대 상호작용 시간. sentinel_recorder의 max_event_seconds와 같다.
+    max_interaction_seconds: 300
+
+    # 후보가 빈 배열로 이 시간 이어지면 사람을 놓친 것으로 본다.
+    person_lost_seconds: 3.0
+
+    # 시간 전이(사후 3초, 최대 상호작용)를 검사하는 주기.
+    tick_period_seconds: 0.25
+
+    # 26.4는 재시작 후 진행 중이던 임무를 자동 주행으로 복구하지 못하게 한다.
+    # 개발 중 편의를 위한 것이며 운영에서는 false로 둔다.
+    auto_start: false

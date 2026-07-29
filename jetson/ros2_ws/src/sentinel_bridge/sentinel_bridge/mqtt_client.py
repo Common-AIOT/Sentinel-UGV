@@ -47,6 +47,18 @@ CHANNEL_POLICY: dict[str, tuple[int, bool]] = {
     "acks": (1, False),
 }
 
+# 구독하는 채널 (31-4). 발행 채널과 정책이 달라서 따로 둔다.
+#
+# Retain 을 쓰지 않는 것이 여기서 중요하다. cmd 를 Retain 하면 재연결 직후 브로커가
+# 마지막 명령을 다시 주고, 로봇이 조작자가 누르지 않은 STOP 이나 START 를 실행한다.
+# Retain 여부는 발행하는 쪽(Spring)이 정하므로 우리가 강제할 수 없다. 대신 봉투의
+# sentAt 과 commandId 로 걸러낸다.
+SUBSCRIBE_QOS: dict[str, int] = {
+    "cmd/mission": 1,
+}
+
+CHANNEL_CMD_MISSION = "cmd/mission"
+
 TOPIC_PREFIX = "sentinel/v1/robots"
 
 # 31-10. 재연결 지수 백오프. paho가 min에서 시작해 max까지 두 배씩 늘린다.
@@ -85,8 +97,13 @@ def build_last_will(robot_id: str) -> dict[str, Any]:
     }
 
 
-class MqttPublisher:
-    """브로커 연결과 채널별 발행을 관리한다."""
+class MqttClient:
+    """브로커 연결과 채널별 발행·구독을 관리한다.
+
+    이름이 전에는 `MqttPublisher`였다. 구독이 들어오면서(S15P11A301-143) 역할과
+    어긋나므로 바꿨다. 참조는 모두 고쳤으므로 별칭을 남기지 않는다 — 두 이름이
+    공존하면 새 코드가 어느 쪽을 써야 하는지 알 수 없다.
+    """
 
     def __init__(
         self,
@@ -180,8 +197,15 @@ class MqttPublisher:
         self._client.reconnect_delay_set(
             min_delay=RECONNECT_MIN_SECONDS, max_delay=RECONNECT_MAX_SECONDS
         )
+        # 구독 핸들러. 채널 → 콜백.
+        #
+        # 재연결 때 다시 구독해야 하므로 여기 들고 있는다. paho 는 clean session 을
+        # 쓰면 재접속 시 구독을 잃는다. `_handle_connect` 가 매번 다시 구독한다.
+        self._handlers: dict[str, Callable[[dict[str, Any]], None]] = {}
+
         self._client.on_connect = self._handle_connect
         self._client.on_disconnect = self._handle_disconnect
+        self._client.on_message = self._handle_message
 
         self._keepalive = keepalive
 
@@ -227,6 +251,10 @@ class MqttPublisher:
         if reason_code == 0:
             self._connected.set()
             self._log("info", f"MQTT 연결됨: {self.endpoint}")
+            # 구독을 먼저 되살린다. 복구 순서(31-10)가 발행부터 하더라도, 구독이
+            # 늦으면 그 사이에 온 명령을 놓친다. 브로커는 구독 전에 도착한
+            # QoS 1 메시지를 우리에게 주지 않는다.
+            self._resubscribe()
             if self._on_connected:
                 self._on_connected()
         else:
@@ -267,6 +295,82 @@ class MqttPublisher:
             topic_for(self.robot_id, channel), payload, qos=qos, retain=retain
         )
         return info.rc == mqtt.MQTT_ERR_SUCCESS
+
+    # ------------------------------------------------------------------
+    # 구독
+    # ------------------------------------------------------------------
+
+    def subscribe(
+        self, channel: str, handler: Callable[[dict[str, Any]], None]
+    ) -> None:
+        """채널을 구독한다. 접속 전에 불러도 된다.
+
+        핸들러는 **파싱된 봉투**를 받는다. 문자열을 넘기면 호출자마다 JSON 해석과
+        오류 처리를 반복하게 되고, 그중 하나가 예외를 흘리면 paho 의 네트워크
+        스레드가 죽어 재연결까지 멈춘다.
+
+        접속 전에 불러도 되는 이유는 `_handle_connect` 가 등록된 채널을 모두 다시
+        구독하기 때문이다. 노드 초기화 순서에 구독이 의존하지 않는다.
+        """
+        if channel not in SUBSCRIBE_QOS:
+            raise ValueError(f"구독 정책이 없는 채널: {channel}")
+        self._handlers[channel] = handler
+        if self._connected.is_set():
+            self._subscribe_now(channel)
+
+    def _subscribe_now(self, channel: str) -> None:
+        topic = topic_for(self.robot_id, channel)
+        result, _mid = self._client.subscribe(topic, qos=SUBSCRIBE_QOS[channel])
+        if result == mqtt.MQTT_ERR_SUCCESS:
+            self._log("info", f"구독: {topic} (QoS {SUBSCRIBE_QOS[channel]})")
+        else:
+            # 구독 실패를 조용히 넘기면 관제 명령이 영원히 도착하지 않고, 원인을
+            # 브로커 쪽에서 찾게 된다.
+            self._log("error", f"구독 실패: {topic} rc={result}")
+
+    def _resubscribe(self) -> None:
+        for channel in self._handlers:
+            self._subscribe_now(channel)
+
+    def _handle_message(self, _client, _userdata, message) -> None:
+        """브로커가 준 메시지를 핸들러에 넘긴다.
+
+        **예외를 절대 밖으로 내보내지 않는다.** 이 콜백은 paho 의 네트워크
+        스레드에서 돈다. 여기서 예외가 나가면 그 스레드가 죽고 재연결도 멈춘다.
+        S15P11A301-140 에서 `_log` 의 예외가 재연결 콜백을 죽여 Outbox 재전송이
+        실행되지 않은 것과 같은 구조의 사고다.
+        """
+        channel = self._channel_of(message.topic)
+        if channel is None:
+            self._log("warn", f"구독하지 않은 토픽: {message.topic}")
+            return
+        handler = self._handlers.get(channel)
+        if handler is None:
+            return
+        try:
+            payload = json.loads(message.payload.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            self._log("warn", f"{channel} 본문 해석 실패: {error}")
+            return
+        if not isinstance(payload, dict):
+            self._log("warn", f"{channel} 본문이 객체가 아니다")
+            return
+        try:
+            handler(payload)
+        except Exception as error:  # noqa: BLE001 - 스레드를 지켜야 한다
+            self._log("error", f"{channel} 처리 중 예외: {error!r}")
+
+    def _channel_of(self, topic: str) -> str | None:
+        """토픽에서 채널을 되짚는다.
+
+        `cmd/mission` 처럼 슬래시가 든 채널이 있으므로 마지막 조각만 보면 안 된다.
+        접두사를 떼는 방식이라 채널 이름의 깊이에 무관하다.
+        """
+        prefix = f"{TOPIC_PREFIX}/{self.robot_id}/"
+        if not topic.startswith(prefix):
+            return None
+        channel = topic[len(prefix):]
+        return channel if channel in SUBSCRIBE_QOS else None
 
     def _log(self, level: str, message: str) -> None:
         """rclpy 로거에 남긴다. severity별로 호출 지점을 나눠야 한다.

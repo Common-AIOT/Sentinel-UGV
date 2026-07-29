@@ -139,7 +139,7 @@ def test_publish_uses_channel_policy():
     original = module.mqtt.Client
     module.mqtt.Client = FakeClient
     try:
-        publisher = module.MqttPublisher("SENTINEL-01", "127.0.0.1", 1883)
+        publisher = module.MqttClient("SENTINEL-01", "127.0.0.1", 1883)
         publisher._connected.set()  # 연결됐다고 가정한다
         for channel in ("presence", "state", "telemetry"):
             publisher.publish(channel, {"messageId": "x"})
@@ -190,7 +190,7 @@ def test_last_will_is_registered_with_retain():
     original = module.mqtt.Client
     module.mqtt.Client = FakeClient
     try:
-        module.MqttPublisher("SENTINEL-01", "127.0.0.1", 1883)
+        module.MqttClient("SENTINEL-01", "127.0.0.1", 1883)
     finally:
         module.mqtt.Client = original
 
@@ -322,7 +322,7 @@ def test_tls_stays_on_when_ca_path_is_empty():
     original = module.mqtt.Client
     module.mqtt.Client = FakeClient
     try:
-        publisher = module.MqttPublisher(
+        publisher = module.MqttClient(
             "SENTINEL-01", "api.sentinel-ugv.xyz", 443, tls_ca_certs=""
         )
     finally:
@@ -363,7 +363,7 @@ def test_tls_can_be_disabled_for_local_broker():
     original = module.mqtt.Client
     module.mqtt.Client = FakeClient
     try:
-        publisher = module.MqttPublisher(
+        publisher = module.MqttClient(
             "SENTINEL-01", "127.0.0.1", 19883, tls_enabled=False
         )
     finally:
@@ -629,7 +629,7 @@ def test_log_helper_survives_severity_changes():
     original = module.mqtt.Client
     module.mqtt.Client = FakeClient
     try:
-        publisher = module.MqttPublisher(
+        publisher = module.MqttClient(
             'SENTINEL-01', '127.0.0.1', 443, logger=StrictLogger()
         )
     finally:
@@ -642,3 +642,501 @@ def test_log_helper_survives_severity_changes():
     publisher._log('info', '다시 연결됨')
 
     assert [level for level, _ in calls] == ['info', 'warn', 'error', 'info']
+
+
+# ----------------------------------------------------------------------
+# 관제 명령 구독과 ACK (S15P11A301-143)
+# ----------------------------------------------------------------------
+
+
+def _command_type_enum() -> list[str]:
+    schema = _load_schema("mission-command.schema.json")
+    return schema["properties"]["type"]["enum"]
+
+
+def _signal_enum() -> list[str]:
+    schema = _load_schema("mission-signal.schema.json")
+    return schema["properties"]["signal"]["enum"]
+
+
+def test_every_command_type_is_either_mapped_or_deliberately_rejected():
+    """계약의 명령을 빠뜨리면 관제 버튼이 조용히 죽는다.
+
+    `COMMAND_TO_SIGNAL`에 없는 명령은 bridge가 `NOT_IMPLEMENTED`로 거부한다. 즉
+    빠뜨려도 예외는 안 나고 관제만 거부를 받는다. 그래서 "빠뜨린 것"과 "일부러
+    안 넣은 것"을 여기서 못 가리면 아무도 모른다.
+
+    지금 일부러 안 넣은 것은 `RETURN` 하나다. `RETURNING`이 `UNIMPLEMENTED`이므로
+    신호를 만들면 갈 수 없는 상태로 보내게 된다.
+    """
+    from sentinel_bridge.message_mapper import COMMAND_TO_SIGNAL
+
+    deliberately_unmapped = {"RETURN"}
+    for command_type in _command_type_enum():
+        mapped = command_type in COMMAND_TO_SIGNAL
+        expected = command_type not in deliberately_unmapped
+        assert mapped is expected, (
+            f'{command_type}: 매핑 {mapped}, 기대 {expected}. '
+            '계약에 명령이 추가됐으면 매핑하거나 이 시험의 예외 목록에 넣는다'
+        )
+
+
+def test_mapped_signals_exist_in_the_signal_contract():
+    """매핑한 신호가 `/mission/signal` enum에 없으면 mission_manager가 버린다.
+
+    그 경우 로그에 "모르는 signal"만 남고 ACK는 오지 않아 관제가 PENDING에
+    머문다. 오타 하나로 그렇게 된다.
+    """
+    from sentinel_bridge.message_mapper import COMMAND_TO_SIGNAL
+
+    allowed = set(_signal_enum())
+    for command_type, signal in COMMAND_TO_SIGNAL.items():
+        assert signal in allowed, f'{command_type} → {signal}이 계약에 없다'
+
+
+def test_stop_maps_to_mission_completed_and_resume_to_approved():
+    """두 매핑은 근거가 있어서 고정한다.
+
+    `RESUME`이 `RESUME_REQUESTED`가 아니다. 그것은 음성 쪽이 보고를 마치고 탐사를
+    이어가겠다는 요청이며 REPORTING에서만 유효하다. PAUSED를 푸는 것은 30.5가
+    자동 재개를 금지했으므로 운영자의 명시적 `RESUME_APPROVED`뿐이다.
+
+    `STOP`은 26.3의 COMPLETED로 간다. 23.4가 "사용자 종료"를 종료 조건으로 뒀다.
+    """
+    from sentinel_bridge.message_mapper import COMMAND_TO_SIGNAL
+
+    assert COMMAND_TO_SIGNAL["RESUME"] == "RESUME_APPROVED"
+    assert COMMAND_TO_SIGNAL["STOP"] == "MISSION_COMPLETED"
+    assert COMMAND_TO_SIGNAL["START"] == "MISSION_START"
+    assert COMMAND_TO_SIGNAL["PAUSE"] == "PAUSE_REQUESTED"
+
+
+def test_command_ack_envelope_and_body_satisfy_the_contract():
+    """ACK 봉투와 본문이 계약을 만족하는지.
+
+    형식이 틀리면 백엔드가 조용히 버리고 `control_commands.result`가 PENDING으로
+    남는다. 관제에서는 "명령이 안 먹혔다"로만 보인다.
+    """
+    jsonschema = pytest.importorskip("jsonschema")
+    checker = jsonschema.Draft202012Validator.FORMAT_CHECKER
+
+    mapper = MessageMapper("SENTINEL-01")
+    body = {
+        "commandId": "3f2a91c4-5d6e-4a7b-8c9d-0e1f2a3b4c5d",
+        "status": "EXECUTED",
+        "reasonCode": None,
+        "message": None,
+    }
+    envelope = mapper.command_ack(body, mission_id="4bde8ad1-c74b-4d42-bec3-9f71af94b41a")
+
+    assert envelope["messageType"] == "COMMAND_ACK"
+    errors = list(
+        jsonschema.Draft202012Validator(
+            _load_schema("envelope.schema.json"), format_checker=checker
+        ).iter_errors(envelope)
+    )
+    assert not errors, [error.message for error in errors]
+
+    errors = list(
+        jsonschema.Draft202012Validator(
+            _load_schema("command-ack.schema.json"), format_checker=checker
+        ).iter_errors(envelope["data"])
+    )
+    assert not errors, [error.message for error in errors]
+
+
+def test_rejection_ack_carries_a_reason_code():
+    """거부 ACK에 `reasonCode`가 있어야 관제가 화면을 분기할 수 있다."""
+    jsonschema = pytest.importorskip("jsonschema")
+
+    mapper = MessageMapper("SENTINEL-01")
+    body = {
+        "commandId": "3f2a91c4-5d6e-4a7b-8c9d-0e1f2a3b4c5d",
+        "status": "REJECTED",
+        "reasonCode": "ESTOP_ACTIVE",
+        "message": "ESTOP는 latch 상태다. 운영자 조치가 필요하다",
+    }
+    envelope = mapper.command_ack(body)
+    errors = list(
+        jsonschema.Draft202012Validator(
+            _load_schema("command-ack.schema.json")
+        ).iter_errors(envelope["data"])
+    )
+    assert not errors, [error.message for error in errors]
+
+
+def test_acks_channel_policy_is_qos1_without_retain():
+    """31-4. ACK는 잃으면 안 되고(QoS 1) 과거 응답이 남아서도 안 된다(Retain X)."""
+    assert CHANNEL_POLICY["acks"] == (1, False)
+
+
+def test_cmd_mission_is_subscribed_at_qos1():
+    """명령은 잃으면 안 된다. QoS 0으로 구독하면 조용히 사라진다."""
+    from sentinel_bridge.mqtt_client import CHANNEL_CMD_MISSION, SUBSCRIBE_QOS
+
+    assert SUBSCRIBE_QOS[CHANNEL_CMD_MISSION] == 1
+
+
+def _fake_client_class(record: dict):
+    """paho Client를 대신한다. 구독·발행 호출을 기록한다."""
+
+    class FakeClient:
+        def __init__(self, *_a, **_k):
+            record['subscribed'] = []
+            record['on_connect'] = None
+            record['on_message'] = None
+
+        def ws_set_options(self, *_a, **_k):
+            pass
+
+        def username_pw_set(self, *_a, **_k):
+            pass
+
+        def tls_set(self, *_a, **_k):
+            pass
+
+        def tls_insecure_set(self, *_a, **_k):
+            pass
+
+        def will_set(self, *_a, **_k):
+            pass
+
+        def reconnect_delay_set(self, **_k):
+            pass
+
+        def subscribe(self, topic, qos=0):
+            record['subscribed'].append((topic, qos))
+            return (0, 1)
+
+        def __setattr__(self, name, value):
+            if name in ('on_connect', 'on_message', 'on_disconnect'):
+                record[name] = value
+            object.__setattr__(self, name, value)
+
+    return FakeClient
+
+
+def _client_with_fake(monkeypatch, record):
+    from sentinel_bridge import mqtt_client as module
+
+    monkeypatch.setattr(module.mqtt, 'Client', _fake_client_class(record))
+    return module.MqttClient('SENTINEL-01', 'broker', 443)
+
+
+def test_subscribe_before_connect_is_applied_on_connect(monkeypatch):
+    """접속 전에 등록한 구독이 접속 시 걸려야 한다.
+
+    노드 초기화 순서가 구독에 영향을 주면 안 된다. 걸리지 않으면 관제 명령이
+    영원히 도착하지 않고, 원인을 브로커 쪽에서 찾게 된다.
+    """
+    from sentinel_bridge.mqtt_client import CHANNEL_CMD_MISSION
+
+    record: dict = {}
+    client = _client_with_fake(monkeypatch, record)
+    client.subscribe(CHANNEL_CMD_MISSION, lambda _payload: None)
+
+    assert record['subscribed'] == [], '접속 전에는 구독을 걸지 않는다'
+
+    record['on_connect'](None, None, None, 0, None)
+    assert record['subscribed'] == [
+        ('sentinel/v1/robots/SENTINEL-01/cmd/mission', 1)
+    ]
+
+
+def test_reconnect_resubscribes(monkeypatch):
+    """재연결 때 다시 구독해야 한다.
+
+    paho는 clean session에서 재접속하면 구독을 잃는다. 다시 걸지 않으면 브로커
+    단절 이후 관제 명령이 영원히 도착하지 않는다. 발행은 되므로 관제에는 로봇이
+    정상으로 보인다 — 그래서 알아채기 어렵다.
+    """
+    from sentinel_bridge.mqtt_client import CHANNEL_CMD_MISSION
+
+    record: dict = {}
+    client = _client_with_fake(monkeypatch, record)
+    client.subscribe(CHANNEL_CMD_MISSION, lambda _payload: None)
+
+    record['on_connect'](None, None, None, 0, None)
+    record['on_disconnect'](None, None, None, 7, None)
+    record['on_connect'](None, None, None, 0, None)
+
+    assert len(record['subscribed']) == 2, '재연결 후 다시 구독해야 한다'
+
+
+def test_failed_connection_does_not_subscribe(monkeypatch):
+    """연결이 거부되면 구독하지 않는다. 인증 실패에 구독을 걸면 의미가 없다."""
+    from sentinel_bridge.mqtt_client import CHANNEL_CMD_MISSION
+
+    record: dict = {}
+    client = _client_with_fake(monkeypatch, record)
+    client.subscribe(CHANNEL_CMD_MISSION, lambda _payload: None)
+    record['on_connect'](None, None, None, 5, None)
+    assert record['subscribed'] == []
+
+
+def test_message_handler_receives_parsed_envelope(monkeypatch):
+    """핸들러는 파싱된 봉투를 받는다.
+
+    문자열을 넘기면 호출자마다 JSON 해석과 오류 처리를 반복하고, 그중 하나가
+    예외를 흘리면 paho의 네트워크 스레드가 죽어 재연결까지 멈춘다.
+    """
+    from sentinel_bridge.mqtt_client import CHANNEL_CMD_MISSION
+
+    record: dict = {}
+    client = _client_with_fake(monkeypatch, record)
+    seen: list = []
+    client.subscribe(CHANNEL_CMD_MISSION, seen.append)
+
+    class Message:
+        topic = 'sentinel/v1/robots/SENTINEL-01/cmd/mission'
+        payload = json.dumps({'messageType': 'MISSION_COMMAND'}).encode()
+
+    record['on_message'](None, None, Message())
+    assert seen == [{'messageType': 'MISSION_COMMAND'}]
+
+
+def test_handler_exception_does_not_escape(monkeypatch):
+    """핸들러가 터져도 예외가 밖으로 나가면 안 된다.
+
+    이 콜백은 paho의 네트워크 스레드에서 돈다. 예외가 나가면 그 스레드가 죽고
+    재연결도 멈춘다. S15P11A301-140에서 `_log`의 예외가 재연결 콜백을 죽여 Outbox
+    재전송이 실행되지 않은 것과 같은 구조의 사고다.
+    """
+    from sentinel_bridge.mqtt_client import CHANNEL_CMD_MISSION
+
+    record: dict = {}
+    client = _client_with_fake(monkeypatch, record)
+
+    def explode(_payload):
+        raise RuntimeError('핸들러 결함')
+
+    client.subscribe(CHANNEL_CMD_MISSION, explode)
+
+    class Message:
+        topic = 'sentinel/v1/robots/SENTINEL-01/cmd/mission'
+        payload = b'{"messageType": "MISSION_COMMAND"}'
+
+    record['on_message'](None, None, Message())  # 예외가 나가면 이 시험이 실패한다
+
+
+def test_malformed_payload_does_not_reach_the_handler(monkeypatch):
+    """JSON이 아니거나 객체가 아니면 핸들러를 부르지 않는다."""
+    from sentinel_bridge.mqtt_client import CHANNEL_CMD_MISSION
+
+    record: dict = {}
+    client = _client_with_fake(monkeypatch, record)
+    seen: list = []
+    client.subscribe(CHANNEL_CMD_MISSION, seen.append)
+
+    for raw in (b'not json', b'[1, 2, 3]', b'"string"', b'\xff\xfe'):
+        class Message:
+            topic = 'sentinel/v1/robots/SENTINEL-01/cmd/mission'
+            payload = raw
+
+        record['on_message'](None, None, Message())
+
+    assert seen == []
+
+
+def test_channel_lookup_handles_slashes_in_channel_names(monkeypatch):
+    """`cmd/mission`처럼 슬래시가 든 채널을 되짚을 수 있어야 한다.
+
+    토픽의 마지막 조각만 보면 `mission`이 되어 채널을 못 찾고, 명령이 조용히
+    버려진다.
+    """
+    record: dict = {}
+    client = _client_with_fake(monkeypatch, record)
+
+    assert client._channel_of(
+        'sentinel/v1/robots/SENTINEL-01/cmd/mission'
+    ) == 'cmd/mission'
+    assert client._channel_of('sentinel/v1/robots/OTHER/cmd/mission') is None
+    assert client._channel_of('sentinel/v1/robots/SENTINEL-01/state') is None
+
+
+# ----------------------------------------------------------------------
+# 명령 중복 처리 (S15P11A301-143)
+#
+# 이 경로는 실물로 재현할 수 없다. 브로커 재전송에서만 생기고, 브로커 ACL이
+# 로봇 계정의 cmd/* 발행을 막으므로(옳은 설정) 젯슨에서 중복을 만들 수 없다.
+# 그래서 시험으로 고정한다.
+# ----------------------------------------------------------------------
+
+
+def _command_envelope(command_id: str, command_type: str = 'PAUSE') -> dict:
+    return {
+        'schemaVersion': '1.0',
+        'messageId': '11111111-2222-4333-8444-555555555555',
+        'messageType': 'MISSION_COMMAND',
+        'robotId': 'SENTINEL-01',
+        'missionId': '4bde8ad1-c74b-4d42-bec3-9f71af94b41a',
+        'sequence': 1,
+        'sentAt': '2026-07-29T07:00:00.000Z',
+        'data': {'commandId': command_id, 'type': command_type},
+    }
+
+
+def _relay():
+    from sentinel_bridge.command_relay import CommandRelay
+
+    return CommandRelay()
+
+
+def test_first_command_is_forwarded_as_a_signal():
+    relay = _relay()
+    decision = relay.decide(
+        _command_envelope('aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'),
+        mission_manager_alive=True,
+    )
+    assert decision.signal == 'PAUSE_REQUESTED'
+    assert decision.ack is None
+    assert relay.inflight_count == 1
+
+
+def test_duplicate_while_inflight_is_dropped_not_re_forwarded():
+    """결과를 기다리는 중에 온 중복은 버린다.
+
+    다시 넣으면 mission_manager가 DUPLICATE_COMMAND로 거부하고, 그 거부가 ACK로
+    나가 백엔드의 기록을 덮어쓴다.
+    """
+    relay = _relay()
+    envelope = _command_envelope('aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee')
+    relay.decide(envelope, mission_manager_alive=True)
+
+    second = relay.decide(envelope, mission_manager_alive=True)
+    assert second.signal is None, '신호를 두 번 넣으면 안 된다'
+    assert second.ack is None, '결과가 아직 없으므로 회신할 ACK도 없다'
+
+
+def test_duplicate_after_result_replays_the_same_ack():
+    """회신이 끝난 명령의 중복에는 **같은 ACK**를 다시 보낸다.
+
+    이것이 이 모듈의 핵심이다. 재전송에 같은 응답을 주는 것이 멱등의 정의이고,
+    다른 응답을 주면 백엔드가 EXECUTED를 REJECTED로 덮어쓴다.
+    """
+    relay = _relay()
+    command_id = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
+    envelope = _command_envelope(command_id)
+    relay.decide(envelope, mission_manager_alive=True)
+
+    executed = {
+        'commandId': command_id,
+        'status': 'EXECUTED',
+        'reasonCode': None,
+        'message': None,
+    }
+    assert relay.resolve(executed) == command_id
+
+    third = relay.decide(envelope, mission_manager_alive=True)
+    assert third.signal is None
+    assert third.ack == executed, '같은 ACK여야 한다'
+    assert third.replayed is True
+
+
+def test_return_is_rejected_with_not_implemented():
+    """RETURN은 계약에 있으나 RETURNING이 미구현이다.
+
+    조용히 무시하면 관제가 영원히 PENDING을 본다.
+    """
+    from sentinel_bridge.command_relay import REASON_NOT_IMPLEMENTED
+
+    relay = _relay()
+    decision = relay.decide(
+        _command_envelope('aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee', 'RETURN'),
+        mission_manager_alive=True,
+    )
+    assert decision.signal is None
+    assert decision.ack['status'] == 'REJECTED'
+    assert decision.ack['reasonCode'] == REASON_NOT_IMPLEMENTED
+
+
+def test_mission_manager_down_is_rejected_rather_than_left_pending():
+    """받을 노드가 없으면 신호를 넣지 않고 거부한다.
+
+    넣고 기다리면 ACK가 오지 않아 관제가 PENDING에 머문다.
+    """
+    from sentinel_bridge.command_relay import REASON_MISSION_MANAGER_DOWN
+
+    relay = _relay()
+    decision = relay.decide(
+        _command_envelope('aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'),
+        mission_manager_alive=False,
+    )
+    assert decision.signal is None
+    assert decision.ack['reasonCode'] == REASON_MISSION_MANAGER_DOWN
+
+
+def test_command_without_command_id_is_dropped_silently_but_noted():
+    """`commandId`가 없으면 회신 대상을 특정할 수 없어 버린다. 사유는 남긴다."""
+    relay = _relay()
+    envelope = _command_envelope('x')
+    envelope['data'].pop('commandId')
+    decision = relay.decide(envelope, mission_manager_alive=True)
+    assert decision.signal is None
+    assert decision.ack is None
+    assert decision.note
+
+
+def test_wrong_message_type_is_not_treated_as_a_command():
+    """다른 messageType이 `cmd/mission`에 오면 명령으로 다루지 않는다."""
+    relay = _relay()
+    envelope = _command_envelope('aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee')
+    envelope['messageType'] = 'MANUAL_DRIVE_COMMAND'
+    decision = relay.decide(envelope, mission_manager_alive=True)
+    assert decision.signal is None
+    assert decision.ack is None
+
+
+def test_malformed_type_is_rejected_with_a_reason_code():
+    from sentinel_bridge.command_relay import REASON_MALFORMED_COMMAND
+
+    relay = _relay()
+    envelope = _command_envelope('aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee')
+    envelope['data']['type'] = 42
+    decision = relay.decide(envelope, mission_manager_alive=True)
+    assert decision.ack['reasonCode'] == REASON_MALFORMED_COMMAND
+
+
+def test_ack_cache_is_bounded():
+    """캐시가 무한히 자라면 긴 임무에서 메모리가 늘어난다."""
+    from sentinel_bridge.command_relay import CommandRelay
+
+    relay = CommandRelay(ack_cache_size=4)
+    for index in range(10):
+        command_id = f'{index:08d}-bbbb-4ccc-8ddd-eeeeeeeeeeee'
+        relay.resolve({'commandId': command_id, 'status': 'EXECUTED'})
+
+    assert relay.ack_for('00000000-bbbb-4ccc-8ddd-eeeeeeeeeeee') is None
+    assert relay.ack_for('00000009-bbbb-4ccc-8ddd-eeeeeeeeeeee') is not None
+
+
+def test_reject_reason_codes_fit_the_contract_length_limit():
+    """`reasonCode`는 64자 이하다. 넘으면 백엔드가 본문을 거부한다."""
+    from sentinel_bridge import command_relay as module
+
+    limit = _load_schema('command-ack.schema.json')['properties']['reasonCode'][
+        'maxLength'
+    ]
+    for code in (
+        module.REASON_NOT_IMPLEMENTED,
+        module.REASON_MISSION_MANAGER_DOWN,
+        module.REASON_MALFORMED_COMMAND,
+    ):
+        assert 0 < len(code) <= limit, code
+
+
+def test_relay_rejections_satisfy_the_ack_contract():
+    """bridge가 직접 만드는 거부 본문도 계약을 만족해야 한다."""
+    jsonschema = pytest.importorskip('jsonschema')
+
+    relay = _relay()
+    decision = relay.decide(
+        _command_envelope('aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee', 'RETURN'),
+        mission_manager_alive=True,
+    )
+    errors = list(
+        jsonschema.Draft202012Validator(
+            _load_schema('command-ack.schema.json')
+        ).iter_errors(decision.ack)
+    )
+    assert not errors, [error.message for error in errors]

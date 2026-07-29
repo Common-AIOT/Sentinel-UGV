@@ -53,5 +53,13 @@
     camera_topic: /camera/image_raw/compressed
     scan_topic: /scan
 
+    # 관제 명령 경로 (S15P11A301-143).
+    #
+    # cmd/mission 으로 온 MQTT 명령을 mission_signal_topic 의 신호로 바꿔 넣고,
+    # command_result_topic 으로 온 결과를 acks 로 회신합니다. mission_manager 의
+    # 같은 이름 설정과 맞춰야 합니다.
+    mission_signal_topic: /mission/signal
+    command_result_topic: /mission/command_result
+
     # 단절 중 이벤트 보관. 링 버퍼·pending과 같은 볼륨에 둔다(32-5).
     outbox_path: /var/lib/sentinel/bridge/outbox.sqlite3

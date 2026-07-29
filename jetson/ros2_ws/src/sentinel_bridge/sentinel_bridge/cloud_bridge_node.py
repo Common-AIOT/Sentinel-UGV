@@ -3,14 +3,21 @@
 ROS 2 DDS를 인터넷 구간까지 확장하지 않는다. 관제에 필요한 데이터만 JSON으로
 변환해 MQTT로 발행한다(명세 31-1).
 
-발행 채널은 셋이다(31-4).
+발행 채널 (31-4).
 
     presence   QoS 1  Retain O   접속·종료·LWT
     state      QoS 1  Retain O   변경 시 + 1초 heartbeat
     telemetry  QoS 0  Retain X   2Hz
+    events     QoS 1  Retain X   encounter (S15P11A301-140)
+    acks       QoS 1  Retain X   명령 처리 결과 (S15P11A301-143)
 
-`events`와 `acks`는 이 티켓 범위가 아니다. `events`는 S15P11A301-123,
-`cmd/*` 구독과 `acks`는 ESP32 연동 이후다.
+구독 채널 (31-4).
+
+    cmd/mission  QoS 1  Retain 금지  관제 임무 제어 명령 (S15P11A301-143)
+
+`cmd/drive`(수동 조종)는 아직 구독하지 않는다. 계약이 `MANUAL_DRIVE_COMMAND`로
+따로이고 31-13 2단계이며, `MANUAL` 상태는 control session과 gamepad deadman이
+필요하다(36장).
 
 설계에서 중요한 세 가지.
 
@@ -37,12 +44,14 @@ from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReli
 from sensor_msgs.msg import CompressedImage, LaserScan
 from std_msgs.msg import String
 
+from .command_relay import CommandRelay
 from .message_mapper import (
     SAFETY_STATE_BY_MISSION_STATE,
     MessageMapper,
+    utc_now_iso,
     yaw_from_quaternion,
 )
-from .mqtt_client import MqttPublisher
+from .mqtt_client import CHANNEL_CMD_MISSION, MqttClient
 from .outbox_repository import OutboxRepository
 from .system_metrics import ComputeMetrics
 
@@ -79,6 +88,11 @@ class CloudBridgeNode(Node):
         self.declare_parameter('scan_topic', '/scan')
         # mission_manager가 발행하는 임무 상태(26.2). 이 노드는 읽기만 한다.
         self.declare_parameter('mission_status_topic', '/mission/status')
+        # 관제 명령 경로 (S15P11A301-143). cmd/mission → 신호, 결과 → acks.
+        self.declare_parameter('mission_signal_topic', '/mission/signal')
+        self.declare_parameter(
+            'command_result_topic', '/mission/command_result'
+        )
         # SLAM이 만드는 프레임(S15P11A301-137). map → base_footprint 를 조회해
         # telemetry의 pose를 채운다. 명세 8.3의 TF 트리를 따른다.
         self.declare_parameter('map_frame', 'map')
@@ -171,6 +185,29 @@ class CloudBridgeNode(Node):
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
 
+        # 관제 명령을 신호로 바꿔 넣는 발행자 (S15P11A301-143).
+        #
+        # RELIABLE이어야 한다. 명령을 잃으면 조작자가 버튼을 눌렀는데 아무 일도
+        # 일어나지 않고, ACK도 오지 않아 원인을 알 수 없다.
+        command_qos = QoSProfile(
+            reliability=QoSReliabilityPolicy.RELIABLE,
+            history=QoSHistoryPolicy.KEEP_LAST,
+            depth=10,
+        )
+        self.signal_pub = self.create_publisher(
+            String, self._param('mission_signal_topic'), command_qos
+        )
+        self.create_subscription(
+            String,
+            self._param('command_result_topic'),
+            self._on_command_result,
+            command_qos,
+        )
+
+        # 명령 판단과 ACK 기억은 CommandRelay가 맡는다. ROS를 모르는 클래스라
+        # CI에서 시험할 수 있다.
+        self.relay = CommandRelay()
+
         # encounter는 잃으면 사람을 발견한 사실이 사라진다. RELIABLE로 구독한다.
         # mission_manager가 같은 설정으로 발행한다(S15P11A301-133).
         self.create_subscription(
@@ -184,7 +221,7 @@ class CloudBridgeNode(Node):
             ),
         )
 
-        self.mqtt = MqttPublisher(
+        self.mqtt = MqttClient(
             robot_id,
             self._param('broker_host'),
             int(self._param('broker_port')),
@@ -200,6 +237,9 @@ class CloudBridgeNode(Node):
             on_connected=self._on_broker_connected,
             logger=self.get_logger(),
         )
+        # 구독은 start() 뒤에 등록해도 된다. 접속 전이면 보관만 하고
+        # `_handle_connect`가 실제 구독을 걸며, 재연결 때마다 다시 건다.
+        self.mqtt.subscribe(CHANNEL_CMD_MISSION, self._on_mission_command)
         self.mqtt.start()
 
         self.create_timer(float(self._param('state_period_seconds')), self._publish_state)
@@ -253,6 +293,98 @@ class CloudBridgeNode(Node):
             self.get_logger().info(
                 f"임무 상태 수신: {previous or '(없음)'} → {payload['state']}"
             )
+
+    # ------------------------------------------------------------------
+    # 관제 명령 (S15P11A301-143, 31-4·31-6·27.4)
+    # ------------------------------------------------------------------
+
+    def _on_mission_command(self, envelope: dict) -> None:
+        """`cmd/mission`으로 온 명령을 `/mission/signal`의 신호로 바꿔 넣는다.
+
+        판단은 `CommandRelay`가 한다. 이 메서드는 배선만 한다 — 결정을 여기 두면
+        rclpy 때문에 CI에서 시험할 수 없고, 중복 명령 처리는 실물로 재현할 수
+        없는 경로다(command_relay 모듈 문서 참고).
+
+        이 메서드는 **paho의 네트워크 스레드에서 돈다.** rclpy 발행은 스레드에서
+        불러도 되지만 예외를 흘리면 그 스레드가 죽는다.
+        `mqtt_client._handle_message`가 감싸 두었다.
+        """
+        decision = self.relay.decide(
+            envelope, mission_manager_alive=self._mission_manager_alive()
+        )
+
+        if decision.ack is not None:
+            if decision.replayed:
+                self.get_logger().info(decision.note)
+            else:
+                self.get_logger().warn(decision.note)
+            self._publish_ack(decision.ack, decision.mission_id)
+            return
+
+        if decision.signal is None:
+            # 회신할 수 없거나 처리 중인 중복이다. 조용히 넘기지 않는다.
+            self.get_logger().warn(decision.note)
+            return
+
+        body = {
+            'signal': decision.signal,
+            'sentAt': utc_now_iso(),
+            'source': 'CONTROL',
+            'encounterId': None,
+            'missionId': decision.mission_id,
+            'commandId': decision.command_id,
+            'detail': f'관제 {decision.command_type}',
+        }
+        self.signal_pub.publish(String(data=json.dumps(body, ensure_ascii=False)))
+        self.get_logger().info(
+            f'관제 명령 {decision.note} '
+            f'(commandId={(decision.command_id or "")[:8]})'
+        )
+
+    def _on_command_result(self, message: String) -> None:
+        """`mission_manager`의 처리 결과를 `acks`로 회신한다.
+
+        본문을 그대로 넘긴다. 계약이 `command-ack.schema.json`이며 상태 머신이
+        이미 그 형식으로 만들었다. 수락·거부를 판단하는 것은 상태 머신이고 bridge가
+        다시 판단하면 두 곳이 어긋난다(26.1 단일 권한).
+        """
+        try:
+            body = json.loads(message.data)
+        except json.JSONDecodeError as error:
+            self.get_logger().warn(f'명령 결과 JSON 해석 실패: {error}')
+            return
+        if not isinstance(body, dict):
+            self.get_logger().warn('명령 결과 본문이 객체가 아니다')
+            return
+
+        command_id = self.relay.resolve(body)
+        if command_id is None:
+            self.get_logger().warn('commandId 없는 명령 결과를 버렸다')
+            return
+
+        # 이 시점에는 명령이 온 봉투의 missionId를 알 수 없다. 백엔드는 commandId로
+        # control_commands 행을 찾으므로 없어도 동작한다.
+        self._publish_ack(body, None)
+
+    def _publish_ack(self, body: dict, mission_id: str | None) -> None:
+        """ACK를 발행한다. 브로커가 없으면 Outbox에 보관한다.
+
+        ACK를 버리면 안 된다. 관제의 `control_commands.result`가 영원히 PENDING으로
+        남아 조작자가 명령이 먹혔는지 알 수 없다. 31-10이 "중요 이벤트"를 Outbox에
+        보관하라고 한 범위에 든다 — encounter와 같은 취급이다.
+        """
+        envelope = self.mapper.command_ack(body, mission_id=mission_id)
+        if self.mqtt.publish('acks', envelope):
+            return
+        if self.outbox is None:
+            self.get_logger().error(
+                f"브로커도 Outbox도 없어 ACK를 잃었다: {body.get('commandId')}"
+            )
+            return
+        self.outbox.enqueue(envelope, 'acks')
+        self.get_logger().warn(
+            f"브로커 없음. ACK를 Outbox에 보관했다 (대기 {self.outbox.count()}건)"
+        )
 
     def _slam_alive(self) -> bool:
         """SLAM이 떠 있는가.

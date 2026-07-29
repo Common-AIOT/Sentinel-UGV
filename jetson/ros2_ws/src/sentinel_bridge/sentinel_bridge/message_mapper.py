@@ -27,6 +27,28 @@ MESSAGE_TYPE_PRESENCE = "ROBOT_PRESENCE"
 MESSAGE_TYPE_STATE = "ROBOT_STATE"
 MESSAGE_TYPE_TELEMETRY = "ROBOT_TELEMETRY"
 MESSAGE_TYPE_ENCOUNTER = "ENCOUNTER_CONFIRMED"
+MESSAGE_TYPE_COMMAND_ACK = "COMMAND_ACK"
+
+# 백엔드가 cmd/mission 으로 보내는 봉투의 messageType (S15P11A301-141).
+# 구독한 메시지를 검증할 때 쓴다.
+MESSAGE_TYPE_MISSION_COMMAND = "MISSION_COMMAND"
+
+# cmd/mission 의 type → /mission/signal 의 signal (S15P11A301-143).
+#
+# RETURN 이 없는 것이 의도다. RETURNING 은 home pose 복귀 주행이 필요해
+# 미구현이므로(UNIMPLEMENTED) 신호를 만들지 않고 bridge 가 NOT_IMPLEMENTED 로
+# 거부한다. 조용히 무시하면 관제가 영원히 PENDING 을 본다.
+#
+# RESUME 이 RESUME_APPROVED 인 이유는 두 재개 신호의 역할이 다르기 때문이다.
+# RESUME_REQUESTED 는 음성 쪽이 보고를 마치고 탐사를 이어가겠다는 요청이며
+# REPORTING 에서만 유효하다. PAUSED 를 푸는 것은 30.5 가 자동 재개를 금지했으므로
+# 운영자의 명시적 재개, 즉 RESUME_APPROVED 뿐이다.
+COMMAND_TO_SIGNAL: dict[str, str] = {
+    "START": "MISSION_START",
+    "PAUSE": "PAUSE_REQUESTED",
+    "RESUME": "RESUME_APPROVED",
+    "STOP": "MISSION_COMPLETED",
+}
 
 # 26.2의 임무 상태를 31-5 state 채널의 `safetyState` enum으로 옮긴다.
 #
@@ -194,6 +216,25 @@ class MessageMapper:
             data,
             mission_id=data.get("missionId"),
         )
+
+    # ------------------------------------------------------------------
+    # acks (S15P11A301-143)
+    # ------------------------------------------------------------------
+
+    def command_ack(
+        self, data: dict[str, Any], mission_id: str | None = None
+    ) -> dict[str, Any]:
+        """명령 처리 결과를 31-5 봉투에 담는다.
+
+        본문은 `mission_manager`가 만든 것을 그대로 넘긴다. 수락·거부를 판단하는
+        것은 상태 머신이고 bridge 가 다시 판단하면 두 곳이 어긋난다. encounter 를
+        그렇게 다루는 것과 같은 원칙이다(26.1 단일 권한).
+
+        `missionId`는 명령이 온 봉투의 값을 되돌려준다. 백엔드는 `commandId`로
+        `control_commands` 행을 찾으므로 없어도 동작하지만, 봉투 규약이 있는 값을
+        비우면 관제 로그에서 어느 임무의 응답인지 알 수 없다.
+        """
+        return self.envelope(MESSAGE_TYPE_COMMAND_ACK, data, mission_id=mission_id)
 
     def telemetry(
         self,

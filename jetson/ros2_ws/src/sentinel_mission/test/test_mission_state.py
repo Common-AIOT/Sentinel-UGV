@@ -633,3 +633,180 @@ def test_person_count_uses_simultaneous_not_cumulative():
             now=at(2 + index), track_ids={track}, new_encounter_id=OTHER
         )
     assert sequential.person_count == 1
+
+
+# ----------------------------------------------------------------------
+# 관제 명령 (S15P11A301-143, 26.4·26.5·27.4)
+# ----------------------------------------------------------------------
+
+
+CID = '3f2a91c4-5d6e-4a7b-8c9d-0e1f2a3b4c5d'
+CID2 = '7a8b9c0d-1e2f-4a3b-8c4d-5e6f7a8b9c0d'
+
+
+def test_stop_ends_the_mission_from_any_active_state():
+    """STOP은 탐사 중이든 상호작용 중이든 임무를 끝낸다.
+
+    23.4가 "사용자 종료"를 종료 조건으로 명시했다. 조작자가 끝내겠다고 했으면
+    끝나야 한다.
+    """
+    from sentinel_mission.mission_state import Signal as S
+
+    for setup in (exploring, lambda: _interacting()):
+        machine = setup()
+        result = machine.handle_signal(S.MISSION_COMPLETED, now=at(60))
+        assert result.changed
+        assert machine.state is MissionState.COMPLETED
+
+
+def _interacting() -> MissionStateMachine:
+    machine = exploring()
+    confirm(machine)
+    machine.handle_signal(Signal.SAFE_POSE_REACHED, now=at(5))
+    assert machine.state is MissionState.INTERACTING
+    return machine
+
+
+def test_stop_drops_the_in_flight_encounter_and_mission_id():
+    """STOP 시 진행 중 encounter와 missionId를 버린다.
+
+    상호작용이 끝나지 않은 상태로 임무가 끝나므로, 그 발견을 완결된 것으로
+    보고하면 잘못된 기록이 된다. missionId를 남기면 이후 encounter가 종료된 임무에
+    붙는데 백엔드는 그것을 MISSION_ALREADY_ENDED로 거부한다.
+    """
+    machine = MissionStateMachine()
+    machine.handle_signal(
+        Signal.MISSION_START, now=T0, mission_id='4bde8ad1-c74b-4d42-bec3-9f71af94b41a'
+    )
+    confirm(machine)
+    assert machine.encounter is not None
+    assert machine.mission_id is not None
+
+    machine.handle_signal(Signal.MISSION_COMPLETED, now=at(30))
+    assert machine.encounter is None
+    assert machine.mission_id is None
+
+
+def test_stop_is_rejected_in_estop_with_a_reason_code():
+    """ESTOP latch는 STOP으로 풀리지 않는다 (26.5).
+
+    비상 정지 해제는 운영자가 물리적으로 확인한 뒤 할 일이다. 여기서 STOP을 받아
+    COMPLETED로 가면 "정상 종료된 임무"로 기록된다.
+
+    `reason_code`가 있어야 관제가 왜 거부됐는지 표시할 수 있다.
+    """
+    from sentinel_mission.mission_state import REASON_ESTOP_ACTIVE
+
+    machine = exploring()
+    machine.handle_signal(Signal.ESTOP, now=at(10))
+    assert machine.state is MissionState.ESTOP
+
+    result = machine.handle_signal(Signal.MISSION_COMPLETED, now=at(20), command_id=CID)
+    assert not result.changed
+    assert machine.state is MissionState.ESTOP
+    assert result.reason_code == REASON_ESTOP_ACTIVE
+
+
+def test_duplicate_command_id_is_reported_as_duplicate_not_executed():
+    """같은 commandId가 두 번 오면 두 번 실행하지 않는다 (26.4).
+
+    QoS 1이 같은 메시지를 두 번 줄 수 있다. bridge가 중복을 걸러내지만 상태
+    머신도 자체 가드를 둔다 — 두 층 중 하나가 뚫려도 상태가 두 번 바뀌면 안 된다.
+
+    `reason_code`로 구분되는 것이 중요하다. bridge가 이 값을 보고 "거부"가 아니라
+    "이미 처리함"으로 다뤄야 백엔드가 EXECUTED를 REJECTED로 덮어쓰지 않는다.
+    """
+    from sentinel_mission.mission_state import REASON_DUPLICATE_COMMAND
+
+    machine = MissionStateMachine()
+    first = machine.handle_signal(Signal.MISSION_START, now=T0, command_id=CID)
+    assert first.changed
+
+    second = machine.handle_signal(Signal.MISSION_START, now=at(1), command_id=CID)
+    assert not second.changed
+    assert second.reason_code == REASON_DUPLICATE_COMMAND
+
+
+def test_pause_then_resume_returns_to_exploring():
+    """관제의 PAUSE·RESUME이 26.3의 `PAUSED ↔ EXPLORING`을 돈다."""
+    machine = exploring()
+
+    machine.handle_signal(Signal.PAUSE_REQUESTED, now=at(10), command_id=CID)
+    assert machine.state is MissionState.PAUSED
+
+    result = machine.handle_signal(Signal.RESUME_APPROVED, now=at(20), command_id=CID2)
+    assert result.changed
+    assert machine.state is MissionState.EXPLORING
+
+
+def test_pressing_pause_twice_is_not_a_rejection():
+    """이미 PAUSED인데 PAUSE가 또 오면 거부로 보지 않는다.
+
+    조작자가 버튼을 두 번 눌렀을 때 거부가 뜨면 무엇이 잘못됐는지 찾게 된다.
+    원하는 상태에 이미 있으므로 성공이 맞다. `reason_code`가 없는 것이 그 구분이다.
+    """
+    machine = exploring()
+    machine.handle_signal(Signal.PAUSE_REQUESTED, now=at(10))
+    result = machine.handle_signal(Signal.PAUSE_REQUESTED, now=at(11), command_id=CID)
+    assert not result.changed
+    assert result.reason_code is None, '거부가 아니라 이미 원하는 상태다'
+
+
+def test_pressing_start_twice_is_not_a_rejection():
+    """이미 EXPLORING인데 START가 또 오면 거부로 보지 않는다.
+
+    서로 다른 commandId로 두 번 오면 멱등 가드가 막지 못한다. 그때 INVALID_STATE로
+    거부하면 조작자는 임무가 안 시작된 줄 안다.
+    """
+    machine = exploring()
+    result = machine.handle_signal(Signal.MISSION_START, now=at(5), command_id=CID)
+    assert not result.changed
+    assert machine.state is MissionState.EXPLORING
+    assert result.reason_code is None
+
+
+def test_resume_outside_paused_is_rejected_with_invalid_state():
+    """PAUSED가 아닐 때 RESUME은 거부되고 사유 코드가 붙는다."""
+    from sentinel_mission.mission_state import REASON_INVALID_STATE
+
+    machine = exploring()
+    result = machine.handle_signal(Signal.RESUME_APPROVED, now=at(10), command_id=CID)
+    assert not result.changed
+    assert result.reason_code == REASON_INVALID_STATE
+
+
+def test_ack_status_constants_match_the_contract():
+    """ACK status 상수가 `command-ack.schema.json`의 enum과 같아야 한다."""
+    from sentinel_mission import mission_state as module
+
+    schema = json.loads(
+        (SCHEMA_DIR / 'command-ack.schema.json').read_text(encoding='utf-8')
+    )
+    allowed = set(schema['properties']['status']['enum'])
+    constants = {
+        module.ACK_ACCEPTED,
+        module.ACK_EXECUTED,
+        module.ACK_REJECTED,
+        module.ACK_EXPIRED,
+        module.ACK_FAILED,
+    }
+    assert constants == allowed
+
+
+def test_reason_codes_fit_the_contract_length_limit():
+    """`reasonCode`는 64자 이하다. 넘으면 백엔드가 본문을 거부한다."""
+    from sentinel_mission import mission_state as module
+
+    schema = json.loads(
+        (SCHEMA_DIR / 'command-ack.schema.json').read_text(encoding='utf-8')
+    )
+    limit = schema['properties']['reasonCode']['maxLength']
+    codes = [
+        module.REASON_ESTOP_ACTIVE,
+        module.REASON_ERROR_LATCHED,
+        module.REASON_INVALID_STATE,
+        module.REASON_DUPLICATE_COMMAND,
+        module.REASON_NOT_IMPLEMENTED,
+    ]
+    for code in codes:
+        assert 0 < len(code) <= limit, code

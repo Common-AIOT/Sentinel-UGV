@@ -28,14 +28,20 @@ Outbox → 영상 → telemetry 순서를 정했다. 순서가 뒤바뀌면 서�
 from __future__ import annotations
 
 import json
+import uuid
 
 import rclpy
+import tf2_ros
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 from sensor_msgs.msg import CompressedImage, LaserScan
 from std_msgs.msg import String
 
-from .message_mapper import SAFETY_STATE_BY_MISSION_STATE, MessageMapper
+from .message_mapper import (
+    SAFETY_STATE_BY_MISSION_STATE,
+    MessageMapper,
+    yaw_from_quaternion,
+)
 from .mqtt_client import MqttPublisher
 from .outbox_repository import OutboxRepository
 from .system_metrics import ComputeMetrics
@@ -73,6 +79,11 @@ class CloudBridgeNode(Node):
         self.declare_parameter('scan_topic', '/scan')
         # mission_manager가 발행하는 임무 상태(26.2). 이 노드는 읽기만 한다.
         self.declare_parameter('mission_status_topic', '/mission/status')
+        # SLAM이 만드는 프레임(S15P11A301-137). map → base_footprint 를 조회해
+        # telemetry의 pose를 채운다. 명세 8.3의 TF 트리를 따른다.
+        self.declare_parameter('map_frame', 'map')
+        self.declare_parameter('base_frame', 'base_footprint')
+        self.declare_parameter('map_topic', '/map')
         self.declare_parameter(
             'outbox_path', '/var/lib/sentinel/bridge/outbox.sqlite3'
         )
@@ -100,6 +111,12 @@ class CloudBridgeNode(Node):
         # 마지막으로 받은 임무 상태. mission_manager가 상태 변경 시에만 발행하므로
         # 여기 들고 있다가 1초 heartbeat마다 관제로 내보낸다(31-4).
         self._mission_status: dict | None = None
+        # 지도 세션 식별자. SLAM이 새로 뜨면 지도가 달라지므로 새 값을 발급한다.
+        # 관제가 옛 좌표와 새 좌표를 같은 지도로 섞으면 이벤트 위치가 엉뚱해진다.
+        self._map_id: str | None = None
+        # pose 조회 실패를 매 주기 로그로 남기면 2Hz로 쏟아진다. 상태가 바뀔 때만
+        # 남긴다.
+        self._pose_available = False
 
         # BEST_EFFORT로 구독한다. RELIABLE 구독자는 BEST_EFFORT 발행자와 호환되지
         # 않아 메시지를 하나도 받지 못하지만, 그 반대는 문제가 없다.
@@ -139,6 +156,11 @@ class CloudBridgeNode(Node):
             self._on_mission_status,
             self.mission_status_qos,
         )
+
+        # TF는 map → base_footprint 조회에만 쓴다. SLAM(S15P11A301-137)이 없으면
+        # 조회가 실패하고 pose는 null이 된다. 그것이 정확한 표현이다.
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
 
         self.mqtt = MqttPublisher(
             robot_id,
@@ -206,6 +228,70 @@ class CloudBridgeNode(Node):
             self.get_logger().info(
                 f"임무 상태 수신: {previous or '(없음)'} → {payload['state']}"
             )
+
+    def _slam_alive(self) -> bool:
+        """SLAM이 떠 있는가.
+
+        `/map` 발행자 수를 본다. TF 조회만으로는 판단할 수 없다 — `tf2_ros.Buffer`가
+        마지막 변환을 얼마간 들고 있어서, SLAM이 죽은 직후에도 조회가 성공한다.
+        그 값을 관제로 보내면 로봇이 멈춘 뒤에도 옛 위치가 계속 보인다.
+
+        S15P11A301-135의 mission_manager 생존 판정과 같은 방식이다.
+        """
+        return self.count_publishers(self._param('map_topic')) > 0
+
+    def _pose(self) -> dict | None:
+        """map → base_footprint 를 telemetry의 pose로 바꾼다 (명세 8.3·23.2).
+
+        SLAM이 없으면 None이다. 값을 지어내지 않는다. 관제가 "위치 모름"과
+        "원점에 있음"을 구별해야 하고, 후자로 오해하면 지도에 로봇이 엉뚱한 곳에
+        그려진다.
+        """
+        if not self._slam_alive():
+            if self._pose_available:
+                self.get_logger().warn(
+                    'SLAM이 내려갔다. pose를 null로 보낸다. '
+                    '지도 세션도 버리므로 다시 뜨면 새 mapId가 발급된다.'
+                )
+            self._pose_available = False
+            # 지도 세션을 버린다. SLAM이 다시 뜨면 지도가 처음부터 만들어지므로
+            # 옛 mapId를 유지하면 관제가 두 지도의 좌표를 섞는다.
+            self._map_id = None
+            return None
+
+        try:
+            transform = self.tf_buffer.lookup_transform(
+                str(self._param('map_frame')),
+                str(self._param('base_frame')),
+                rclpy.time.Time(),
+            )
+        except (
+            tf2_ros.LookupException,
+            tf2_ros.ConnectivityException,
+            tf2_ros.ExtrapolationException,
+        ) as error:
+            if self._pose_available:
+                self.get_logger().warn(f'pose 조회 실패: {type(error).__name__}')
+            self._pose_available = False
+            return None
+
+        if self._map_id is None:
+            self._map_id = str(uuid.uuid4())
+            self.get_logger().info(f'지도 세션 시작. mapId={self._map_id[:8]}')
+        if not self._pose_available:
+            self.get_logger().info('pose 조회 성공. telemetry에 위치를 담는다.')
+        self._pose_available = True
+
+        translation = transform.transform.translation
+        rotation = transform.transform.rotation
+        return {
+            'x': round(translation.x, 3),
+            'y': round(translation.y, 3),
+            'yaw': round(
+                yaw_from_quaternion(rotation.x, rotation.y, rotation.z, rotation.w), 4
+            ),
+            'mapId': self._map_id,
+        }
 
     def _mission_manager_alive(self) -> bool:
         """mission_manager가 떠 있는가.
@@ -296,9 +382,9 @@ class CloudBridgeNode(Node):
         if not self.mqtt.connected:
             return
         message = self.mapper.telemetry(
-            # SLAM·엔코더·ESP32가 붙기 전에는 null이다. 31-6 전체 형태를 유지해
-            # 나중에 필드를 추가하지 않도록 한다.
-            pose=None,
+            # 엔코더·ESP32가 붙기 전에는 나머지가 null이다. 31-6 전체 형태를
+            # 유지해 나중에 필드를 추가하지 않도록 한다.
+            pose=self._pose(),
             motion=None,
             battery=None,
             environment=None,

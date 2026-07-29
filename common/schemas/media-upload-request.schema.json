@@ -4,7 +4,14 @@
   "title": "POST /api/v1/media/uploads 요청 본문",
   "description": "젯슨이 이벤트 영상을 올리기 전에 Presigned PUT URL을 요청한다. 명세 31-7 「이벤트 영상 업로드」 2단계다.\n\n> 2단계 원문: `POST /api/v1/media/uploads`로 **파일명, 크기, 체크섬, encounterId**를 보낸다.\n\n**현재 백엔드 구현과 어긋난다.** `UploadUrlRequest`가 `objectKey`와 `contentType`만 받으므로 크기·체크섬·encounterId를 받지 못한다. 그러면 서버가 업로드 완료를 검증할 근거가 없고, 어느 encounter의 영상인지도 모른다.\n\n또 31-11은 \"`object_key`와 파일 종류를 **서버가 결정한다**\"고 정했다. 클라이언트가 정한 키를 그대로 쓰면 젯슨이 임의 경로에 쓸 수 있다. 그래서 젯슨은 `suggestedKey`를 힌트로만 보내고, 응답의 `objectKey`를 권위로 삼는다.",
   "type": "object",
-  "required": ["encounterId", "mediaId", "kind", "fileName", "sizeBytes", "sha256"],
+  "required": [
+    "encounterId",
+    "mediaId",
+    "kind",
+    "fileName",
+    "sizeBytes",
+    "sha256"
+  ],
   "additionalProperties": false,
   "properties": {
     "encounterId": {
@@ -13,15 +20,17 @@
       "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
     },
     "mediaId": {
-      "description": "젯슨이 만든 미디어 식별자. 재시도해도 같은 값을 쓰므로 서버가 중복 등록을 막을 수 있다(31-10 media_assets.id UNIQUE).",
+      "description": "젯슨이 만든 미디어 식별자. 재시도해도 같은 값을 쓰므로 서버가 중복 등록을 막을 수 있다(31-10 media_assets.id UNIQUE).\n\n**UUID여야 한다.** 백엔드가 `UUID` 타입으로 받고 `media_assets.id`가 `UUID PRIMARY KEY`다. 처음에는 pattern 없이 `string`으로 두었고, 그 사이 젯슨은 `m_{hex12}` 형식을 쓰고 백엔드는 UUID를 요구해 실물 업로드가 400으로 실패했다(S15P11A301-124). 계약이 느슨하면 양쪽이 다르게 구현한다.\n\n썸네일은 영상 mediaId에서 uuid5로 파생한다. 결정적이므로 재시도에도 같은 값이다.",
       "type": "string",
-      "minLength": 1,
-      "maxLength": 64
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
     },
     "kind": {
       "description": "이벤트 하나에 영상과 썸네일 두 객체가 올라간다.",
       "type": "string",
-      "enum": ["EVENT_VIDEO", "THUMBNAIL"]
+      "enum": [
+        "EVENT_VIDEO",
+        "THUMBNAIL"
+      ]
     },
     "fileName": {
       "description": "원본 파일명. 서버가 확장자로 contentType을 정할 수 있다.",
@@ -41,11 +50,17 @@
     },
     "contentType": {
       "description": "생략하면 서버가 fileName으로 판단한다.",
-      "type": ["string", "null"]
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "suggestedKey": {
       "description": "젯슨이 제안하는 object key. **서버가 무시해도 된다.** 31-11이 키 결정을 서버 책임으로 정했으므로 응답의 objectKey를 권위로 쓴다.",
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "maxLength": 512
     }
   }

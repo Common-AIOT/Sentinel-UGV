@@ -396,3 +396,124 @@ def test_mission_signal_schema_allows_perception_as_source():
     )
     assert 'PERCEPTION' in schema['properties']['source']['enum']
     assert 'REPORT_COMMITTED' in schema['properties']['signal']['enum']
+
+
+# ----------------------------------------------------------------------
+# 업로드 요청 본문이 계약을 만족하는가 (S15P11A301-124)
+# ----------------------------------------------------------------------
+
+
+def _upload_request_validator():
+    jsonschema = pytest.importorskip(
+        'jsonschema', reason='jsonschema가 없으면 계약 검증을 건너뛴다'
+    )
+    repo_root = Path(__file__).resolve().parents[5]
+    schema = json.loads(
+        (
+            repo_root / 'common' / 'schemas' / 'media-upload-request.schema.json'
+        ).read_text(encoding='utf-8')
+    )
+    return jsonschema.Draft202012Validator(
+        schema, format_checker=jsonschema.Draft202012Validator.FORMAT_CHECKER
+    )
+
+
+def test_upload_request_body_satisfies_the_schema(tmp_path):
+    """`UploadClient`가 실제로 만드는 본문을 계약으로 검사한다.
+
+    이 시험이 없어서 실물 업로드에서야 400을 만났다. 스키마 파일만 검사하면
+    "코드가 그 스키마를 지키는가"는 확인되지 않는다.
+
+    mediaId가 UUID가 아니면 백엔드가 400을 낸다. `media_assets.id`가
+    `UUID PRIMARY KEY`이기 때문이다(31-10).
+    """
+    from sentinel_recorder.upload_client import KIND_VIDEO, UploadClient, UploadTarget
+
+    captured = {}
+
+    class FakeSession:
+        def post(self, url, json=None, headers=None, timeout=None):
+            captured['url'] = url
+            captured['body'] = json
+
+            class Response:
+                status_code = 200
+
+                @staticmethod
+                def json():
+                    return {'data': {'objectKey': 'k', 'url': 'https://example/put'}}
+
+                text = ''
+
+            return Response()
+
+    media = tmp_path / 'event.mp4'
+    media.write_bytes(b'\x00' * 2048)
+    client = UploadClient('https://api.example', session=FakeSession())
+    client.request_upload_url(
+        encounter_id='b9c43b74-e7f9-4f74-8358-9656293bc1af',
+        media_id='2f8c1e40-91ab-4c5d-8e37-1a6b4d9f0c22',
+        target=UploadTarget(
+            path=media,
+            kind=KIND_VIDEO,
+            sha256='a' * 64,
+            size_bytes=2048,
+            content_type='video/mp4',
+        ),
+        suggested_key='SENTINEL-01/b9c43b74/event.mp4',
+    )
+
+    errors = list(_upload_request_validator().iter_errors(captured['body']))
+    assert not errors, [error.message for error in errors]
+
+
+def test_non_uuid_media_id_is_rejected_by_the_contract():
+    """옛 `m_{hex12}` 형식이 계약에서 걸리는지.
+
+    이 형식으로 실물 업로드가 400 "잘못된 입력값입니다"로 실패했다. 계약이
+    그것을 잡아야 CI에서 먼저 드러난다.
+    """
+    body = {
+        'encounterId': 'b9c43b74-e7f9-4f74-8358-9656293bc1af',
+        'mediaId': 'm_79e64008e364',
+        'kind': 'EVENT_VIDEO',
+        'fileName': 'event.mp4',
+        'sizeBytes': 4908120,
+        'sha256': 'a' * 64,
+        'contentType': 'video/mp4',
+        'suggestedKey': 'SENTINEL-01/b9c43b74/event.mp4',
+    }
+    errors = list(_upload_request_validator().iter_errors(body))
+    assert errors, '옛 형식이 계약을 통과하면 안 된다'
+    assert any('mediaId' in str(error.absolute_path) for error in errors)
+
+
+def test_thumbnail_media_id_is_a_uuid_and_deterministic():
+    """썸네일 mediaId도 UUID여야 하고 재시도에 같은 값이어야 한다.
+
+    전에는 `{mediaId}_thumb`였고 UUID가 아니었다. 영상이 통과해도 썸네일에서
+    같은 400이 난다. uuid4로 매번 새로 만들면 재시도마다 새 행이 생겨 31-10의
+    멱등성이 깨진다.
+    """
+    import uuid as uuid_module
+
+    from sentinel_recorder.upload_worker import thumbnail_media_id
+
+    video = '2f8c1e40-91ab-4c5d-8e37-1a6b4d9f0c22'
+    first = thumbnail_media_id(video)
+    assert first == thumbnail_media_id(video), '재시도에 값이 바뀌면 중복 등록된다'
+    assert first != video, '영상과 같은 id를 쓰면 서로를 덮어쓴다'
+    uuid_module.UUID(first)
+
+    body = {
+        'encounterId': 'b9c43b74-e7f9-4f74-8358-9656293bc1af',
+        'mediaId': first,
+        'kind': 'THUMBNAIL',
+        'fileName': 'thumbnail.jpg',
+        'sizeBytes': 64000,
+        'sha256': 'b' * 64,
+        'contentType': 'image/jpeg',
+        'suggestedKey': 'SENTINEL-01/b9c43b74/thumbnail.jpg',
+    }
+    errors = list(_upload_request_validator().iter_errors(body))
+    assert not errors, [error.message for error in errors]

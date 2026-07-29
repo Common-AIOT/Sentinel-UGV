@@ -123,7 +123,7 @@ YOLO 기반 객체탐지 추론 파이프라인 구축 단계
 - **miniforge conda 가상환경 `sentinel-yolo` 구축 완료 및 검증** — Python 3.10.20 / torch 2.11.0+cu128 /
   CUDA 12.8 사용 가능, ultralytics 8.4.104 (§7)
 - **YOLO26 Detect/Pose 모델 지원 확인** (§13, §14)
-- 객체탐지 MVP 범위 정의(`docs/requirements.md` 초안 존재 — 단, 클래스 범위는 §6 확인 필요 참고)
+- 객체탐지 MVP 범위 정의(`../../docs/ai/detection/requirements.md` 초안 존재 — 단, 클래스 범위는 §6 확인 필요 참고)
 - Detect-first 파이프라인 설계 초안
 
 ### 현재 진행 중
@@ -238,8 +238,8 @@ multi-person은 ByteTrack 도입으로 자연히 지원된다(별도 작업 아�
   수반한다. 1주 일정에서 가장 큰 리스크다.
 - 따라서 **CLASS_MAP만 확장하면 되도록 설계**해두고(§11), 데이터가 준비되면 재학습만 한다.
 
-기존 `docs/requirements.md`에 명시된 `Fire Extinguisher`, `Exit`, `Danger Sign` 3종과 `unknown` 상태는
-**폐기가 아니라 다음 스프린트로 이월**한다. ISSUE-01에서 `docs/requirements.md`를 정합화할 때
+기존 `../../docs/ai/detection/requirements.md`에 명시된 `Fire Extinguisher`, `Exit`, `Danger Sign` 3종과 `unknown` 상태는
+**폐기가 아니라 다음 스프린트로 이월**한다. ISSUE-01에서 `../../docs/ai/detection/requirements.md`를 정합화할 때
 "이번 스프린트 범위"와 "이월 항목"을 절로 나눠 두 문서의 불일치를 해소한다.
 
 ### 향후 확장: 장애물 탐지 (다음 스프린트, 이번 주 구현 안 함)
@@ -384,7 +384,7 @@ conda activate sentinel-yolo && python --version   # 또는 §7의 절대경로 
 | `src/` | 존재(내용 없음, `.gitkeep.txt`만 존재) |
 | `scripts/` | **미존재** — 필요 시 새로 생성 |
 | `configs/` | **미존재** — 필요 시 새로 생성 |
-| `docs/` | 존재 (`requirements.md` 초안 있음, §6 참고) |
+| `docs/` | 존재(`.gitkeep.txt`만 유지). detection 문서 원본은 루트 `../../docs/ai/detection/`로 이동 |
 | `data/` | 존재 (`raw/`, `processed/`, `pose_test/`만 존재, 각 `.gitkeep.txt`) |
 | `models/` | 존재(내용 없음) |
 | `runs/` | 존재(내용 없음) |
@@ -413,7 +413,7 @@ ai/detection/
 │   ├── processed/    # 최종 YOLO 데이터 (존재)
 │   ├── samples/       # 시각화 샘플 (미존재, 필요 시 생성)
 │   └── pose_test/     # Pose 테스트 영상 (존재)
-├── docs/               # 문서 (requirements.md 존재)
+├── docs/               # 로컬 placeholder만 유지. 문서는 루트 ../../docs/ai/detection/ 기준
 ├── models/            # 모델 가중치 (Git 추가 금지)
 ├── notebooks/          # 탐색용 노트북(용도 확인 필요)
 ├── runs/               # 학습/추론 산출물 (Git 추가 금지)
@@ -609,7 +609,7 @@ CLASS_MAP = {
 - **AI Agent는 AI-Hub 계정 로그인, 본인인증, 신청, API key 발급을 대신 수행하지 않는다.**
   이 단계는 사용자가 직접 진행하고, 에이전트는 다운로드 완료된 `data/raw` 구조를 분석하는 것부터 담당한다.
 - **API key를 코드나 문서에 하드코딩하지 않는다.** 환경변수 또는 Git에 포함되지 않는 로컬 설정으로 관리한다.
-- 데이터셋별 **이용 조건과 출처를 `docs/dataset_selection.md`에 반드시 기록한다**(§26 ISSUE-02).
+- 데이터셋별 **이용 조건과 출처를 `../../docs/ai/detection/dataset_selection.md`에 반드시 기록한다**(§26 ISSUE-02).
 
 ### 안심존(安心존) 데이터 주의
 
@@ -1078,7 +1078,7 @@ ISSUE-01, ISSUE-02, ISSUE-07 착수
 ### 브랜치
 현재 브랜치 `feat/ai/object-detection`을 그대로 사용한다(§24 참고).
 
-### ISSUE-01 — `docs/requirements.md`
+### ISSUE-01 — `../../docs/ai/detection/requirements.md`
 기존 초안이 있으므로 삭제 후 재작성하지 말고 병합·정합화한다. 필수 내용: 프로젝트 목적,
 Detect-first 파이프라인, 입력과 출력, person class, Pose trigger, confidence 초기값,
 최소 bbox 크기, 자세 상태, 주요 keypoint, Definition of Done, 제외 범위.
@@ -1098,7 +1098,7 @@ bbox_width >= 80 px
 bbox_height >= 80 px
 ```
 
-### ISSUE-02 — `docs/dataset_selection.md`(신규)
+### ISSUE-02 — `../../docs/ai/detection/dataset_selection.md`(신규)
 필수 내용: 실제 확인한 데이터셋 후보, 출처, bbox 포함 여부, 이미지 수, 라벨 형식,
 재난/실내/저조도 유사성, 라이선스, 변환 난이도, 장단점, 최종 선정 또는 보류(보류 시 필요 정보), class map.
 
@@ -1130,7 +1130,7 @@ bbox_height >= 80 px
 - **D (71641, 사용 불가)** — 내용만 보면 keypoint와 BBOX를 모두 갖춘 최적의 데이터셋이지만,
   **보건의료 데이터로 안심존을 통해서만 개방되고 IRB 심의 결과 통지서가 필요하다**(§11.1).
   로컬 다운로드·학습이 불가능하므로 이번 스프린트에서 제외한다. **내용이 좋다는 이유로 무리하게
-  시도하지 말 것.** 이 판단 근거를 `docs/dataset_selection.md`에 반드시 기록한다.
+  시도하지 말 것.** 이 판단 근거를 `../../docs/ai/detection/dataset_selection.md`에 반드시 기록한다.
 
 **확인 필요 (신청 전 사용자가 페이지에서 직접 볼 것)**
 - A와 B의 **JSON 라벨 스키마 실제 구조** — 필드명, bbox 좌표계(xyxy/xywh/절대/정규화)는 페이지 요약만으로
@@ -1474,7 +1474,7 @@ Tracking(ByteTrack)은 Drop에서 제외되어 **Must에 포함**된다(§6 채�
 > 아래는 §26의 실행 순서 변경(파이프라인 우선)에 맞춰 재정의한 기준이다.
 
 ### 화요일
-`docs/requirements.md` 정합화, `docs/dataset_selection.md` 작성,
+`../../docs/ai/detection/requirements.md` 정합화, `../../docs/ai/detection/dataset_selection.md` 작성,
 `schemas.py` / `object_detector.py` / `pose_estimator.py` / `main.py` 구현,
 사전학습 모델로 **person bbox + keypoint(원본 좌표 복원)까지 출력**,
 테스트 영상 4종(standing/sitting/bending/lying) 확보.
@@ -1537,7 +1537,7 @@ AI-Hub 데이터가 끝내 확보되지 않아도 아래는 반드시 충족한�
 | 5 | `aihubshell`의 Windows 동작 여부 미확인 | 경미(대안 있음) | 사용자 | §11.1 |
 | 6 | `notebooks/` 디렉터리 용도 불명 | 경미 | 팀 | §8 |
 | 7 | **명세 이탈 2건(BoT-SORT, ReID) 미승인** | **팀 결정 필요** | 팀 | §0 |
-| 8 | `docs/requirements.md`가 최초 초안 상태(클래스 4종) | 문서 정합 | ISSUE-01 | §6 |
+| 8 | `../../docs/ai/detection/requirements.md`가 최초 초안 상태(클래스 4종) | 문서 정합 | ISSUE-01 | §6 |
 | 9 | `requirements.txt`에 `lap`·`onnxruntime` 미반영 | 재현성 | 사용자 승인 후 | §7 |
 | 10 | 자세 임계값 4개가 실측 근거 없는 임의값 | 신뢰도 | 테스트 영상 확보 후 | §15 |
 | 11 | Detect 상시 15FPS 미달 (현재 11.5, 데스크톱 GPU·4명) | 성능 | ISSUE-06 | §0 |

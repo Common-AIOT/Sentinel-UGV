@@ -222,6 +222,11 @@ python -m bench.pipeline_bench   # results/pipeline_bench_summary.csv
 
 > 📄 RAM 예산과 실측 기록은 [`docs/메모리-예산.md`](docs/메모리-예산.md)에 정리합니다(팀 공유용).
 > 예상 예산표 + 젯슨에서 채우는 실측 템플릿이 들어 있습니다.
+> Jetson 자원 측정은 [`docs/Jetson-자원-측정-런북.md`](docs/Jetson-자원-측정-런북.md)의
+> 자동 로거로 baseline·실행 중 peak·종료 60초 후 값을 함께 남깁니다.
+> 실제 Jetson 작업 명령은
+> [`docs/Jetson-자원-측정-테스트-매뉴얼.md`](docs/Jetson-자원-측정-테스트-매뉴얼.md)를
+> 위에서부터 순서대로 실행합니다.
 > 전체 STT·GMS·E2E·자원 통과 기준과 공통 결과 필드는
 > [`docs/정량-검증-기준.md`](docs/정량-검증-기준.md)를 따릅니다.
 

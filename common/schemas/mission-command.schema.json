@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sentinel-ugv.xyz/schemas/mission-command.schema.json",
+  "title": "MISSION_COMMAND 본문",
+  "description": "임무 제어 명령이다. Spring 이 `cmd/mission`(QoS 1, Retain 금지)으로 발행하고 젯슨 mission_manager_node 가 구독한다(31-4). 대상 임무는 봉투의 missionId 다.\n\n젯슨은 수락·거부를 `acks` 채널의 COMMAND_ACK 로 회신한다(command-ack.schema.json). QoS 1 이라 같은 명령이 두 번 도착할 수 있으므로 젯슨은 commandId 로 멱등 처리한다(31-4).\n\n`cmd/drive`(수동 조종)는 이 스키마가 아니라 MANUAL_DRIVE_COMMAND 다(31-13 2단계).",
+  "type": "object",
+  "required": ["commandId", "type"],
+  "additionalProperties": false,
+  "properties": {
+    "commandId": {
+      "description": "명령 멱등 키. 서버가 생성하고 control_commands.command_id 에 저장한다. ACK 가 이 값을 되돌려 요청과 결과를 잇는다.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "type": {
+      "description": "START 시작, PAUSE 일시정지, RESUME 재개, RETURN 복귀, STOP 종료 (27.4).",
+      "type": "string",
+      "enum": ["START", "PAUSE", "RESUME", "RETURN", "STOP"]
+    }
+  }
+}

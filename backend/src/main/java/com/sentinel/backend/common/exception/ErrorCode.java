@@ -23,7 +23,12 @@ public enum ErrorCode {
     // 미디어 (31-7 업로드 계약)
     ENCOUNTER_NOT_FOUND(HttpStatus.NOT_FOUND, "ENCOUNTER-001", "encounter 를 찾을 수 없습니다. encounter 적재가 선행되어야 합니다."),
     MEDIA_NOT_FOUND(HttpStatus.NOT_FOUND, "MEDIA-001", "미디어 자산을 찾을 수 없습니다."),
-    MEDIA_UPLOAD_INCOMPLETE(HttpStatus.BAD_REQUEST, "MEDIA-002", "스토리지에서 업로드를 확인하지 못했습니다.");
+    MEDIA_UPLOAD_INCOMPLETE(HttpStatus.BAD_REQUEST, "MEDIA-002", "스토리지에서 업로드를 확인하지 못했습니다."),
+
+    // 로봇/임무
+    ROBOT_NOT_FOUND(HttpStatus.NOT_FOUND, "ROBOT-001", "등록된 로봇을 찾을 수 없습니다."),
+    MISSION_NOT_FOUND(HttpStatus.NOT_FOUND, "MISSION-001", "임무를 찾을 수 없습니다."),
+    MISSION_ALREADY_ACTIVE(HttpStatus.CONFLICT, "MISSION-002", "해당 로봇에 진행 중인 임무가 이미 있습니다.");
 
     private final HttpStatus httpStatus;
     private final String code;

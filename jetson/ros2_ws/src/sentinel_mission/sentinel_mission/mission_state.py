@@ -43,7 +43,7 @@ home pose와 Nav2 목표 전송이 필요하다(23.5). 둘 다 이 티켓 범위
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 
 
@@ -118,6 +118,23 @@ POST_RECORDING_SECONDS = 3
 MAX_INTERACTION_SECONDS = 300
 # 후보가 빈 배열로 이 시간 이어지면 사람을 놓친 것으로 본다.
 PERSON_LOST_SECONDS = 3.0
+
+
+def format_utc(moment: datetime) -> str:
+    """`encounter.schema.json`과 `mission-status.schema.json`의 pattern에 맞춘다.
+
+    밀리초까지만 쓰고 반드시 `Z`로 끝난다. 지역 시간대 오프셋을 보내면 백엔드마다
+    다르게 해석될 수 있어 스키마가 `Z`를 강제한다.
+
+    노드 파일이 아니라 여기 두는 이유는 CI에서 검증하기 위해서다. 노드는 `rclpy`를
+    import하므로 시험이 그것을 가져오면 ROS 없는 컨테이너에서 실패한다.
+    `sentinel_recorder`의 `segment_store.format_utc`와 같은 자리다.
+    """
+    return (
+        moment.astimezone(timezone.utc)
+        .isoformat(timespec='milliseconds')
+        .replace('+00:00', 'Z')
+    )
 
 
 @dataclass

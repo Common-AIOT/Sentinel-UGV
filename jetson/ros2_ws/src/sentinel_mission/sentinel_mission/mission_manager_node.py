@@ -48,7 +48,12 @@ from datetime import datetime, timezone
 
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
+from rclpy.qos import (
+    QoSDurabilityPolicy,
+    QoSHistoryPolicy,
+    QoSProfile,
+    QoSReliabilityPolicy,
+)
 from std_msgs.msg import String
 
 from .mission_state import (
@@ -57,18 +62,10 @@ from .mission_state import (
     MissionStateMachine,
     Phase,
     Signal,
+    format_utc,
 )
 
 SCHEMA_VERSION = '1.0'
-
-
-def format_utc(moment: datetime) -> str:
-    """encounter.schema.json의 pattern에 맞춘다. 밀리초까지만 쓴다."""
-    return (
-        moment.astimezone(timezone.utc)
-        .isoformat(timespec='milliseconds')
-        .replace('+00:00', 'Z')
-    )
 
 
 class MissionManagerNode(Node):
@@ -105,8 +102,22 @@ class MissionManagerNode(Node):
         self.encounter_pub = self.create_publisher(
             String, self._param('encounter_topic'), reliable
         )
+        # status는 TRANSIENT_LOCAL이다. MQTT Retain에 대응하는 ROS 설정이다.
+        #
+        # 이 토픽은 상태가 바뀔 때만 발행한다. 그래서 나중에 뜬 구독자는 다음 전이가
+        # 일어날 때까지 현재 상태를 모른다. 전이는 몇 분에 한 번일 수 있다.
+        # `cloud_bridge`가 그 사이에 관제로 "임무 상태 모름"을 계속 보내게 된다.
+        #
+        # TRANSIENT_LOCAL이면 늦게 붙은 구독자도 마지막 값을 즉시 받는다. 31-4가
+        # state 채널에 Retain을 쓴 것과 같은 이유다.
+        status_qos = QoSProfile(
+            reliability=QoSReliabilityPolicy.RELIABLE,
+            durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
+            history=QoSHistoryPolicy.KEEP_LAST,
+            depth=1,
+        )
         self.status_pub = self.create_publisher(
-            String, self._param('status_topic'), reliable
+            String, self._param('status_topic'), status_qos
         )
 
         # 사람 후보는 프레임마다 오고 한 프레임을 놓쳐도 다음이 온다. 탐지 노드가

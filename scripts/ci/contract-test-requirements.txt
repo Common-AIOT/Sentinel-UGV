@@ -1,0 +1,20 @@
+# test:message-contract 가 쓰는 파이썬 패키지 (S15P11A301-135).
+#
+# .gitlab-ci.yml 과 scripts/ci/run_contract_tests.sh 가 이 파일 하나를 읽습니다.
+# 목록을 두 곳에 적으면 갈라집니다. 실제로 갈라져서 CI를 두 번 깼습니다 —
+# 로컬에는 시스템 파이썬에 requests가 있어 보였고 CI 컨테이너에는 없었습니다.
+#
+# ROS(rclpy)는 넣지 않습니다. 계약을 다루는 모듈이 rclpy를 import하지 않는 것이
+# 이 검증의 전제이고, 넣으면 그 규칙이 깨져도 CI가 잡지 못합니다.
+
+# 스키마 검증
+jsonschema
+
+# mqtt_client 가 CHANNEL_POLICY 를 넘길 때 쓰는 상수와 타입
+paho-mqtt>=2.1
+
+# upload_client 가 Presigned URL 로 PUT 할 때 쓴다 (S15P11A301-124).
+# package.xml 의 python3-requests 와 같은 의존성이다.
+requests
+
+pytest

@@ -27,12 +27,15 @@ Outbox → 영상 → telemetry 순서를 정했다. 순서가 뒤바뀌면 서�
 
 from __future__ import annotations
 
+import json
+
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 from sensor_msgs.msg import CompressedImage, LaserScan
+from std_msgs.msg import String
 
-from .message_mapper import MessageMapper
+from .message_mapper import SAFETY_STATE_BY_MISSION_STATE, MessageMapper
 from .mqtt_client import MqttPublisher
 from .outbox_repository import OutboxRepository
 from .system_metrics import ComputeMetrics
@@ -68,6 +71,8 @@ class CloudBridgeNode(Node):
         self.declare_parameter('telemetry_period_seconds', 0.5)
         self.declare_parameter('camera_topic', '/camera/image_raw/compressed')
         self.declare_parameter('scan_topic', '/scan')
+        # mission_manager가 발행하는 임무 상태(26.2). 이 노드는 읽기만 한다.
+        self.declare_parameter('mission_status_topic', '/mission/status')
         self.declare_parameter(
             'outbox_path', '/var/lib/sentinel/bridge/outbox.sqlite3'
         )
@@ -92,6 +97,9 @@ class CloudBridgeNode(Node):
         # 않으므로 콜백을 가볍게 유지한다.
         self._camera_last_seen: float | None = None
         self._scan_last_seen: float | None = None
+        # 마지막으로 받은 임무 상태. mission_manager가 상태 변경 시에만 발행하므로
+        # 여기 들고 있다가 1초 heartbeat마다 관제로 내보낸다(31-4).
+        self._mission_status: dict | None = None
 
         # BEST_EFFORT로 구독한다. RELIABLE 구독자는 BEST_EFFORT 발행자와 호환되지
         # 않아 메시지를 하나도 받지 못하지만, 그 반대는 문제가 없다.
@@ -114,6 +122,22 @@ class CloudBridgeNode(Node):
         )
         self.create_subscription(
             LaserScan, self._param('scan_topic'), self._on_scan, sensor_qos
+        )
+
+        # 임무 상태는 TRANSIENT_LOCAL로 구독한다. mission_manager가 같은 설정으로
+        # 발행하므로, 이 노드가 나중에 떠도 마지막 상태를 즉시 받는다. VOLATILE로
+        # 구독하면 다음 전이까지 관제에 "임무 상태 모름"을 계속 보내게 된다.
+        self.mission_status_qos = QoSProfile(
+            reliability=QoSReliabilityPolicy.RELIABLE,
+            durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
+            history=QoSHistoryPolicy.KEEP_LAST,
+            depth=1,
+        )
+        self.mission_status_sub = self.create_subscription(
+            String,
+            self._param('mission_status_topic'),
+            self._on_mission_status,
+            self.mission_status_qos,
         )
 
         self.mqtt = MqttPublisher(
@@ -160,6 +184,41 @@ class CloudBridgeNode(Node):
     def _on_scan(self, _message: LaserScan) -> None:
         self._scan_last_seen = self._now()
 
+    def _on_mission_status(self, message: String) -> None:
+        """mission_manager의 임무 상태를 받아 둔다.
+
+        상태 변경 시에만 오므로 여기 보관하고 1초 heartbeat마다 내보낸다(31-4).
+        """
+        try:
+            payload = json.loads(message.data)
+        except json.JSONDecodeError as error:
+            self.get_logger().warn(f'임무 상태 JSON 해석 실패: {error}')
+            return
+        if not isinstance(payload, dict) or 'state' not in payload:
+            self.get_logger().warn(
+                '임무 상태 본문에 state가 없다. mission-status.schema.json을 확인한다.'
+            )
+            return
+
+        previous = (self._mission_status or {}).get('state')
+        self._mission_status = payload
+        if payload['state'] != previous:
+            self.get_logger().info(
+                f"임무 상태 수신: {previous or '(없음)'} → {payload['state']}"
+            )
+
+    def _mission_manager_alive(self) -> bool:
+        """mission_manager가 떠 있는가.
+
+        보관한 상태를 계속 보내면 안 되기 때문에 확인한다. state 채널은 Retain이라
+        관제가 마지막 값을 계속 보게 되는데, 노드가 죽은 뒤에도 EXPLORING이 남으면
+        운영자가 로봇이 탐사 중이라고 믿는다. 안전 문제다.
+
+        발행자 수를 쓴다. 이 토픽은 상태 변경 시에만 발행되므로 마지막 수신 시각으로
+        생존을 판단할 수 없다. 전이가 몇 분에 한 번일 수 있다.
+        """
+        return self.count_publishers(self._param('mission_status_topic')) > 0
+
     def _fresh(self, last_seen: float | None) -> bool | None:
         """None은 "한 번도 못 받음"이고 False는 "받다가 끊김"이다.
 
@@ -194,16 +253,41 @@ class CloudBridgeNode(Node):
     def _publish_state(self) -> None:
         if not self.mqtt.connected:
             return
-        # 임무 상태 머신(14.1, 26.2)이 아직 없으므로 안전 기본값을 보낸다.
-        # 값을 지어내지 않고 null로 두어 관제가 "모름"을 알 수 있게 한다.
+        alive = self._mission_manager_alive()
+        status = self._mission_status if alive else None
+
+        if status is not None:
+            mission_state = status.get('state')
+            # 26.2 상태를 31-5의 safetyState enum으로 옮긴다. 매핑에 없는 상태는
+            # 조용히 넘기지 않는다. RUNNING으로 기본값을 주면 정지해야 하는 상태가
+            # 관제에 주행 중으로 보인다.
+            safety_state = SAFETY_STATE_BY_MISSION_STATE.get(mission_state)
+            if safety_state is None:
+                self.get_logger().warn(
+                    f'모르는 임무 상태 "{mission_state}". '
+                    'SAFETY_STATE_BY_MISSION_STATE에 추가한다. '
+                    '안전을 위해 STOPPED로 보낸다.'
+                )
+                safety_state = 'STOPPED'
+            control_mode = 'MANUAL' if mission_state == 'MANUAL' else 'AUTO'
+        else:
+            # mission_manager가 없으면 임무 상태를 모른다. 값을 지어내지 않고
+            # null로 두어 관제가 "모름"을 알 수 있게 한다. safetyState는 안전
+            # 기본값을 쓴다. 주행을 지시하는 노드가 없으므로 실제로 멈춰 있다.
+            mission_state = None
+            safety_state = 'SAFE_IDLE'
+            control_mode = None
+
         message = self.mapper.state(
-            mission_state=None,
-            control_mode=None,
-            safety_state='SAFE_IDLE',
+            mission_state=mission_state,
+            control_mode=control_mode,
+            safety_state=safety_state,
             active_mission_id=None,
             components={
                 'camera': bool(self._fresh(self._camera_last_seen)),
                 'lidar': bool(self._fresh(self._scan_last_seen)),
+                # 관제가 "임무 상태가 왜 비어 있나"를 구분할 수 있게 한다.
+                'missionManager': alive,
             },
         )
         self.mqtt.publish('state', message)
@@ -220,7 +304,11 @@ class CloudBridgeNode(Node):
             environment=None,
             compute=self.metrics.sample(),
             health=self._health(),
-            mission_state=None,
+            mission_state=(
+                (self._mission_status or {}).get('state')
+                if self._mission_manager_alive()
+                else None
+            ),
         )
         self.mqtt.publish('telemetry', message)
 

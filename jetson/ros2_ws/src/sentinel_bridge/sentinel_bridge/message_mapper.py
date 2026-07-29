@@ -26,6 +26,37 @@ MESSAGE_TYPE_PRESENCE = "ROBOT_PRESENCE"
 MESSAGE_TYPE_STATE = "ROBOT_STATE"
 MESSAGE_TYPE_TELEMETRY = "ROBOT_TELEMETRY"
 
+# 26.2의 임무 상태를 31-5 state 채널의 `safetyState` enum으로 옮긴다.
+#
+# 두 값의 목적이 다르다. `missionState`는 "지금 무엇을 하는 중인가"이고
+# `safetyState`는 "안전하게 멈춰 있는가"다. 관제 화면은 후자로 정지 표시를 낸다.
+#
+# 여기(rclpy를 import하지 않는 모듈)에 두는 이유는 CI에서 검증하기 위해서다.
+# 노드 파일에 두면 시험이 rclpy를 끌어와 ROS 없는 컨테이너에서 실패한다.
+# `message_mapper`와 `mqtt_client`가 ROS를 모르게 유지하는 것이 이 패키지의
+# 규칙이며, 매핑은 순수 데이터이므로 여기가 제자리다.
+#
+# dict로 두고 `.get()`의 기본값을 쓰지 않는다. 상태가 추가될 때 조용히 RUNNING이
+# 되면 정지해야 하는 상태가 관제에 주행 중으로 보인다.
+SAFETY_STATE_BY_MISSION_STATE = {
+    "SAFE_IDLE": "SAFE_IDLE",
+    "EXPLORING": "RUNNING",
+    "PERSON_APPROACHING": "RUNNING",
+    # 사람과 대화하는 동안은 정지 상태다(26.2 이동 불허).
+    "INTERACTING": "STOPPED",
+    "POST_RECORDING": "STOPPED",
+    "REPORTING": "STOPPED",
+    "PAUSED": "STOPPED",
+    # deadman이 눌린 동안만 움직인다. 그 판단은 조종 노드가 하며 여기서는
+    # 모드가 수동이라는 사실만 전한다.
+    "MANUAL": "RUNNING",
+    "RETURNING": "RUNNING",
+    # 임무가 끝나 다음 임무를 받을 수 있는 상태다.
+    "COMPLETED": "READY",
+    "ESTOP": "ESTOP",
+    "ERROR": "FAULT",
+}
+
 
 def utc_now_iso() -> str:
     """31-5의 `sentAt` 형식. UTC만 쓰고 반드시 Z로 끝난다.

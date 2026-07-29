@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import math
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -56,6 +57,23 @@ SAFETY_STATE_BY_MISSION_STATE = {
     "ESTOP": "ESTOP",
     "ERROR": "FAULT",
 }
+
+
+def yaw_from_quaternion(x: float, y: float, z: float, w: float) -> float:
+    """쿼터니언에서 yaw(라디안)만 뽑는다.
+
+    2D SLAM이므로 roll·pitch는 쓰지 않는다. `telemetry.schema.json`의 `pose.yaw`가
+    "라디안, REP-103에 따라 반시계 방향이 양수"로 정의돼 있다.
+
+    `tf_transformations`를 쓰지 않는 이유는 그 패키지가 이 젯슨에 없고
+    (`transforms3d` 의존), 필요한 것이 이 한 줄이기 때문이다. 의존성을 하나 더
+    늘리는 대신 공식을 적는다.
+
+    여기(rclpy를 import하지 않는 모듈)에 두면 CI에서 검증된다. 노드 파일에 두면
+    시험이 rclpy를 끌어와 ROS 없는 컨테이너에서 실패한다(S15P11A301-135).
+    """
+    # ZYX 순서 오일러 각의 yaw 항. atan2를 쓰므로 -pi..pi 범위가 나온다.
+    return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
 
 
 def utc_now_iso() -> str:

@@ -1,0 +1,118 @@
+# slam_toolbox 파라미터 (S15P11A301-137, 명세 23.1·23.2).
+#
+# 젯슨 Orin Nano 8GB에서 스트리밍·녹화·탐지와 함께 돌아야 한다. 32장이 관제 영상을
+# 우선순위로 정했으므로 SLAM이 그것을 밀어내면 안 된다. 그래서 기본값보다 해상도와
+# 갱신 주기를 낮춘다.
+#
+# 오도메트리가 없다. 엔코더가 ESP32 연동(S15P11A301-84·85) 이후이므로 지금은
+# 라이다 스캔 매칭만으로 돈다. `odom → base_footprint`는 launch가 static으로
+# 발행하며, 그러면 로봇의 실제 이동이 전부 `map → odom`에 담긴다.
+#
+# 제자리 회전에서 정확도가 떨어지는 것을 감수한다. 엔코더가 붙으면 ekf_node의
+# `/odometry/filtered`를 입력으로 추가하고 static TF를 걷어낸다(명세 8.2 노드 표).
+slam_toolbox:
+  ros__parameters:
+    # ---------------- 프레임 ----------------
+    # 명세 8.3의 TF 트리를 따른다. map → odom → base_footprint 순서다.
+    odom_frame: odom
+    map_frame: map
+    # base_link가 아니라 base_footprint다. 지면 투영 프레임이 2D SLAM의 기준이다
+    # (REP-105). base_link를 쓰면 차체 높이만큼 오차가 생긴다.
+    base_frame: base_footprint
+    scan_topic: /scan
+
+    # 지도만 만든다. localization 모드는 저장된 지도가 있을 때 쓴다.
+    mode: mapping
+
+    # ---------------- 성능 ----------------
+    # 5cm. 실내 시연 공간에서 사람과 벽을 구분하기에 충분하고, 2.5cm로 낮추면
+    # 같은 면적에 메모리를 네 배 쓴다.
+    resolution: 0.05
+
+    # 지도 갱신 주기(초). 기본 1초보다 늘렸다. 관제 화면이 지도를 실시간으로
+    # 볼 필요는 없고, 갱신마다 전체 occupancy grid를 재발행하므로 비용이 크다.
+    map_update_interval: 2.0
+
+    # X4 Pro의 유효 거리는 10m 남짓이다. 그보다 크게 두면 잡음을 벽으로 잘못
+    # 넣는다.
+    max_laser_range: 10.0
+
+    # 기본값 0.0을 두면 slam_toolbox가 경고를 낸다.
+    #   minimum laser range setting (0.0 m) exceeds the capabilities of the
+    #   used Lidar (0.1 m)
+    # 라이다가 못 보는 구간을 "장애물 없음"으로 지도에 넣지 않게 하는 값이다.
+    #
+    # 0.1을 그대로 주면 같은 경고가 계속 나온다. `/scan`의 range_min이 float32
+    # 0.10000000149...이고 slam_toolbox가 그것과 비교하기 때문이다. 0.12를 주면
+    # 조용해지고, 잃는 0.02m는 로봇 반경 안이라 지도에 의미가 없다.
+    min_laser_range: 0.12
+
+    # 0이어야 한다. 오도메트리가 없는 구성에서는 이 값을 두면 SLAM이 아무것도
+    # 하지 않는다.
+    #
+    # slam_toolbox는 "얼마나 움직였는가"를 odom pose로 판단한다. odom →
+    # base_footprint 가 static identity이면 그 값이 항상 (0,0,0)이므로 매 스캔이
+    # "제자리"로 판정돼 버려진다. 처리가 없으니 message filter 큐가 차고
+    # "discarding message because the queue is full" 이 이어진다.
+    #
+    # 실측에서 로봇을 20cm 왕복했는데 pose가 0.000m, 점유 셀이 46개로 고정이었다.
+    # 첫 스캔으로 만든 지도가 그대로 남아 있었을 뿐이다.
+    #
+    # 대신 minimum_time_interval 로 처리 주기를 제한한다. 라이다가 11.6Hz로 오지만
+    # 초당 2회만 처리하므로 CPU 부담은 그것으로 관리된다.
+    minimum_travel_distance: 0.0
+    minimum_travel_heading: 0.0
+
+    # 스캔 처리 주기 상한(초). 라이다가 11.7Hz로 오는데 전부 처리할 필요가 없다.
+    transform_publish_period: 0.05
+    tf_buffer_duration: 10.0
+
+    # 루프 클로저를 켠다. 스캔 매칭만으로 돌면 누적 오차가 커지는데, 같은 자리로
+    # 돌아왔을 때 그것을 잡아 주는 것이 이 기능이다. 오도메트리가 없는 구성에서
+    # 특히 필요하다.
+    do_loop_closing: true
+    loop_search_maximum_distance: 3.0
+    loop_match_minimum_chain_size: 10
+
+    # 지도를 파일로 저장하지 않는다. 시연은 매번 새로 만들고, microSD 쓰기를
+    # 줄인다(TBD-VID-001의 디스크 제약).
+    map_start_pose: [0.0, 0.0, 0.0]
+    enable_interactive_mode: false
+
+    # ---------------- 스캔 매칭 ----------------
+    # 오도메트리가 없으므로 스캔 매칭이 유일한 위치 추정 수단이다. 기본값보다
+    # 탐색 범위를 넓혀 초기 추정이 없는 상태를 보완한다.
+    use_scan_matching: true
+    use_scan_barycenter: true
+    correlation_search_space_dimension: 0.5
+    correlation_search_space_resolution: 0.01
+    correlation_search_space_smear_deviation: 0.1
+
+    scan_buffer_size: 10
+    scan_buffer_maximum_scan_distance: 10.0
+
+    link_match_minimum_response_fine: 0.1
+    link_scan_maximum_distance: 1.5
+
+    # 스캔 처리 주기 상한(초). 0.2면 초당 5회이고 라이다 11.6Hz의 약 절반이다.
+    #
+    # 0.5(초당 2회)에서 시작했다가 0.2로 낮췄다. **0.5보다 낫다는 실측 근거는
+    # 없다.** 처음 측정한 데이터는 사람이 선 꼬임을 피하려 로봇을 들어올린 구간을
+    # 포함해 비교 기준으로 쓸 수 없었다. 라이다를 들면 스캔이 완전히 달라지고
+    # 내려놓을 때 다른 자세로 매칭되므로 궤적이 오염된다.
+    #
+    # 0.2를 쓰는 근거는 이론적인 것이다. 오도메트리가 없으면 스캔 매칭이 유일한
+    # 단서이고, 프레임 간 변화가 작을수록 매칭이 안정적이다. 이 값으로 측정한
+    # 결과(README의 검증 기록)가 나쁘지 않아 되돌릴 이유가 없다.
+    #
+    # 0으로 두지 않는 이유는 정지 중에도 매 스캔을 매칭하면 잡음이 지도와 pose에
+    # 누적되기 때문이다.
+    minimum_time_interval: 0.2
+
+    # ---------------- 솔버 ----------------
+    solver_plugin: solver_plugins::CeresSolver
+    ceres_linear_solver: SPARSE_NORMAL_CHOLESKY
+    ceres_preconditioner: SCHUR_JACOBI
+    ceres_trust_strategy: LEVENBERG_MARQUARDT
+    ceres_dogleg_type: TRADITIONAL_DOGLEG
+    ceres_loss_function: None

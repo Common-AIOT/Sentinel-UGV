@@ -422,3 +422,55 @@ def test_states_that_forbid_movement_are_not_reported_as_running():
         assert SAFETY_STATE_BY_MISSION_STATE[state] != 'RUNNING', state
     assert SAFETY_STATE_BY_MISSION_STATE['ESTOP'] == 'ESTOP'
     assert SAFETY_STATE_BY_MISSION_STATE['ERROR'] == 'FAULT'
+
+
+def test_yaw_from_quaternion_matches_known_rotations():
+    """2D SLAM의 yaw 계산. tf_transformations가 없어 직접 구현했다.
+
+    부호를 틀리면 관제 지도에서 로봇이 반대 방향을 본다. REP-103은 반시계
+    방향을 양수로 정한다.
+    """
+    import math
+
+    from sentinel_bridge.message_mapper import yaw_from_quaternion
+
+    cases = [
+        # (x, y, z, w, 기대 각도(도))
+        (0.0, 0.0, 0.0, 1.0, 0.0),
+        (0.0, 0.0, math.sin(math.pi / 4), math.cos(math.pi / 4), 90.0),
+        (0.0, 0.0, math.sin(-math.pi / 4), math.cos(-math.pi / 4), -90.0),
+        (0.0, 0.0, math.sin(math.pi / 6), math.cos(math.pi / 6), 60.0),
+    ]
+    for x, y, z, w, expected in cases:
+        actual = math.degrees(yaw_from_quaternion(x, y, z, w))
+        assert abs(actual - expected) < 1e-6, f'{(x, y, z, w)} → {actual}, 기대 {expected}'
+
+    # 180도는 +180과 -180이 같은 회전이므로 절댓값으로 본다.
+    assert abs(math.degrees(yaw_from_quaternion(0.0, 0.0, 1.0, 0.0))) == 180.0
+
+
+def test_pose_body_satisfies_the_telemetry_schema():
+    """SLAM이 채우는 pose가 계약을 만족하는지 (S15P11A301-137)."""
+    import math
+
+    jsonschema = pytest.importorskip('jsonschema')
+    from sentinel_bridge.message_mapper import MessageMapper, yaw_from_quaternion
+
+    schema = _load_schema('telemetry.schema.json')
+    validator = jsonschema.Draft202012Validator(schema)
+
+    mapper = MessageMapper('SENTINEL-01')
+    pose = {
+        'x': 1.234,
+        'y': -0.567,
+        'yaw': round(yaw_from_quaternion(0.0, 0.0, math.sin(0.3), math.cos(0.3)), 4),
+        'mapId': 'c81f6d20-5a47-4e93-b2d8-1f70e4a95c33',
+    }
+    message = mapper.telemetry(pose=pose)
+    errors = list(validator.iter_errors(message['data']))
+    assert not errors, [error.message for error in errors]
+
+    # SLAM이 없을 때는 null이다. 값을 지어내면 관제가 원점에 로봇을 그린다.
+    absent = mapper.telemetry(pose=None)
+    assert absent['data']['pose'] is None
+    assert not list(validator.iter_errors(absent['data']))

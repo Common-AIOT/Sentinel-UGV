@@ -8,6 +8,11 @@
   <license>Apache-2.0</license>
 
   <exec_depend>rclpy</exec_depend>
+  <!--
+    map 에서 base_footprint 로의 변환을 조회해 telemetry 의 pose 를 채운다
+    (S15P11A301-137). SLAM 이 없으면 조회가 실패하고 pose 는 null 이 된다.
+  -->
+  <exec_depend>tf2_ros</exec_depend>
   <exec_depend>std_msgs</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>

@@ -16,7 +16,10 @@ services:
     restart: always
 
   backend:
-    image: ${DOCKER_IMAGE:-spring-backend:latest}
+    # 배포는 CI 가 .env 의 DOCKER_IMAGE 로 커밋 SHA 태그를 고정한다 (S15P11A301-130).
+    # 기본값은 .env 에 값이 없을 때의 수동 fallback 이며, 로컬 태그가 아니라
+    # Docker Hub 에서 pull 되도록 계정 접두어를 포함한다.
+    image: ${DOCKER_IMAGE:-wonbne/spring-backend:latest}
     container_name: spring-backend-prod
     environment:
       - SPRING_PROFILES_ACTIVE=prod

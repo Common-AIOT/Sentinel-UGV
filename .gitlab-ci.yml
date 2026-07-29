@@ -208,6 +208,31 @@ test:backend:
     - ./gradlew --no-daemon bootJar -x test
     - ./gradlew --no-daemon test --tests '*MessageContractTest'
 
+# Dockerfile 자체의 오류를 MR 단계에서 잡습니다 (S15P11A301-130).
+#
+# test:backend 가 컴파일을 이미 검증하므로, DinD 빌드는 Dockerfile 이 바뀐
+# MR 로 한정합니다. 푸시는 하지 않습니다.
+#
+# merged results 파이프라인에서는 CI_COMMIT_SHORT_SHA 가 임시 병합 커밋을
+# 가리켜 소스 커밋으로 역산할 수 없습니다(그 경우 CI_MERGE_REQUEST_SOURCE_BRANCH_SHA
+# 를 써야 합니다). 여기서는 푸시하지 않으므로 태그는 검증용 고정 문자열입니다.
+test:backend-dockerfile:
+  stage: test
+  image: docker:24.0.5
+  services:
+    - name: docker:24.0.5-dind
+      command: ["--tls=false"]
+  variables:
+    DOCKER_TLS_CERTDIR: ""
+    DOCKER_HOST: tcp://docker:2375
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes:
+        - backend/Dockerfile
+  script:
+    - cd backend
+    - docker build -t spring-backend:mr-check .
+
 # 공통 메시지 계약 검증입니다 (S15P11A301-128).
 #
 # 명세 31-12가 이 검사를 요구합니다. "Python과 Java가 같은 JSON 계약을 사용하도록
@@ -269,8 +294,11 @@ build:backend-image:
     # 3. 깃랩 시크릿(File 타입)에서 application-prod.yml을 가져와서 리소스 폴더에 생성
     - cp $APPLICATION_PROD_YML src/main/resources/application-prod.yml
 
-    # 4. 이미지 빌드 및 푸시
-    - docker build -t $DOCKER_HUB_USER/spring-backend:latest .
+    # 4. 이미지 빌드 및 푸시 (S15P11A301-130)
+    #    커밋 SHA 태그로 고정해 배포·롤백이 커밋 단위로 추적되게 합니다.
+    #    latest 는 .env 의 DOCKER_IMAGE 가 없을 때의 수동 fallback 용으로만 함께 밉니다.
+    - docker build -t $DOCKER_HUB_USER/spring-backend:$CI_COMMIT_SHORT_SHA -t $DOCKER_HUB_USER/spring-backend:latest .
+    - docker push $DOCKER_HUB_USER/spring-backend:$CI_COMMIT_SHORT_SHA
     - docker push $DOCKER_HUB_USER/spring-backend:latest
   rules:
     # 기본 브랜치에서만 실행합니다. backend 폴더가 바뀐 경우로 한정합니다.
@@ -304,18 +332,26 @@ deploy:ec2:
     # 1. EC2 배포용 디렉토리 생성
     - ssh $EC2_USER@$EC2_HOST "mkdir -p ~/deploy"
 
-    # 2. 실행 파일(compose.prod.yaml) 및 환경변수(.env) 전송
+    # 2. 실행 파일(compose.prod.yaml) 전송
     - scp backend/compose.prod.yaml $EC2_USER@$EC2_HOST:~/deploy/compose.prod.yaml
-    - scp $ENV_PROD $EC2_USER@$EC2_HOST:~/deploy/.env
 
-    # 2-1. MQTT 브로커 설정과 ACL 전송 (S15P11A301-103)
+    # 2-1. 환경변수(.env)를 러너에서 조립해 전송 — 배포 이미지를 이 파이프라인의
+    #      커밋 SHA 로 고정합니다 (S15P11A301-130). ENV_PROD 에 DOCKER_IMAGE 가 있어도
+    #      삭제 후 추가라 멱등이고, printf 의 선행 개행은 ENV_PROD 끝에 개행이 없을 때
+    #      마지막 줄에 이어붙는 사고를 막습니다 (dotenv 는 빈 줄을 무시합니다).
+    - cp $ENV_PROD env.deploy
+    - sed -i '/^DOCKER_IMAGE=/d' env.deploy
+    - printf '\nDOCKER_IMAGE=%s/spring-backend:%s\n' "$DOCKER_HUB_USER" "$CI_COMMIT_SHORT_SHA" >> env.deploy
+    - scp env.deploy $EC2_USER@$EC2_HOST:~/deploy/.env
+
+    # 2-2. MQTT 브로커 설정과 ACL 전송 (S15P11A301-103)
     # 계정 비밀번호 파일(passwd)은 전송하지 않는다. 비밀이므로 EC2 에서 한 번 생성해
     # 그대로 유지한다. 절차는 docs/private-docs/mqtt-setup.md 를 따른다.
     - ssh $EC2_USER@$EC2_HOST "mkdir -p ~/deploy/mosquitto"
     - scp backend/mosquitto/mosquitto.prod.conf $EC2_USER@$EC2_HOST:~/deploy/mosquitto/mosquitto.conf
     - scp backend/mosquitto/acl $EC2_USER@$EC2_HOST:~/deploy/mosquitto/acl
 
-    # 3. EC2 접속 후 최신 이미지 Pull 및 컨테이너 재시작
+    # 3. EC2 접속 후 고정된 이미지 Pull 및 컨테이너 재시작
     - ssh $EC2_USER@$EC2_HOST "cd ~/deploy && docker compose -f compose.prod.yaml pull && docker compose -f compose.prod.yaml up -d"
   rules:
     # build:backend-image와 동일한 조건입니다.

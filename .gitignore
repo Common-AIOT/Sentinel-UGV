@@ -57,6 +57,11 @@ jetson/ros2_ws/log/
 # 돌면서 원인을 찾기 어려운 증상이 생긴다. build/는 위 Java 규칙이 이미 덮는다.
 /install/
 /log/
+# 패키지 디렉터리 안에서 colcon build를 돌린 경우도 같다. src/<pkg>/install은
+# 그 패키지 하나만 담은 부분 빌드이므로 source하면 나머지 패키지를 못 찾는다.
+jetson/ros2_ws/src/*/install/
+jetson/ros2_ws/src/*/log/
+jetson/ros2_ws/src/*/build/
 jetson/ros2_ws/src/ydlidar_ros2_driver/
 jetson/ros2_ws/src/usb_cam/
 

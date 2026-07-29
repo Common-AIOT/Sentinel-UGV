@@ -24,6 +24,7 @@ from sentinel_mission.mission_state import (  # noqa: E402
     MissionStateMachine,
     Phase,
     Signal,
+    format_utc,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[5]
@@ -404,8 +405,6 @@ def test_published_encounter_satisfies_the_schema():
 
     녹화 노드가 이것을 받으므로 어긋나면 이벤트가 만들어지지 않는다.
     """
-    from sentinel_mission.mission_manager_node import format_utc
-
     machine = exploring()
     confirm(machine, tracks=(7, 8))
     encounter = machine.encounter
@@ -426,8 +425,6 @@ def test_published_encounter_satisfies_the_schema():
 
 
 def test_published_status_satisfies_the_schema():
-    from sentinel_mission.mission_manager_node import format_utc
-
     machine = exploring()
     confirm(machine)
     body = {

@@ -371,3 +371,54 @@ def test_tls_can_be_disabled_for_local_broker():
 
     assert "tls" not in calls
     assert publisher.endpoint == "ws://127.0.0.1:19883/mqtt"
+
+
+def test_every_mission_state_maps_to_a_safety_state():
+    """26.2 상태가 늘면 safetyState 매핑도 함께 늘어야 한다.
+
+    빠뜨리면 정지해야 하는 상태가 관제에 주행 중으로 보인다. 노드는 매핑 실패 시
+    STOPPED로 보내고 경고를 남기지만, 그 전에 여기서 잡는 편이 낫다.
+    """
+    import importlib
+    import sys
+    from pathlib import Path
+
+    # test/ → sentinel_bridge → src 이므로 parents[2]가 src다.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'sentinel_mission'))
+    try:
+        mission_state = importlib.import_module('sentinel_mission.mission_state')
+    except ImportError:
+        import pytest as _pytest
+
+        _pytest.skip('sentinel_mission이 없다. 같은 워크스페이스에서만 검사한다')
+
+    # cloud_bridge_node가 아니라 message_mapper에서 가져온다. 노드는 rclpy를
+    # import하므로 ROS 없는 CI 컨테이너에서 실패한다.
+    from sentinel_bridge.message_mapper import SAFETY_STATE_BY_MISSION_STATE
+
+    missing = [
+        state.value
+        for state in mission_state.MissionState
+        if state.value not in SAFETY_STATE_BY_MISSION_STATE
+    ]
+    assert not missing, f'safetyState 매핑이 없는 상태: {missing}'
+
+    allowed = {'SAFE_IDLE', 'READY', 'RUNNING', 'STOPPED', 'ESTOP', 'FAULT'}
+    wrong = {
+        key: value
+        for key, value in SAFETY_STATE_BY_MISSION_STATE.items()
+        if value not in allowed
+    }
+    assert not wrong, f'state.schema.json의 enum에 없는 값: {wrong}'
+
+
+def test_states_that_forbid_movement_are_not_reported_as_running():
+    """이동을 허용하지 않는 상태가 관제에 RUNNING으로 가면 안 된다."""
+    # cloud_bridge_node가 아니라 message_mapper에서 가져온다. 노드는 rclpy를
+    # import하므로 ROS 없는 CI 컨테이너에서 실패한다.
+    from sentinel_bridge.message_mapper import SAFETY_STATE_BY_MISSION_STATE
+
+    for state in ('INTERACTING', 'POST_RECORDING', 'REPORTING', 'PAUSED'):
+        assert SAFETY_STATE_BY_MISSION_STATE[state] != 'RUNNING', state
+    assert SAFETY_STATE_BY_MISSION_STATE['ESTOP'] == 'ESTOP'
+    assert SAFETY_STATE_BY_MISSION_STATE['ERROR'] == 'FAULT'

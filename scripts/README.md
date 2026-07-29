@@ -104,10 +104,30 @@ cd frontend && npm run dev
 | 스크립트 | 하는 일 |
 |---|---|
 | `ci/validate_repository.sh` | 모노레포 필수 경로·파일, README 동기화, 최상위 산출물 검사 |
+| `ci/validate_schemas.py` | `common/schemas` 자체와 `common/samples` 예제가 봉투·본문 스키마를 만족하는지 |
+| `ci/run_contract_tests.sh` | `test:message-contract` job을 로컬에서 그대로 돌린다 |
+| `ci/contract-test-requirements.txt` | 그 job이 쓰는 파이썬 패키지 목록. CI와 위 스크립트가 같은 파일을 읽는다 |
 
 `.gitlab-ci.yml`의 `lint` 스테이지가 매 파이프라인에서 실행한다. 이 문서에
 없는 스크립트가 `scripts/`에 있으면 실패하므로, 스크립트를 추가하면 위 표에도
-함께 적는다.
+함께 적는다. 검사 범위는 `scripts/*.sh`이며 `scripts/ci/` 아래는 자동 검사되지
+않지만 같은 이유로 여기 적는다.
+
+### 계약 시험은 푸시 전에 로컬에서
+
+```bash
+./scripts/ci/run_contract_tests.sh
+```
+
+젯슨에서 그냥 `pytest`를 돌리면 통과하는데 CI에서 깨지는 일이 반복됐다. 원인은
+환경 차이 두 가지다.
+
+1. 젯슨에는 ROS가 source돼 있어 `PYTHONPATH`로 `rclpy`가 보인다
+2. 시스템 파이썬에 `requests`·`numpy` 같은 것이 이미 깔려 있다
+
+CI 컨테이너(`python:3.10-alpine`)에는 둘 다 없다. 위 스크립트가 전용 venv와
+`env -i`로 그 차이를 없앤다. 실제로 이것을 만들기 전에 같은 원인으로 CI를 두 번
+깼다.
 
 ## 여기 없는 것
 

@@ -1,9 +1,13 @@
 package com.example.backend.common.exception;
 
+import java.util.stream.Collectors;
+
 import com.example.backend.common.response.ApiResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
@@ -30,6 +34,29 @@ public class GlobalExceptionHandler {
         log.warn("잘못된 요청 파라미터: {}", e.getMessage());
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(ApiResponse.error(e.getMessage()));
+    }
+
+    // 1-1. @Valid 본문 검증 실패와 본문 파싱 실패 (400 Bad Request).
+    //      젯슨 업로더는 4xx 를 받아야 잘못된 요청의 재시도를 멈춘다(31-7).
+    //      이것이 500 으로 흐르면 일시 장애로 오인해 무한 재시도에 갇힌다.
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    public ResponseEntity<ApiResponse<?>> handleMethodArgumentNotValid(MethodArgumentNotValidException e) {
+        String detail = e.getBindingResult().getFieldErrors().stream()
+                .map(error -> error.getField() + " " + error.getDefaultMessage())
+                .collect(Collectors.joining(", "));
+        log.warn("요청 본문 검증 실패: {}", detail);
+        ErrorCode errorCode = ErrorCode.INVALID_INPUT_VALUE;
+        return ResponseEntity.status(errorCode.getHttpStatus())
+                .body(ApiResponse.error(errorCode.getCode(),
+                        detail.isBlank() ? errorCode.getMessage() : detail));
+    }
+
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<ApiResponse<?>> handleHttpMessageNotReadable(HttpMessageNotReadableException e) {
+        log.warn("요청 본문 파싱 실패: {}", e.getMessage());
+        ErrorCode errorCode = ErrorCode.INVALID_INPUT_VALUE;
+        return ResponseEntity.status(errorCode.getHttpStatus())
+                .body(ApiResponse.error(errorCode.getCode(), errorCode.getMessage()));
     }
 
     // 2. 그 외에 잡히지 않은 모든 서버 에러 처리 (500 Internal Server Error)

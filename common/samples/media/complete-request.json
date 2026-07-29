@@ -1,0 +1,15 @@
+{
+  "encounterId": "c81f6d20-5a47-4e93-b2d8-1f70e4a95c33",
+  "objectKey": "missions/7a1b9c3d-2e4f-4a5b-8c6d-0e1f2a3b4c5d/encounters/c81f6d20-5a47-4e93-b2d8-1f70e4a95c33/event.mp4",
+  "sizeBytes": 2775794,
+  "sha256": "3f2a9b4e8c1d5a7f2e6b0c9d8a3f4e5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f",
+  "kind": "EVENT_VIDEO",
+  "durationSeconds": 12.4,
+  "recorded": {
+    "detectedAt": "2026-07-28T07:31:02.140Z",
+    "preRollSeconds": 3.2,
+    "postRollSeconds": 3.0,
+    "endReason": "PERSON_LOST",
+    "personCount": 1
+  }
+}

@@ -1,0 +1,126 @@
+{
+  "version": "voice-gms-bench-v1.1",
+  "description": "화자 본인을 포함한 응답 가능 총인원 계약을 적용한 합성 발화 기반 GMS 정보 추출 비교 데이터셋",
+  "cases": [
+    {
+      "caseId": "count-3-only",
+      "text": "여기 대답할 수 있는 사람은 저 포함 세 명이에요.",
+      "expected": {"reportedResponsiveCount": 3, "mobilityStatus": "UNKNOWN", "urgentConditionReported": "UNKNOWN"},
+      "tags": ["count", "unknown-preservation"]
+    },
+    {
+      "caseId": "count-1-digit",
+      "text": "응답할 수 있는 사람은 1명입니다.",
+      "expected": {"reportedResponsiveCount": 1, "mobilityStatus": "UNKNOWN", "urgentConditionReported": "UNKNOWN"},
+      "tags": ["count", "digit"]
+    },
+    {
+      "caseId": "count-speaker-only-negative",
+      "text": "저 말고 대답할 수 있는 사람은 아무도 없어요.",
+      "expected": {"reportedResponsiveCount": 1, "mobilityStatus": "UNKNOWN", "urgentConditionReported": "UNKNOWN"},
+      "tags": ["count", "single-speaker", "negation"]
+    },
+    {
+      "caseId": "mobility-yes",
+      "text": "네, 저는 혼자 걸어서 이동할 수 있어요.",
+      "expected": {"reportedResponsiveCount": null, "mobilityStatus": "YES", "urgentConditionReported": "UNKNOWN"},
+      "tags": ["mobility", "yes"]
+    },
+    {
+      "caseId": "mobility-no",
+      "text": "다리를 다쳐서 움직일 수 없습니다.",
+      "expected": {"reportedResponsiveCount": null, "mobilityStatus": "NO", "urgentConditionReported": "UNKNOWN"},
+      "tags": ["mobility", "no", "critical"]
+    },
+    {
+      "caseId": "mobility-uncertain",
+      "text": "아직 움직여 보지 않아서 이동할 수 있는지는 모르겠어요.",
+      "expected": {"reportedResponsiveCount": null, "mobilityStatus": "UNKNOWN", "urgentConditionReported": "UNKNOWN"},
+      "tags": ["mobility", "unknown-preservation"]
+    },
+    {
+      "caseId": "urgent-yes-bleeding",
+      "text": "옆 사람 팔에서 피가 많이 나고 있어요.",
+      "expected": {"reportedResponsiveCount": null, "mobilityStatus": "UNKNOWN", "urgentConditionReported": "YES"},
+      "tags": ["urgent", "bleeding", "critical"]
+    },
+    {
+      "caseId": "urgent-yes-breathing",
+      "text": "숨을 쉬기가 너무 힘듭니다.",
+      "expected": {"reportedResponsiveCount": null, "mobilityStatus": "UNKNOWN", "urgentConditionReported": "YES"},
+      "tags": ["urgent", "breathing", "critical"]
+    },
+    {
+      "caseId": "urgent-no",
+      "text": "심한 출혈도 없고 숨쉬는 데도 문제없습니다.",
+      "expected": {"reportedResponsiveCount": null, "mobilityStatus": "UNKNOWN", "urgentConditionReported": "NO"},
+      "tags": ["urgent", "negation"]
+    },
+    {
+      "caseId": "all-fields-urgent",
+      "text": "대답할 수 있는 사람은 두 명이고 둘 다 움직일 수 없어요. 한 명은 숨쉬기 힘들어해요.",
+      "expected": {"reportedResponsiveCount": 2, "mobilityStatus": "NO", "urgentConditionReported": "YES"},
+      "tags": ["all-fields", "critical"]
+    },
+    {
+      "caseId": "all-fields-stable",
+      "text": "저희 세 명 모두 대답할 수 있고 스스로 이동할 수 있습니다. 심한 출혈이나 호흡 곤란은 없어요.",
+      "expected": {"reportedResponsiveCount": 3, "mobilityStatus": "YES", "urgentConditionReported": "NO"},
+      "tags": ["all-fields", "negation"]
+    },
+    {
+      "caseId": "partial-count-mobility",
+      "text": "여기 네 명이 대답할 수 있는데 한 사람은 일어날 수 없습니다.",
+      "expected": {"reportedResponsiveCount": 4, "mobilityStatus": "NO", "urgentConditionReported": "UNKNOWN"},
+      "tags": ["count", "mobility", "partial"]
+    },
+    {
+      "caseId": "irrelevant-location",
+      "text": "저희는 창문 옆에 있고 연기가 조금 보여요.",
+      "expected": {"reportedResponsiveCount": null, "mobilityStatus": "UNKNOWN", "urgentConditionReported": "UNKNOWN"},
+      "tags": ["out-of-scope", "unknown-preservation"]
+    },
+    {
+      "caseId": "question-not-answer",
+      "text": "제가 움직일 수 있는지 물어보신 건가요?",
+      "expected": {"reportedResponsiveCount": null, "mobilityStatus": "UNKNOWN", "urgentConditionReported": "UNKNOWN"},
+      "tags": ["question", "unknown-preservation"]
+    },
+    {
+      "caseId": "self-correction",
+      "text": "두 명이요, 아니 잠깐만요. 대답할 수 있는 사람은 세 명입니다.",
+      "expected": {"reportedResponsiveCount": 3, "mobilityStatus": "UNKNOWN", "urgentConditionReported": "UNKNOWN"},
+      "tags": ["count", "self-correction"]
+    },
+    {
+      "caseId": "negated-mobility",
+      "text": "못 움직이는 건 아니고 천천히라면 걸을 수 있어요.",
+      "expected": {"reportedResponsiveCount": null, "mobilityStatus": "YES", "urgentConditionReported": "UNKNOWN"},
+      "tags": ["mobility", "double-negation"]
+    },
+    {
+      "caseId": "other-person-cannot-move",
+      "text": "저는 움직일 수 있지만 옆에 있는 분은 움직이지 못합니다.",
+      "expected": {"reportedResponsiveCount": null, "mobilityStatus": "NO", "urgentConditionReported": "UNKNOWN"},
+      "tags": ["mobility", "group", "critical"]
+    },
+    {
+      "caseId": "pain-only",
+      "text": "허리가 많이 아파요.",
+      "expected": {"reportedResponsiveCount": null, "mobilityStatus": "UNKNOWN", "urgentConditionReported": "UNKNOWN"},
+      "tags": ["symptom", "unknown-preservation"]
+    },
+    {
+      "caseId": "mixed-urgent-negation",
+      "text": "출혈은 없지만 옆 사람이 숨을 제대로 못 쉬어요.",
+      "expected": {"reportedResponsiveCount": null, "mobilityStatus": "UNKNOWN", "urgentConditionReported": "YES"},
+      "tags": ["urgent", "mixed-negation", "critical"]
+    },
+    {
+      "caseId": "no-facts",
+      "text": "네, 제 목소리 들립니다.",
+      "expected": {"reportedResponsiveCount": null, "mobilityStatus": "UNKNOWN", "urgentConditionReported": "UNKNOWN"},
+      "tags": ["no-facts", "unknown-preservation"]
+    }
+  ]
+}

@@ -46,7 +46,7 @@ GUIDE_ASSETS: dict[GuideCode, GuideAsset] = {
     GuideCode.ASK_COUNT: GuideAsset(
         GuideCode.ASK_COUNT,
         "guide_ask_count.wav",
-        "지금 주변에 대화할 수 있는 분이 모두 몇 명인가요?",
+        "본인을 포함해서, 지금 여기 대화할 수 있는 분은 모두 몇 명인가요?",
     ),
     GuideCode.ASK_MOBILITY: GuideAsset(
         GuideCode.ASK_MOBILITY,

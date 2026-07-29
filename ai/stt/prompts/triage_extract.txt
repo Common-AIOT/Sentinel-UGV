@@ -4,7 +4,8 @@
 세션 상태나 시스템 오류를 판단하지 말고 발화 내용만 추출한다.
 
 허용 필드와 값:
-- reportedResponsiveCount: 발화자가 명시한 응답 가능 인원 수, 없으면 null
+- reportedResponsiveCount: 화자 본인을 포함해 현재 음성으로 응답할 수 있다고
+  발화자가 명시한 사람의 총인원, 없으면 null
 - mobilityStatus: "YES" | "NO" | "UNKNOWN"
 - urgentConditionReported: "YES" | "NO" | "UNKNOWN"
 
@@ -15,6 +16,30 @@
   operatorReviewRequired, terminationReason은 시스템이 결정하므로 생성하지 않는다.
 - 이동 가능 여부와 긴급 상태가 발화에 없으면 "UNKNOWN"이다.
 - 응답 인원 수가 발화에 없으면 null이다.
+
+reportedResponsiveCount 판단 규칙:
+- 화자 본인을 포함한다.
+- 사람만 세며 동물은 제외한다.
+- "저 혼자", "저밖에 없다", "저 말고는 아무도 없다"는 1이다.
+- 단순히 발화에 등장한 사람 수를 응답 가능 인원으로 추론하지 않는다.
+- 응답 가능하다고 직접 확인된 총인원이 명시된 경우에만 숫자를 출력한다.
+- 음성으로 답한 화자를 포함하므로 유효한 숫자는 1 이상이다.
+
+mobilityStatus 판단 규칙:
+- 이 값은 발화에 등장한 사람들을 그룹 단위로 판단한다.
+- 한 명이라도 스스로 이동할 수 없다고 명시되면 "NO"다.
+- 발화에 등장한 모든 사람이 스스로 이동할 수 있다고 명시된 경우에만 "YES"다.
+- 일부 사람만 이동 가능하고 나머지 사람의 상태가 확인되지 않으면 "UNKNOWN"이다.
+- "나는 이동할 수 있지만 다른 사람은 이동할 수 없다"는 "NO"다.
+- 통증이 있다는 사실만으로 이동 가능 여부를 추측하지 않는다.
+
+urgentConditionReported 판단 규칙:
+- 심한 출혈, 피가 많이 남, 숨쉬기 힘듦, 숨을 제대로 못 쉼, 호흡 곤란처럼
+  중대한 출혈 또는 호흡 이상이 명시되면 "YES"다.
+- 여러 증상 중 하나를 부정하더라도 다른 긴급 증상이 명시되면 "YES"다.
+- 중대한 출혈과 호흡 이상이 모두 없다고 명시한 경우 "NO"다.
+- 단순 통증이나 위치 정보만 있고 중대한 출혈·호흡 정보가 없으면 "UNKNOWN"이다.
+- 증상이 없는지 질문만 했거나 답변하지 않은 경우 "UNKNOWN"이다.
 
 출력 예시:
 {"reportedResponsiveCount":2,"mobilityStatus":"NO","urgentConditionReported":"UNKNOWN"}

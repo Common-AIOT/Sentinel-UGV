@@ -17,7 +17,7 @@
 |------|------|------|
 | VAD | Silero VAD (로컬) | 노이즈 1차 컷, torch 기반 경량 |
 | STT | faster-whisper **`small`** (로컬, 젯슨은 CPU/int8) | 저SNR·약한발화 강건성 |
-| LLM | **`gpt-5-nano`** (GMS API) | 팀 결정 2026-07-24. 로컬 3b는 젯슨 실측 피크 5.62GB·OOM([근거](docs/메모리-예산.md)) |
+| LLM | **`gpt-5.4-mini`** (GMS API) | Jira 118 프롬프트 v2 실측 44/44 완전 정답으로 선정. 로컬 3b는 젯슨 피크 5.62GB·OOM([근거](docs/메모리-예산.md)) |
 | LLM 폴백 | 키워드 파서(`llm.keyword_extract`) | STT 완료 후 GMS 호출만 실패한 경우의 축소 보고 |
 | 안내 음성 | **승인된 사전녹음 WAV 재생**(`assets/`) | TTS 모델 미탑재로 RAM 절약. 형식 검사는 `python -m tools.validate_guide_assets` |
 | 등급 | 규칙(`safety.triage_rule`) | LLM 자유판단 배제, 재현·설명 가능 |
@@ -42,8 +42,11 @@
 | `bench/` | 측정용 다회차 벤치(지연·일관성) |
 | `tests/` | 하드웨어 없이 실행 가능한 상태머신·안전 규칙 단위 테스트 |
 | `prompts/` | 정보 추출 프롬프트(진단 금지, 사실만) |
-| `docs/` | 실행 런북, 안전 정책, 메모리·정량·오디오 검증 기준 |
+| `docs/` | 실행 런북, 안전 정책, 메모리·정량·오디오 검증 기준과 [팀 공통 용어집](docs/음성-파이프라인-용어집.md) |
 
+AI·음성 담당이 아닌 팀원은 세부 문서를 읽기 전에
+[`docs/음성-파이프라인-용어집.md`](docs/음성-파이프라인-용어집.md)에서
+약어, 평가 지표, 보고 필드와 장애 처리 용어를 확인할 수 있습니다.
 오디오 검사 코드가 수집하는 항목과 산출물은
 [`docs/오디오-입출력-검증-도구.md`](docs/오디오-입출력-검증-도구.md)에 설명합니다.
 실제 장비의 합격 여부는 별도 검증 절차로 판정합니다.
@@ -213,6 +216,42 @@ python -m bench.pipeline_bench   # results/pipeline_bench_summary.csv
 > 전체 STT·GMS·E2E·자원 통과 기준과 공통 결과 필드는
 > [`docs/정량-검증-기준.md`](docs/정량-검증-기준.md)를 따릅니다.
 
+### GMS 후보 모델 비교
+
+STT를 다시 실행하지 않고 합성 발화 20건의 정답 라벨을 기준으로 GMS 모델의
+정보 추출 품질·지연·일관성을 비교합니다.
+
+```bash
+# 데이터셋과 모델 목록만 검사(API 호출·크레딧 사용 없음)
+python -m bench.gms_model_bench --dry-run
+
+# 실제 호출은 예정 호출 수 확인 후 --confirm-live를 명시해야 함
+python -m bench.gms_model_bench \
+  --models gpt-5-nano \
+  --case-id all-fields-urgent \
+  --runs 1 \
+  --confirm-live
+
+# 일부 모델만 시험
+python -m bench.gms_model_bench \
+  --models gpt-5-nano,gpt-5.4-nano \
+  --runs 1 \
+  --confirm-live
+```
+
+기본 후보는 `gpt-5-nano`, `gemini-3.5-flash`, `claude-haiku-4-5-20251001`,
+`claude-sonnet-4-6`, `claude-opus-4-8`, `gpt-5.4-mini`, `gpt-5.4-nano`입니다.
+최종 운영 모델은 `gpt-5.4-mini`이며, 모델명은 GMS에서 실제 허용하는 ID와
+다를 수 있으며, 사용할 수 없는 모델은 전체 시험을 중단하지 않고 오류 건수로
+기록됩니다. Claude와 Gemini는 OpenAI 호환 주소가 아닌 GMS의 Anthropic·Gemini
+전용 엔드포인트로 호출합니다.
+
+결과는 `results/gms-bench/`에 생성되며 기본적으로 Git에 포함되지 않습니다.
+상세한 판정 기준과 결과 파일 설명은
+[`docs/GMS-모델-비교-런북.md`](docs/GMS-모델-비교-런북.md)를 참고합니다.
+단계별 실측 결과와 모델 선정 근거는
+[`docs/GMS-모델-비교-결과.md`](docs/GMS-모델-비교-결과.md)에 누적합니다.
+
 ---
 
 ## 환경 변수 (config 오버라이드)
@@ -222,7 +261,7 @@ python -m bench.pipeline_bench   # results/pipeline_bench_summary.csv
 | `SENTINEL_DEVICE` | 자동(cuda/cpu) | 강제 지정 (젯슨 STT는 `cpu` — CTranslate2 CUDA 없음) |
 | `SENTINEL_COMPUTE` | Jetson=int8, PC=float16 | STT 양자화 |
 | `SENTINEL_STT_MODEL` | small | tiny/base/small/medium/large-v3 |
-| `SENTINEL_LLM` | gpt-5-nano | GMS 모델명 |
+| `SENTINEL_LLM` | gpt-5.4-mini | GMS 모델명 |
 | `GMS_KEY` | (없음, **필수**) | GMS API 키 — `ai/stt/.env`로 관리, 커밋 금지 |
 | `SENTINEL_GMS_BASE` | gms.ssafy.io/…/v1 | GMS OpenAI 호환 엔드포인트 |
 | `SENTINEL_LLM_TIMEOUT` | 10 | STT 완료 후 GMS 호출 시간 초과 시 33-8 키워드 폴백 |
@@ -252,6 +291,8 @@ python -m tools.check_env
 
 ## 알려진 이슈
 
+- **사투리 미지원:** 현재 검증·합격 범위는 표준 한국어와 일반 구어체다. 사투리
+  인식 성능은 측정하지 않으며 최종 STT 점수에도 포함하지 않는다.
 - **근-침묵 환각**: 완전 무음이 아닌 매우 작은 잔향에서 STT가 헛단어를 뱉는 경우가 관측됨.
   현재 `SILENCE_RMS`(원본 RMS 게이트) + `is_valid_stt`(반복/무음확률/프롬프트복사 컷)로 방어하나
   완전하지 않음. 개선 방향: 블록리스트 + 침묵 재녹음 재측정 + STT 프롬프트에서 특정 단어 제거.

@@ -20,4 +20,4 @@ python -m tools.validate_guide_assets --report results/guide-assets.json
 ```
 
 실제 파일 목록과 녹음·장비 검증 절차는
-[`../docs/사전녹음-안내-음성.md`](../docs/사전녹음-안내-음성.md)를 따른다.
+[`../docs/README.md` §6 안내 음성 자산](../docs/README.md)를 따른다.

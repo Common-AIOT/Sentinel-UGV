@@ -42,7 +42,7 @@ VISION 트리거 → 세션 게이트 → 다턴 대화(VAD → STT → 환각 �
 | STT | **faster-whisper `small`** (젯슨 `cpu/int8`) | 저SNR·약한 발화 강건성 |
 | LLM | **GMS API `gpt-5.4-mini`** | 프롬프트 v2 회귀 **44/44 완전 정답** ([data](measurements/GMS-모델-비교-결과.md)) |
 | TTS | **사전녹음 WAV 10개** (모델 미탑재) | RAM 절감 + 자유 생성 문장 위험 제거 |
-| 등급 | 규칙 `voice-risk-v1.0` | 재현·설명·감사 가능 |
+| 등급 | 규칙 `voice-risk-v1.1` | 재현·설명·감사 가능 |
 
 ### 1-2. 파이프라인 흐름
 
@@ -105,14 +105,14 @@ VISION 트리거(/perception/encounter APPROACHED)
 - 로봇은 참고값을 요구조자에게 말하지 않는다. "당신은 적색 환자입니다", "가장 먼저 구조됩니다" 같은 확정 안내를 금지한다.
 - `finalTriage`, `confirmedSeverity`, `medicalPriority` 같은 확정 표현을 생성하지 않는다.
 
-### 2-2. 위험도 참고값 규칙 (`voice-risk-v1.0`)
+### 2-2. 위험도 참고값 규칙 (`voice-risk-v1.1`)
 
 판정 순서 — 위에서 먼저 걸리면 확정:
 
 | 조건 | `riskLevel` | 기존 색상 표시 |
 |---|---|---|
-| `terminationReason`이 `NORMAL`/`UNKNOWN`이 아님 | `UNKNOWN` | 미확인 |
-| `anyResponseDetected == null` | `UNKNOWN` | 미확인 |
+| `anyResponseDetected == null` (관찰 실패) | `UNKNOWN` | 미확인 |
+| `anyResponseDetected == false` **이고** 종료 사유가 `AUDIO_DEVICE_ERROR`·`GMS_UNAVAILABLE` | `UNKNOWN` | 미확인 |
 | `anyResponseDetected == false` | **`IMMEDIATE`** | 적색(즉시) |
 | `urgentConditionReported == YES` | **`IMMEDIATE`** | 적색(즉시) |
 | `mobilityStatus == NO` | `URGENT` | 황색(응급) |
@@ -123,7 +123,7 @@ VISION 트리거(/perception/encounter APPROACHED)
 {
   "riskLevel": "IMMEDIATE",
   "riskReasons": ["긴급 상태가 있다고 발화함"],
-  "ruleVersion": "voice-risk-v1.0",
+  "ruleVersion": "voice-risk-v1.1",
   "operatorReviewRequired": true
 }
 ```
@@ -134,7 +134,26 @@ VISION 트리거(/perception/encounter APPROACHED)
 - 정상적으로 질문을 재생하고 청취했는데 반응이 없을 때만 무응답을 기록할 수 있다.
 - 정보가 부족하면 등급을 추측하지 않고 `UNKNOWN`을 쓴다.
 
-> ⚠️ 첫 두 줄(종료 사유·관찰 실패)이 현재 **수집한 값을 버리는 문제**를 만든다. §11-2 참고.
+**종료 사유는 게이트가 아니라 부가 정보다(v1.1, S15P11A301-179).** 관찰이 완료됐다면
+수집한 값으로 등급을 계산하고, 세션이 중간에 끝났다는 사실은 `riskReasons`에
+`"세션 미완료: <사유>"`로 **덧붙인다**. 관찰 근거가 먼저, 절차 정보가 뒤에 온다.
+
+```python
+{'riskLevel': 'IMMEDIATE',
+ 'riskReasons': ['긴급 상태가 있다고 발화함', '세션 미완료: TIMEOUT'],
+ 'ruleVersion': 'voice-risk-v1.1', 'operatorReviewRequired': True}
+```
+
+> **v1.0의 문제** — 종료 사유가 `NORMAL`이 아니면 즉시 `UNKNOWN`을 반환했다. 그래서
+> 네 질문에 모두 답을 받고 마지막 안내만 남은 세션이 제한 시간을 1초 넘기면,
+> `urgentConditionReported=YES`가 잡혀 있어도 `riskLevel`이 `UNKNOWN`이 됐다.
+> `riskLevel`은 관제가 우선순위를 정렬하는 필드이므로 이는 보수적 처리가 아니라
+> **알고 있던 정보를 버려서 늦어지는 것**이다. `ABORTED_SAFETY`에서 특히 위험했다 —
+> 위험해서 대피한 상황의 정보가 사라진다.
+
+**단, 관찰 실패는 여전히 단락한다.** `anyResponseDetected`가 `null`이면 관찰 자체를
+못 한 것이므로 `UNKNOWN`이다. `false`가 왔더라도 종료 사유가 장치·연결 실패면
+무응답으로 확정하지 않는다 — **시스템 실패를 요구조자 무응답으로 바꾸지 않는다**(33-3).
 
 ### 2-3. 왜 의료 triage가 아닌가
 
@@ -354,7 +373,7 @@ GMS가 **생성하지 않는** 필드: `responseScope`(시스템 고정) · `any
   "riskAssessment": {
     "riskLevel": "IMMEDIATE",
     "riskReasons": ["긴급 상태가 있다고 발화함"],
-    "ruleVersion": "voice-risk-v1.0",
+    "ruleVersion": "voice-risk-v1.1",
     "operatorReviewRequired": true
   },
   "usedFallback": false
@@ -415,8 +434,8 @@ INTRO → COUNT → MOBILITY → URGENT → CLOSING
 3. **안내 음성이 끝나는 즉시 녹음이 시작된다.** 별도 신호가 없다. 청취창은 고정 길이라
    답을 마쳐도 시간이 끝날 때까지 기다린다.
 
-세션 제한 시간은 **120초**이며 **질문 사이에서만** 검사한다(진행 중인 녹음·STT를
-중단하지 않는다). 정상 세션은 약 75초에 끝나므로 도달하지 않는 비상 상한이다.
+세션 제한 시간은 **180초**이며 **질문 사이에서만** 검사한다(진행 중인 녹음·STT를
+중단하지 않는다). 정상 세션은 약 75초에 끝나므로 도달하지 않는 비상 상한이다. 초과해도 그때까지 수집한 값의 등급은 유지된다(§11-2).
 
 ### 4-2. 응답 4분류 (명세 33-3)
 
@@ -883,7 +902,7 @@ A와 같게 진행하되 MOBILITY에서만 `"글쎄요… 잘 모르겠어요."`
 
 - `[LLM] … 추출 경로` 줄이 **없어야** 함 (있으면 GMS 호출 실패)
 - `[WARN] … 안내 음성 재생 실패`가 **없어야** 함
-- `E2E < 120s` (초과 시 `terminationReason=TIMEOUT`으로 격하)
+- `E2E < 180s` (초과해도 수집한 값의 등급은 유지된다)
 - **5개 질문 WAV가 스피커로 실제 들렸는가** — 로그만으로 판단 불가
 
 ---
@@ -1249,37 +1268,26 @@ CI 검증) 변경이므로 백엔드 파싱·DB·프론트 표시·명세 33-6�
 `operatorReviewRequired`가 항상 `true`이므로 사람이 원문을 읽어 만회할 수 있다.
 **"미구현"과 "조용히 소실"은 다른 등급이며, 최소한 후자는 막는다.**
 
-### 11-2. 세션 미완료 시 수집 결과가 버려진다 ⚠️
+### 11-2. ✅ 세션 미완료 시 수집 결과 폐기 — 해결됨 (S15P11A301-179)
 
-`risk_assessment()`의 첫 조건이 `terminationReason`을 **게이트**로 사용한다.
+**v1.0의 문제.** `risk_assessment()`의 첫 조건이 `terminationReason`을 게이트로 써서,
+네 질문에 모두 답을 받고 CLOSING 안내만 남은 세션이 제한 시간을 1초 넘기면
+`urgentConditionReported=YES`가 잡혀 있어도 `riskLevel`이 `UNKNOWN`이 됐다.
+`riskReasons`도 `"시스템 종료 사유: TIMEOUT"` 한 줄뿐이라 관제 담당자가 요구조자
+상태를 읽을 수 없었다. `ABORTED_SAFETY`에서 특히 위험했다.
 
-```python
-if report["terminationReason"] not in {"NORMAL", "UNKNOWN"}:
-    return {"riskLevel": "UNKNOWN", "riskReasons": [f"시스템 종료 사유: …"], …}
-```
+**v1.1의 해결.** 종료 사유를 게이트에서 부가 정보로 바꿨다(§2-2). 관찰이 완료됐으면
+수집한 값으로 등급을 계산하고 `"세션 미완료: <사유>"`를 근거에 덧붙인다. 관찰 자체를
+못 한 경우(`anyResponseDetected == null`)와 장치·연결 실패에 `false`가 함께 온
+경우만 `UNKNOWN`으로 단락한다.
 
-네 질문에 모두 답을 받고 CLOSING 안내만 남은 상태에서 120초를 1초 넘기면,
-`urgentConditionReported=YES`가 이미 잡혀 있어도 `riskLevel`이 `IMMEDIATE`가 아니라
-`UNKNOWN`이 된다. `riskReasons`도 `"시스템 종료 사유: TIMEOUT"` 한 줄뿐이어서
-관제 담당자가 요구조자 상태를 읽을 수 없다.
+세션 예산도 **120초 → 180초**로 올렸다. 실측 최대가 111.2초여서 마진이 9초뿐이었고,
+재질문 1회나 CPU STT 지연이 겹치면 초과했다. 다만 예산 상향은 부차적이다 — 얼마로
+늘려도 초과는 언젠가 발생하므로 등급 보존이 본질이다.
 
-`riskLevel`은 관제가 **우선순위를 정렬하는 필드**다. 이는 보수적인 처리가 아니라
-**알고 있던 정보를 버려서 늦어지는** 상황을 만든다.
-
-같은 경로로 새는 사유:
-
-| 사유 | 등급 무효화가 맞나 |
-|---|---|
-| `AUDIO_DEVICE_ERROR` · `GMS_UNAVAILABLE` | ✅ 맞다. 관찰 자체를 못 했다 |
-| `TIMEOUT` · `ABORTED_MANUAL` | ❌ 틀렸다. 관찰은 했다 |
-| **`ABORTED_SAFETY`** | ❌ **가장 위험.** 위험해서 대피한 상황의 정보가 사라진다 |
-
-규칙이 **"관찰을 못 했다"와 "관찰은 했는데 절차가 안 끝났다"를 한 덩어리로 묶었다.**
-구분 기준은 이미 보고서 안에 있다 — `anyResponseDetected`가 `null`인지 여부다.
-
-**수정 방향** — ① 예산 상향(120→180초) ② **부분 결과의 등급 보존**: 관찰이 있었다면
-정상 판정하고 `riskReasons`에 `"세션 미완료: TIMEOUT"`을 **덧붙인다**(덮어쓰지 않고).
-②가 본질이다. 예산을 얼마로 늘려도 초과는 언젠가 나기 때문이다.
+> `ruleVersion`이 `voice-risk-v1.0` → `voice-risk-v1.1`로 올랐다. 같은 버전 문자열이
+> 서로 다른 계산을 뜻하면 보고서를 감사할 수 없다. 과거 보고서도 검증되도록
+> `common/schemas/interaction-report.schema.json`은 두 버전을 모두 허용한다.
 
 ### 11-3. 안내 음성 에코가 응답으로 오인될 수 있다 ⚠️
 
@@ -1372,7 +1380,7 @@ sessions/<timestamp>/
       │
       ├──> [165 echo 가드 + C 재검증] ──> [VAD 보조 게이트] (§11-3 → §11-5, 순서 강제)
       │
-      └──> [타임아웃 결과 보존] (§11-2, 독립·병렬 가능)
+      └──> [타임아웃 결과 보존] ✅ 완료 (§11-2)
 
 [116 관제 ACK·재개 연결]           ← 별도 트랙
 [149 스키마] → [148 적응형 흐름]    ← 팀 합의 필요, MVP 이후
@@ -1396,7 +1404,7 @@ sessions/<timestamp>/
 | `[WARN] … ASSET_NOT_FOUND` | WAV 누락 → `python -m tools.validate_guide_assets` |
 | 계속 `[NOVOICE]`만 뜸 | 마이크 거리·볼륨(`SILENCE_RMS=0.005` 미달) 또는 입력 장치 오선택 |
 | `[LLM] … 추출 경로 FALLBACK` | GMS 호출 실패 → 33-8 축소 동작 중. 키·네트워크·시계 확인 |
-| `terminationReason=TIMEOUT` | 세션 120초 초과 → §11-2 |
+| `terminationReason=TIMEOUT` | 세션 180초 초과. 수집한 값의 등급은 유지된다(§11-2) |
 | 실행이 멈춘 것처럼 보임 (`tee` 사용) | 파이썬 stdout 버퍼링 → `python -u` |
 | `jtop`: "I can't access jtop.service" | 그룹 미적용 → `newgrp jtop` (재부팅 금지) |
 | 재부팅 후 느려짐 | `jetson_clocks`는 부팅마다 초기화 → 재실행 |

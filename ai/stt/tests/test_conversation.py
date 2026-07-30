@@ -124,8 +124,10 @@ class ConversationMachineTest(unittest.TestCase):
         )
 
     def test_timeout_records_reason(self):
-        ticks = iter([0.0, 0.0, 121.0])
         machine, _ = self.machine({})
+        # 예산을 하드코딩하지 않는다. S15P11A301-179에서 120초를 180초로 올렸을 때
+        # 상수를 박아 둔 이 테스트가 조용히 통과하지 않고 깨졌다.
+        ticks = iter([0.0, 0.0, machine.timeout_seconds + 1])
         machine.clock = lambda: next(ticks)
         result = machine.run()
 

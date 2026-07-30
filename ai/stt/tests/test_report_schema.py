@@ -146,8 +146,30 @@ class ReportSchemaTest(unittest.TestCase):
             }
         )
         self.assertEqual(risk["riskLevel"], "UNKNOWN")
-        self.assertIn("AUDIO_DEVICE_ERROR", risk["riskReasons"][0])
+        # 근거 순서는 고정하지 않는다. v1.1은 관찰 근거를 먼저 두고 종료 사유를
+        # 뒤에 덧붙인다. 확인할 것은 실패 사유가 근거에 남는다는 사실이다.
+        self.assertTrue(
+            any("AUDIO_DEVICE_ERROR" in reason for reason in risk["riskReasons"]),
+            risk["riskReasons"],
+        )
         self.assertTrue(risk["operatorReviewRequired"])
+
+    def test_device_failure_with_false_is_not_treated_as_no_response(self):
+        """시스템 실패를 요구조자 무응답으로 바꾸지 않는다(명세 33-3).
+
+        스키마 계약상 장치 실패는 anyResponseDetected=null 이어야 하지만,
+        상위 계층 결함으로 false 가 함께 오면 IMMEDIATE 근거가 되어 버린다.
+        """
+        for termination in ("AUDIO_DEVICE_ERROR", "GMS_UNAVAILABLE"):
+            with self.subTest(termination=termination):
+                risk = risk_assessment(
+                    {
+                        "anyResponseDetected": False,
+                        "terminationReason": termination,
+                    }
+                )
+                self.assertEqual(risk["riskLevel"], "UNKNOWN")
+                self.assertTrue(risk["operatorReviewRequired"])
 
     def test_risk_result_contains_reason_and_rule_version(self):
         risk = risk_assessment(
@@ -162,7 +184,7 @@ class ReportSchemaTest(unittest.TestCase):
         self.assertEqual(
             risk["riskReasons"], ["자력 이동이 불가능하다고 발화함"]
         )
-        self.assertEqual(risk["ruleVersion"], "voice-risk-v1.0")
+        self.assertEqual(risk["ruleVersion"], "voice-risk-v1.1")
 
 
 if __name__ == "__main__":

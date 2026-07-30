@@ -37,4 +37,4 @@ ros2 launch esp32_bridge esp32_bridge.launch.py \
 
 - udev 별칭(`/dev/sentinel_mcu_motor`, `/dev/sentinel_mcu_sensor`)이 이 저장소에 아직 없다. CP2102 클론 보드는 `idVendor:idProduct:serial`이 겹칠 수 있어 별칭만으로 역할을 보장할 수 없으므로, `HELLO_ACK.board_role`(핸드셰이크 로그의 role 불일치 오류)로 실제 역할을 확인하는 쪽을 우선 신뢰한다.
 - 센서 ESP32 워치독을 먹일 주기적 Jetson→센서 트래픽이 프로토콜 표에 없어 HELLO 재전송을 keep-alive로 임시 채택했다 - `docs/03-제어-캘리브레이션.md` §34-7에 addendum 반영 필요.
-- `HELLO_ACK`/`DIAGNOSTIC`/`COMMAND_ACK`/`CONFIG` 페이로드는 문서 §34-5에 없어 이번 작업에서 새로 정의했다(`protocol_constants.py`/`hardware/esp32/jetson-comm/protocol.h` 주석 참고) - 문서 addendum 필요.
+- `HELLO_ACK`/`DIAGNOSTIC`/`COMMAND_ACK`/`CONFIG` 페이로드는 문서 §34-5에 없어 이번 작업에서 새로 정의했다(`protocol_constants.py`/`hardware/esp32/jetson-comm/src/protocol.h` 주석 참고) - 문서 addendum 필요.

@@ -1,6 +1,6 @@
 """Jetson<->ESP32 직렬 프로토콜 상수와 struct 포맷 문자열.
 
-`hardware/esp32/jetson-comm/message_ids.h`, `fault_codes.h`, `protocol.h`와 값이
+`hardware/esp32/jetson-comm/src/message_ids.h`, `fault_codes.h`, `protocol.h`와 값이
 반드시 동일해야 한다(수동 동기화 - 한쪽을 바꾸면 반드시 다른 쪽도 함께 고칠 것).
 struct 포맷 문자열은 `<`(little-endian, 표준 크기, 패딩 없음)로 시작해 C++ 쪽의
 필드별 memcpy 직렬화와 동일한 바이트 배치를 보장한다.

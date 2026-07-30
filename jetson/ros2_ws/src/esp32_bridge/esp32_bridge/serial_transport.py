@@ -16,6 +16,12 @@ import serial
 
 _MAX_ACCUM_BYTES = 256  # MAX_FRAME_BYTES(140)보다 넉넉한 여유
 
+# ESP32 auto-reset 회로가 DTR/RTS로 GPIO0/EN을 제어한다. DTR/RTS를 막 풀어 보드가
+# 리셋에서 빠져나오면 그 순간부터 재부팅이 시작되므로, ESP-IDF 부트로더+FreeRTOS
+# 태스크 초기화가 끝날 때까지 짧게 대기해야 그 사이의 ROM 부팅 배너(74880bps라
+# 우리 baudrate로는 깨진 바이트로 보인다)를 프로토콜 프레임으로 오인하지 않는다.
+_BOOT_SETTLE_S = 1.5
+
 
 class SerialNotConnectedError(Exception):
     """포트가 열려 있지 않은 상태에서 write_frame을 호출했을 때."""
@@ -109,12 +115,25 @@ class SerialTransport:
     def _connect(self) -> bool:
         try:
             new_serial = serial.Serial(self._port_name, self._baudrate, timeout=0.2)
+            # pyserial이 포트를 열면서 DTR/RTS를 assert된 채로 두면 auto-reset 회로가
+            # 보드를 계속 리셋 상태에 붙잡아 앱이 아예 부팅하지 못한다. 명시적으로 풀어준다.
+            new_serial.dtr = False
+            new_serial.rts = False
         except (serial.SerialException, OSError) as exc:
             self._log(
                 "warn",
                 f"{self._port_name} not available ({exc}), retrying in {self._reconnect_delay_s}s",
             )
             return False
+
+        # self._serial에 대입하기 전에 대기한다 - write_frame()이 "연결됨"으로 보고
+        # 재부팅 도중에 HELLO를 흘려보내는 레이스를 막는다.
+        time.sleep(_BOOT_SETTLE_S)
+        try:
+            new_serial.reset_input_buffer()  # 대기 중 쌓인 ROM 부팅 배너 잔재를 버린다
+        except (serial.SerialException, OSError):
+            pass
+
         with self._serial_lock:
             self._serial = new_serial
         self._log("info", f"{self._port_name} connected at {self._baudrate}bps")

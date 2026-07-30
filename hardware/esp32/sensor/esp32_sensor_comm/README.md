@@ -2,10 +2,12 @@
 
 센서 ESP32의 Jetson 통신 계층 스케치. `encoder/` 및 `total/` 아래 벤치 테스트 스케치(`mt6701_test_sample`, `mt6701_address_test`, `dual_mt6701_test_sample`, `total_mt6701_test`, `total_sensor_test`)는 이 스케치와 별개로 그대로 유지된다.
 
+**빌드 전 필수**: `jetson-comm`을 Arduino 라이브러리로 설치해야 한다 — `../../jetson-comm/README.md`의 "설치" 절 참고(정션 없이 그냥 열면 링크 단계에서 undefined reference 오류가 난다).
+
 ## 범위
 
 포함:
-- `../../jetson-comm/protocol.h` 기반 COBS+CRC16 프레이밍
+- `jetson-comm`(`<protocol.h>`) 기반 COBS+CRC16 프레이밍
 - `HELLO`/`HELLO_ACK` 핸드셰이크, `CONFIG` "not implemented" 응답
 - `ENCODER_STATE`(50Hz)/`ENVIRONMENT_STATE`(~1Hz)/`PROXIMITY_STATE`(~15Hz)/`DIAGNOSTIC`(5Hz) 송신(placeholder 값)
 - 300ms 통신 워치독(§34-7) — 로컬 액추에이터가 없어 정지 동작은 없고 `COMM_LOST`/`FAULT_COMM_TIMEOUT_SENSOR`만 보고

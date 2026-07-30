@@ -3,7 +3,7 @@
 
 `rclpy`를 import하지 않는 순수 로직이라 ROS 없이도 pytest로 검증할 수 있다
 (`sentinel_bridge`의 `message_mapper`/`mqtt_client`와 같은 패턴).
-`hardware/esp32/jetson-comm/protocol.h`/`protocol.cpp`와 바이트 단위로 동일하게
+`hardware/esp32/jetson-comm/src/protocol.h`/`protocol.cpp`와 바이트 단위로 동일하게
 동작해야 한다 - 로직을 바꾸면 반드시 양쪽을 함께 고칠 것.
 """
 

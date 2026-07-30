@@ -1,5 +1,5 @@
 // 호스트 컴파일용 프로토콜 유닛테스트. Arduino 의존성이 없으므로 그대로 g++로 빌드된다.
-// 빌드: g++ -std=c++17 -I.. test_protocol.cpp ../protocol.cpp -o test_protocol && ./test_protocol
+// 빌드: g++ -std=c++17 -I../src test_protocol.cpp ../src/protocol.cpp -o test_protocol && ./test_protocol
 //
 // 아래 하드코딩된 벡터는 ../test_vectors/crc16_vectors.txt, frame_vectors.txt와 동일한 값이다.
 // (두 텍스트 파일은 사람이 읽는 근거 자료로 유지하고, 실행 가능한 테스트는 파일 경로에
@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-#include "../protocol.h"
+#include "../src/protocol.h"
 
 namespace {
 

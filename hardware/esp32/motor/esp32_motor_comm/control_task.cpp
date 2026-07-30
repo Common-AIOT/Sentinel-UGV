@@ -4,7 +4,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
-#include "../../jetson-comm/fault_codes.h"
+#include <fault_codes.h>
 #include "board_state.h"
 #include "safety_stub.h"
 

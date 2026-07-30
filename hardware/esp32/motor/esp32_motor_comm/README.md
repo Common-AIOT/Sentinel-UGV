@@ -2,10 +2,12 @@
 
 모터 ESP32의 Jetson 통신 계층 스케치. `motor_test`/`double_motor_test`/`triple_motor_test`(벤치 테스트용, BTS7960 Wi-Fi 수동 제어)는 이 스케치와 별개로 그대로 유지된다.
 
+**빌드 전 필수**: `jetson-comm`을 Arduino 라이브러리로 설치해야 한다 — `../../jetson-comm/README.md`의 "설치" 절 참고(정션 없이 그냥 열면 링크 단계에서 undefined reference 오류가 난다).
+
 ## 범위
 
 포함:
-- `../../jetson-comm/protocol.h` 기반 COBS+CRC16 프레이밍
+- `jetson-comm`(`<protocol.h>`) 기반 COBS+CRC16 프레이밍
 - `HELLO`/`HELLO_ACK` 핸드셰이크 (E-Stop 래치 해제도 이 경로로 처리)
 - `STOP_COMMAND`/`ESTOP_COMMAND` 수신과 `COMMAND_ACK` 응답
 - 300ms 통신 워치독(§34-7) — 트립 시 `safety_stub.h`의 스텁 훅 호출

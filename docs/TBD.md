@@ -14,9 +14,10 @@
 | TBD-HW-006  | 최종 크기·중량  | 3D 모델·부품 배치 완료 후 실측값                | 임베디드·기구 B | 2주차 초 |
 | TBD-HW-007  | E-Stop 부품     | **2026-07-30 전원 구조 확정**: 12V 배터리(모터 전용) 단일 레일이 BTS7960 3개 공통 전원을 급전(21.4). 차단 정격·부품 모델은 계속 진행 | 임베디드·기구 B | 1주차 중 |
 | TBD-HW-008  | 전륜 조향 구조  | **2026-07-30 방식 확정**: WW MOTOR RS380SP-12V RPM5500 DC 기어모터 1개 + BTS7960 드라이버로 좌우 정역 구동, MT6701 엔코더로 각도 피드백(폐루프, 34-2). 정확한 링크비·기계적 좌우 한계각·백래시는 실측 진행 | 임베디드·기구 B | 1주차 초 |
-| TBD-HW-009  | ESP32 제어 보드 | **2026-07-30 구성 확정**: ESP32 WROOM-32 2개로 이원화 — 모터 제어용(BTS7960 3개 연결) 1개, 센서 제어용(MT6701 3개·DHT-11·HC-SR04 연결) 1개. 각각 Jetson과 독립 USB Serial 연결(`/dev/sentinel_mcu_motor`, `/dev/sentinel_mcu_sensor`). WROOM-32는 native USB CDC가 없어 온보드 USB-UART bridge(CP2102/CH340 계열) 경유. 정확한 브리지 칩·GPIO 핀 배정은 계속 진행 | 임베디드·기구 B | 즉시 |
+| TBD-HW-009  | ESP32 제어 보드 | **2026-07-30 구성 확정**: ESP32 WROOM-32 2개로 이원화 — 모터 제어용(BTS7960 3개 연결) 1개, 센서 제어용(MT6701 3개·차체 IMU·DHT-11·HC-SR04 연결) 1개. 각각 Jetson과 독립 USB Serial 연결(`/dev/sentinel_mcu_motor`, `/dev/sentinel_mcu_sensor`). WROOM-32는 native USB CDC가 없어 온보드 USB-UART bridge(CP2102/CH340 계열) 경유. 정확한 브리지 칩·GPIO 핀 배정은 계속 진행 | 임베디드·기구 B | 즉시 |
 | TBD-HW-010  | 전방 초음파 센서 | **2026-07-30 모델 확정**: HC-SR04 1개, 센서 제어용 ESP32에 연결(TRIG/ECHO, 5V→3.3V 레벨 변환 필요). 설치 위치·유효 거리·갱신률·실차 정지 임계값은 계속 진행 | 임베디드·기구 B | 실차 자율주행 전 |
 | TBD-HW-011  | 듀얼 ESP32 속도 폐루프·초음파 릴레이 위치 | MT6701 엔코더가 센서 ESP32에, BTS7960 드라이버가 모터 ESP32에 분리 연결되어 있고 두 ESP32 간 직접 배선이 없다(21.3). 구동 속도 폐루프와 HC-SR04 근거리 보호 정지는 Jetson이 두 채널을 중계해 계산·실행하는 것으로 잠정 확정(34-2·34-5·34-8). USB 왕복 지연이 300ms watchdog·안전 목표를 해치면 ESP32 간 직접 UART 링크 추가를 대체안으로 검토 | 임베디드·기구 B | 2주차 초 |
+| TBD-HW-012  | 차체 IMU 모델·배선·장착 오프셋 | **2026-07-30 연결 구조 확정**: 차체 IMU 1개를 센서 ESP32의 I2C 또는 SPI에 연결하고, ESP32 측정 시각·sequence와 원시 gyro·accel을 USB Serial로 Jetson에 전달한다. Jetson은 `/imu/data_raw` 발행과 wheel odometry EKF 융합을 담당한다. 남은 값은 IMU 모델, I2C/SPI 선택, bus 주소·GPIO, 전원, 장착 X/Y/Z·RPY, bias·진동 실측이다 | 임베디드·ROS2/주행 A | 실차 EKF 연동 전 |
 | TBD-CAM-001 | BRIO 100 ROS 2 연동 | 720p MJPEG 캡처와 X4 Pro 동시 구동 안정성      | AI A           | 개발 첫날 |
 | TBD-SW-001  | 추가 학습 YOLO26n 배포 | 데이터셋·가중치 해시, 라이선스, PyTorch/TensorRT FPS | AI A     | 2주차 |
 | TBD-NAV-001 | Frontier 구현   | 패키지 또는 자체 노드, 파라미터                 | ROS2·주행 A    | 2주차 |

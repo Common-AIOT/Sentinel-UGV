@@ -1,0 +1,107 @@
+"""Jetson<->ESP32 직렬 프로토콜 상수와 struct 포맷 문자열.
+
+`hardware/esp32/jetson-comm/message_ids.h`, `fault_codes.h`, `protocol.h`와 값이
+반드시 동일해야 한다(수동 동기화 - 한쪽을 바꾸면 반드시 다른 쪽도 함께 고칠 것).
+struct 포맷 문자열은 `<`(little-endian, 표준 크기, 패딩 없음)로 시작해 C++ 쪽의
+필드별 memcpy 직렬화와 동일한 바이트 배치를 보장한다.
+"""
+
+from __future__ import annotations
+
+PROTOCOL_VERSION = 1
+MAX_PAYLOAD_BYTES = 128
+
+# 프레임 헤더 10바이트(protocolVersion~senderUptimeMs) + payload + crc16 2바이트
+FRAME_HEADER_BYTES = 10
+FRAME_CRC_BYTES = 2
+
+MSG_HELLO = 0x01
+MSG_HELLO_ACK = 0x02
+
+MSG_DRIVE_COMMAND = 0x10
+MSG_STOP_COMMAND = 0x11
+MSG_ESTOP_COMMAND = 0x12
+
+MSG_DRIVE_STATE = 0x20
+MSG_DIAGNOSTIC = 0x21
+MSG_COMMAND_ACK = 0x22
+MSG_ENVIRONMENT_STATE = 0x23
+MSG_PROXIMITY_STATE = 0x24
+MSG_ENCODER_STATE = 0x25
+
+# GET/SET은 코드 하나(0x30)를 공유하고 payload.operation으로 구분한다(§34-5).
+MSG_CONFIG = 0x30
+
+KNOWN_MESSAGE_TYPES = frozenset(
+    {
+        MSG_HELLO,
+        MSG_HELLO_ACK,
+        MSG_DRIVE_COMMAND,
+        MSG_STOP_COMMAND,
+        MSG_ESTOP_COMMAND,
+        MSG_DRIVE_STATE,
+        MSG_DIAGNOSTIC,
+        MSG_COMMAND_ACK,
+        MSG_ENVIRONMENT_STATE,
+        MSG_PROXIMITY_STATE,
+        MSG_ENCODER_STATE,
+        MSG_CONFIG,
+    }
+)
+
+BOARD_ROLE_MOTOR = 1
+BOARD_ROLE_SENSOR = 2
+
+ACK_RESULT_ACCEPTED = 0
+ACK_RESULT_REJECTED_STATE = 1
+ACK_RESULT_REJECTED_STALE_SEQUENCE = 2
+
+CONFIG_OP_GET = 0
+CONFIG_OP_SET = 1
+
+# ---- fault_codes.h (docs/03-제어-캘리브레이션.md §34-9) ----
+FAULT_COMM_TIMEOUT_MOTOR = 1 << 0
+FAULT_CRC_ERROR_RATE_HIGH = 1 << 1
+FAULT_DRIVE_ENCODER_FAULT = 1 << 2
+FAULT_STEERING_ENCODER_FAULT = 1 << 3
+FAULT_DRIVER_FAULT = 1 << 4
+FAULT_OVERCURRENT = 1 << 5
+FAULT_UNDERVOLTAGE = 1 << 6
+FAULT_ESTOP_ACTIVE = 1 << 7
+FAULT_CONFIG_INVALID = 1 << 8
+FAULT_INTERNAL_WATCHDOG_RESET = 1 << 9
+FAULT_PROXIMITY_SENSOR_FAULT = 1 << 10
+FAULT_ENVIRONMENT_SENSOR_FAULT = 1 << 11
+FAULT_COMM_TIMEOUT_SENSOR = 1 << 12
+
+FAULT_NAMES: dict[int, str] = {
+    FAULT_COMM_TIMEOUT_MOTOR: "COMM_TIMEOUT_MOTOR",
+    FAULT_CRC_ERROR_RATE_HIGH: "CRC_ERROR_RATE_HIGH",
+    FAULT_DRIVE_ENCODER_FAULT: "DRIVE_ENCODER_FAULT",
+    FAULT_STEERING_ENCODER_FAULT: "STEERING_ENCODER_FAULT",
+    FAULT_DRIVER_FAULT: "DRIVER_FAULT",
+    FAULT_OVERCURRENT: "OVERCURRENT",
+    FAULT_UNDERVOLTAGE: "UNDERVOLTAGE",
+    FAULT_ESTOP_ACTIVE: "ESTOP_ACTIVE",
+    FAULT_CONFIG_INVALID: "CONFIG_INVALID",
+    FAULT_INTERNAL_WATCHDOG_RESET: "INTERNAL_WATCHDOG_RESET",
+    FAULT_PROXIMITY_SENSOR_FAULT: "PROXIMITY_SENSOR_FAULT",
+    FAULT_ENVIRONMENT_SENSOR_FAULT: "ENVIRONMENT_SENSOR_FAULT",
+    FAULT_COMM_TIMEOUT_SENSOR: "COMM_TIMEOUT_SENSOR",
+}
+
+
+def fault_flag_names(fault_flags: int) -> list[str]:
+    return [name for bit, name in FAULT_NAMES.items() if fault_flags & bit]
+
+
+# ---- struct 포맷 (protocol.h의 packX/unpackX와 필드 순서가 반드시 일치해야 한다) ----
+STRUCT_DRIVE_COMMAND = "<BBhhhHHH"  # 14 bytes
+STRUCT_DRIVE_STATE = "<HBHhhhhBB"  # 15 bytes
+STRUCT_ENCODER_STATE = "<iihhhH"  # 16 bytes
+STRUCT_ENVIRONMENT_STATE = "<hHBH"  # 7 bytes
+STRUCT_PROXIMITY_STATE = "<HBBH"  # 6 bytes
+STRUCT_HELLO_ACK = "<BBBBBBHB"  # 9 bytes
+STRUCT_DIAGNOSTIC = "<BBHIIII"  # 20 bytes
+STRUCT_COMMAND_ACK = "<BHBB"  # 5 bytes
+STRUCT_CONFIG = "<BHi"  # 7 bytes

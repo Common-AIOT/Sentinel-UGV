@@ -442,6 +442,37 @@ A/V 동기  전 구간 ±28ms, 누적 경향 없음
 **VID-12(30분 상시 쓰기)는 38장 인수 시험으로 넘깁니다.** 구현 티켓마다 30분
 시험을 반복하지 않습니다. S15P11A301-107에서 VID-02를 같은 이유로 넘겼습니다.
 
+## 실제 탐지 노드 엔드투엔드 검증 (2026-07-30, S15P11A301-158)
+
+트리거 도구가 아니라 **실제 탐지 노드가 만든 encounter**로 전체 체인을 검증했다.
+ai/detection wrapper(`src.ros_main`) → mission_manager → 이 노드 순서다. 입력은
+보행자 4명 검증 영상을 CompressedImage로 20초 발행한 뒤 중단하는 시나리오다.
+
+```text
+상태 사이클   EXPLORING → CONFIRMED(personCount 4) → PERSON_APPROACHING
+             → 소실 3초 → LOST → POST_RECORDING → 3초 → REPORTING
+             → report committed → EXPLORING (완전 자율 사이클 복귀)
+산출물       event.mp4 24.8초 739프레임 + thumbnail + report.json, 이벤트당 1개
+사전 영상    preRollSeconds 3.3 (기준 3초 이상)
+종료 사유    PERSON_LOST (설계 경로)
+내용 검증    6개 시점 프레임 해시 전부 다름, 조각 sequence 연속(769~793)
+계약        encounter.schema.json 위반 0건
+```
+
+### 다중 탐지 발행자 주의
+
+첫 시도에서 같은 DDS 도메인의 **다른 기기가 돌리던 person_detector**(구 임시
+구현)가 `/perception/person_candidates`에 함께 발행해 검증이 오염됐다. 두 탐지
+노드가 공존하면 한쪽의 빈 배열 직후 다른 쪽의 후보가 도착해 mission_manager가
+사람 소실을 판정할 수 없고, 이벤트가 끝나지 않아 이 노드의 30초 무응답
+타임아웃(`NO_RESPONSE_TIMEOUT`)으로 55초 MP4가 만들어졌다.
+
+- 탐지 노드는 로봇에서 **정확히 하나**만 돌아야 한다. encounter 발행자를 하나로
+  모은 것과 같은 이유가 candidates에도 적용된다.
+- 팀 개발 장비가 같은 네트워크·같은 `ROS_DOMAIN_ID`(기본 0)를 쓰면 다른 기기의
+  노드가 실기기 임무 체인에 흘러든다. 실기기 검증 시 `ROS_DOMAIN_ID`를 분리하거나
+  개발 장비의 탐지 노드를 내려야 한다. 이 검증도 도메인 분리로 재실행해 통과했다.
+
 ## 문제 해결
 
 ### 트리거를 보냈는데 반응이 없다

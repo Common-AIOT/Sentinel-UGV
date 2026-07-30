@@ -69,10 +69,12 @@ VISION 트리거(/perception/encounter APPROACHED)
 | ROS 2 노드 (`ros_node.py`, `voice.launch.py`) | ✅ 구현 |
 | 전송 계약 (`common/schemas/interaction-report.schema.json`) | ✅ 확정 |
 | `/interaction/report` 발행 → bridge → MQTT | ✅ 구현 (`QUEUED`) |
-| **관제 ACK 수신 · 탐사 재개 결합** | ❌ **미연결 (116)** — `report_lifecycle.py`는 상태머신만 완성 |
+| 발신 완료·탐사 재개 안내 | ✅ 구현 (183) — 기존 `REPORT_SUCCEEDED_DEPARTURE` 재사용 |
+| **관제 ACK 수신 (수동태 안내 잠금 해제)** | ❌ **미연결** — `report_lifecycle.py`는 상태머신만 완성 (**182**) |
 | 젯슨 육성 실기기 검증 | ⚠️ A·B·D·E 통과, **C(무응답) 미검증** (§9-3) |
 
-> `QUEUED`는 **관제 수신 성공이 아니다.** ACK가 오기 전에는 "전달되었습니다"를 재생하지 않는다.
+> `QUEUED`는 **관제 수신 성공이 아니다.** 발신 완료 시점에 완료+탐사 안내를 재생하는
+> 것은 Outbox가 전달을 보장한다는 근거로 팀이 수용한 결정이다(§2-6).
 
 ### 1-4. 설계 변경 이력
 
@@ -186,11 +188,13 @@ WHO의 MC-IITT는 보행 가능 여부 외에 기도 문제, 호흡 곤란, 대�
 임의 시간 안내, "정확히 10분 뒤 도착합니다" 같은 확정 표현, 네트워크 복구 후 오래된
 ETA 재생.
 
-ETA가 없으면 고정 문구를 쓴다.
+ETA가 없으면 §6-1의 승인 자산(`REPORT_PENDING` 또는 `NETWORK_WAIT`)만 쓴다.
+ETA 안내용 별도 문구를 만들지 않는다.
 
-```text
-구조 요청을 관제에 전달하고 있습니다. 현재 위치에서 안전하게 기다려 주세요.
-```
+> ⚠️ **"현재 위치에서 안전하게 기다려 주세요"는 쓰지 않는다(2026-07-30 결정).**
+> 로봇은 그 지점이 안전한지 알 수 없다. 가스·2차 붕괴·구조물 하중을 판단할 수단이
+> 없는데 "안전하게"라고 말하면 근거 없는 안전 보증이 된다. 대기를 안내할 필요가
+> 있으면 안전 주장 없이 "잠시만 기다려 주세요"까지만 말한다(`REPORT_PENDING`).
 
 동적 ETA 안내는 승인 템플릿 결합 기능이 마련되기 전까지 재생하지 않는다.
 
@@ -203,10 +207,63 @@ ETA가 없으면 고정 문구를 쓴다.
 
 - 짧고 한 번에 한 가지 행동만 요청한다.
 - 공포를 유발하거나 구조 순서를 확정하는 표현을 쓰지 않는다.
-- **관제 전송이 실제로 성공한 뒤에만** "전달했습니다"라고 말한다. 대기 상태에서는 "전달하고 있습니다"로 구분한다.
+- **말하는 시점에 참인 문구만 재생한다.** 한국어 시제로 네 단계를 구분한다(아래 표).
 - 이동을 권하기 전에 현장 안전과 관제 지시를 우선한다.
 - 상대 좌표만으로 "현재 위치가 관제에 전달되었습니다"라고 안내하지 않는다.
-- 탐사 재개 안내는 관제 전송 성공 **및** Mission Manager 재개 승인이 **모두** 확인된 경우에만 재생한다.
+- 탐사 문구는 **임무가 진행 중인 상태일 때만** 재생한다.
+
+#### 전송 안내 4단계 — 시제로 사실을 구분한다
+
+**팀 결정(2026-07-30, S15P11A301-183): 완료+탐사 안내를 발신 완료(QUEUED) 시점에
+재생한다.** 기존 자산 `REPORT_SUCCEEDED_DEPARTURE`의 `requires_report_success`
+잠금을 풀어 재사용하며, 새 문구를 녹음하지 않는다.
+
+| 조건 | 안내 코드 | 문구 | 잠금 |
+|---|---|---|---|
+| 발신 진행 중 · 어댑터 미연결 · **재개 불가** | `REPORT_PENDING` | 전달하고 **있습니다** | 없음 |
+| **발신 완료 + 임무 진행 중** | `REPORT_SUCCEEDED_DEPARTURE` | 전달**되었습니다** … 탐사를 계속하겠습니다 | `requires_exploration_resume` |
+| 관제 ACK 확인 · 재개 없음 | `REPORT_SUCCEEDED` | 전달**되었습니다** | `requires_report_success` ← S15P11A301-182까지 잠금 |
+| 발신 실패 · 단절 | `NETWORK_WAIT` | 통신 연결을 확인하고 있습니다 | 없음 |
+
+**발신 완료가 참인 근거** — 보고는 `/interaction/report`로 발행되고 `cloud_bridge`가
+MQTT `events`로 publish한다. 실패하면 `OutboxRepository`(SQLite)가 보관하고 재연결 시
+재전송한다. 즉 **"로봇이 보냈다"는 확실히 참이며, 확인되지 않은 것은 "관제가 받았다"뿐이다.**
+
+> ⚠️ **수용한 위험** — 이 자산의 문구는 수동태("전달되었습니다")여서 엄밀히는 관제
+> 수신을 주장한다. Outbox가 전달을 보장하므로 대부분의 경우 참이 되지만, 브로커·서버가
+> 계속 죽어 있으면 Outbox에 쌓인 상태로 남는데 로봇은 이미 전달되었다고 말한 상태다.
+> 새 문구를 녹음하는 비용보다 이 위험을 감수하는 편을 택했다. 엄밀한 구분이 필요해지면
+> S15P11A301-182(ACK 연결)로 해결한다.
+
+#### 즉시 재개 정책과 안내 순서
+
+**팀 결정: 관제 전달 완료 즉시 다음 지역 탐사를 시작한다**(관제 담당자의 보고서 확인을
+기다리지 않는다). 근거는 ① 기다려도 전달 확률이 오르지 않는다(Outbox가 재전송을 보장)
+② 사람의 확인을 조건으로 걸면 관제가 가장 바쁠 때 로봇 진행이 병목이 된다
+③ 발견·보고를 마친 요구조자 옆에 머무는 것보다 아직 못 찾은 사람을 찾는 편익이 크다
+④ 발견 지점은 `encounter`의 `pose`로 이미 기록된다.
+
+> 재개 자체는 **Mission Manager의 권한**이다(26장 단일 권한). 음성 모듈은 모터 명령을
+> 만들지 않고 안내만 한다.
+
+**⚠️ 안내를 `DIALOGUE_ENDED`보다 먼저 재생한다.** 순서를 뒤집으면 Mission Manager가
+즉시 재개해 **로봇이 멀어지며 모터 소음 속에서 마지막 안내를 하게 되고, 요구조자가
+그것을 듣지 못한다.** 안내를 마친 뒤 신호를 보내면 재개가 자연히 그 뒤에 일어난다.
+
+```text
+보고 발신(QUEUED) → 종료 안내 재생 완료 → DIALOGUE_ENDED 발행 → Mission Manager 재개
+```
+
+**탐사 문구를 쓸 수 있는 조건** — 안내 시점에는 아직 `DIALOGUE_ENDED`를 보내지 않았으므로
+재개를 *관측할 수 없다.* 대신 `ros_node`가 이미 구독 중인 `/mission/status`의 마지막
+`state`가 **임무 진행 중**인지 확인한다.
+
+| 약속한다 | 약속하지 않는다 |
+|---|---|
+| `EXPLORING` `PERSON_APPROACHING` `INTERACTING` `POST_RECORDING` `REPORTING` | `ESTOP` `ERROR` `PAUSED` `MANUAL` `SAFE_IDLE` `COMPLETED` `RETURNING` · 상태 미수신 |
+
+중단·정지·종료 상태에서 "다른 지역 탐사를 시작합니다"를 말하면 거짓이 된다.
+`RETURNING`은 복귀이므로 제외한다.
 
 ---
 
@@ -500,7 +557,7 @@ TCP 연결 성공은 **인증 성공이 아니다.** 키 오류는 실제 호출
 | 상태 | 의미 | 허용 안내 |
 |---|---|---|
 | `PENDING` | 전송 어댑터 미연결 | `REPORT_PENDING` |
-| `QUEUED` | bridge·Outbox가 인수함 | `REPORT_PENDING` |
+| `QUEUED` | bridge·Outbox가 인수함 | `REPORT_SUCCEEDED_DEPARTURE` |
 | `FAILED` | 대기열 인계 실패 | `NETWORK_WAIT` |
 | `SUCCEEDED` | 관제 ACK 확인 | Jira 116에서 연결 |
 
@@ -518,7 +575,7 @@ TCP 연결 성공은 **인증 성공이 아니다.** 키 오류는 실제 호출
 - 재생 실패와 마이크 무응답은 서로 다른 오류다.
 - 관제 전송 성공이 확인되지 않으면 "전달했습니다" 파일을 재생하지 않는다(`REPORT_NOT_CONFIRMED`).
 
-### 6-1. 필수 자산 10개
+### 6-1. 필수 자산 10개 — 승인 문구 전문
 
 | 코드 | 파일 | 문구 | 사용 조건 |
 |---|---|---|---|
@@ -528,10 +585,20 @@ TCP 연결 성공은 **인증 성공이 아니다.** 키 오류는 실제 호출
 | `ASK_URGENT` | `guide_ask_urgent.wav` | 지금 어디가 가장 불편한가요? 숨쉬기 어렵거나 피가 많이 나면 말씀해 주세요. | 긴급 징후 질문 |
 | `RETRY_NO_RESPONSE` | `guide_retry_no_response.wav` | 제 말이 들리면 다시 한번 대답해 주세요. | 무응답 1회 재질문 |
 | `RETRY_UNCLEAR` | `guide_retry_unclear.wav` | 목소리가 잘 들리지 않았습니다. 천천히 다시 말씀해 주세요. | STT 불명확 |
-| `REPORT_PENDING` | `guide_report_pending.wav` | 구조 요청을 관제에 전달하고 있습니다. 잠시만 기다려 주세요. | 성공 미확인 |
-| `REPORT_SUCCEEDED` | `guide_report_succeeded.wav` | 구조 요청이 관제에 전달되었습니다. | 전송 성공, 재개 미승인 |
-| `REPORT_SUCCEEDED_DEPARTURE` | `guide_report_succeeded_departure.wav` | 구조 요청이 관제에 전달되었습니다. 다른 구역을 확인하기 위해 탐사를 계속하겠습니다. | 전송 성공 **및** 재개 승인 |
+| `REPORT_PENDING` | `guide_report_pending.wav` | 구조 요청을 관제에 전달하고 있습니다. 잠시만 기다려 주세요. | 발신 진행 중 |
+| `REPORT_SUCCEEDED` | `guide_report_succeeded.wav` | 구조 요청이 관제에 전달되었습니다. | ACK 확인 · 재개 없음 (**182까지 잠금**) |
+| **`REPORT_SUCCEEDED_DEPARTURE`** | `guide_report_succeeded_departure.wav` | 구조 요청이 관제에 전달되었습니다. 다른 구역을 확인하기 위해 탐사를 계속하겠습니다. | **발신 완료 + 임무 진행 중** |
 | `NETWORK_WAIT` | `guide_network_wait.wav` | 통신 연결을 확인하고 있습니다. 연결되는 대로 구조 요청을 전달하겠습니다. | 네트워크 단절 |
+
+> 각 안내를 언제 쓰는지는 §2-6 표를 본다.
+
+**이 표의 `문구` 열이 유일한 기준이다.**
+
+- 코드의 `GUIDE_ASSETS[...].text`와 **한 글자도 달라서는 안 된다.** `GuidePlayer.play_text()`가
+  문자열로 대조해 승인 목록에 없으면 `UNAPPROVED_TEXT`로 재생을 거부한다.
+- **재제작·신규 생성 시 이 열을 그대로 TTS 입력으로 쓴다.** 문구를 다른 문서에 옮겨
+  적지 않는다(두 곳에 적으면 어긋난다).
+- 원본 파일명 규칙: `guide_xxx.wav` ↔ `mini_xxx.wav` (`tools/convert_guide_assets.source_filename`)
 
 ### 6-2. 제작 규격과 생성 이력
 
@@ -554,6 +621,10 @@ MiniMax 원본은 `ai/stt/`에 `mini_*.wav`로 저장하며 **커밋 대상이 �
 ```bash
 python -m tools.convert_guide_assets --source-dir . --force
 ```
+
+**생성 입력은 §6-1 표의 `문구` 열을 그대로 쓴다.** 재생성할 때도 위 표의 설정을
+유지한다. 문구가 바뀌면 §6-1과 `guide_audio.py`를 **함께** 고쳐야 하며, 한쪽만
+바꾸면 `UNAPPROVED_TEXT`로 재생이 거부된다.
 
 > 2026-07-29 인원 수 계약을 "화자 본인 포함"으로 명확히 하면서 `guide_ask_count.wav`의
 > 승인 문구가 변경됐다. 구 문구가 녹음된 WAV는 새로 생성·변환·청취 검증해 교체한다.
@@ -579,8 +650,21 @@ python -m tools.validate_guide_assets --report results/guide-assets.json
 
 ### 6-4. Closing과 탐사 재개 계약
 
+**현재 동작 (ACK 미연결)**
+
 ```text
-관제 전송 성공 AND Mission Manager 재개 승인
+보고 발신 완료(QUEUED)
+ → /mission/status 의 마지막 state 가 임무 진행 중인가?
+      예  → REPORT_SUCCEEDED_DEPARTURE 재생 ("전달되었습니다 … 탐사를 계속하겠습니다")
+      아니오 → REPORT_PENDING 으로 낮춤 (안전 주장 없는 진행형)
+ → 재생 완료
+ → DIALOGUE_ENDED 발행  ← Mission Manager 가 이때부터 재개
+```
+
+**ACK 연결 후 (S15P11A301-182)**
+
+```text
+관제 ACK 성공 AND Mission Manager 재개 승인
  → REPORT_SUCCEEDED_DEPARTURE 재생 → 재생 완료 확인 → 주행 안전 확인 → 탐사 재개
 ```
 
@@ -1274,7 +1358,7 @@ sessions/<timestamp>/
 
 | # | 한계 | 비고 |
 |---|---|---|
-| 1 | **안내 문구가 두 번 들린다** | CLOSING이 `REPORT_PENDING`을 쓰고, 직후 전송 대기 안내도 같은 WAV를 재생 |
+| 1 | **CLI 단독 실행에서만 안내가 두 번 들린다** | `pipeline.py`는 전송 어댑터가 없어 `PENDING`이므로 CLOSING과 종료 안내가 모두 `REPORT_PENDING`이다. **ROS 경로는 183에서 해소됨** — CLOSING(진행형) 다음에 완료+탐사 안내가 나온다 |
 | 2 | **질문 1개 = 필드 1개** | "저 혼자고 다리 못 움직여요"도 COUNT만 채우고 MOBILITY를 또 묻는다. GMS가 뽑은 나머지 필드는 `_extractions`에 모이지만 **아무도 읽지 않는다** → 148이 저렴하다는 뜻 |
 | 3 | **문구가 구버전** | 자연스러움 개편(146~149) 전. 어색하다는 피드백은 인지된 사항 |
 | 4 | `operatorReviewRequired`가 항상 `true` | `risk_assessment()`가 모든 분기에서 `True`를 반환. 안전 기본값이며 결함 아님 |

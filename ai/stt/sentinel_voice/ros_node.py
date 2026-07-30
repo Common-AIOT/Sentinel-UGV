@@ -3,10 +3,20 @@
 구독:
   /perception/encounter  APPROACHED에서 encounter당 한 번 음성 세션 시작
   /mission/status        ESTOP/ERROR/MANUAL/PAUSED에서 진행 중 세션 중단
+                         임무 상태를 보관해 종료 안내의 탐사 문구 사용 여부를 판단
 
 발행:
   /interaction/report    구조화 보고를 cloud bridge에 인계
-  /mission/signal        정상 세션 종료 뒤 DIALOGUE_ENDED 통지
+  /mission/signal        종료 안내 재생을 마친 뒤 DIALOGUE_ENDED 통지
+
+세션 종료 안내는 말하는 시점에 참인 문구만 재생한다.
+
+  발신 진행 중·재개 불가   REPORT_PENDING              "전달하고 있습니다"
+  발신 완료 + 임무 진행 중  REPORT_SUCCEEDED_DEPARTURE  "전달되었습니다 ... 탐사를 계속하겠습니다"
+  관제 ACK 확인·재개 없음  REPORT_SUCCEEDED            "전달되었습니다" (S15P11A301-182까지 잠금)
+
+안내를 DIALOGUE_ENDED보다 먼저 재생한다. 즉시 재개 정책에서 순서를 뒤집으면
+로봇이 멀어지며 마지막 안내를 하게 되어 요구조자가 듣지 못한다.
 
 긴 오디오·GMS 처리는 ROS 콜백 스레드가 아니라 작업 스레드에서 수행한다.
 """
@@ -33,14 +43,15 @@ from .encounter import (
     EncounterSessionCoordinator,
     parse_encounter_message,
 )
-from .guide_audio import GUIDE_ASSETS
+from .guide_audio import GUIDE_ASSETS, GuideCode
 from .integration import (
     build_interaction_report,
     dialogue_ended_signal,
     mission_abort_state,
+    mission_resume_expected,
     utc_now_iso,
 )
-from .report_delivery import queue_report
+from .report_delivery import DeliveryResult, queue_report
 from .safety import report_defaults
 
 
@@ -88,6 +99,7 @@ class VoiceSessionNode(Node):
         self._lock = threading.Lock()
         self._abort_state: SessionState | None = None
         self._worker: threading.Thread | None = None
+        self._mission_state: str | None = None
         self.get_logger().info(
             "voice_session 시작. APPROACHED 대기, 보고는 /interaction/report로 인계"
         )
@@ -121,6 +133,11 @@ class VoiceSessionNode(Node):
         except json.JSONDecodeError as error:
             self.get_logger().warn(f"mission status JSON 해석 실패: {error}")
             return
+
+        # 세션 종료 안내에서 탐사 문구를 쓸 수 있는지 판단할 근거를 기록한다.
+        # 중단 판정보다 먼저 저장해야 한다. 중단이 아닌 상태는 아래에서 반환된다.
+        with self._lock:
+            self._mission_state = payload.get("state")
 
         abort_kind = mission_abort_state(payload)
         if abort_kind is None:
@@ -231,6 +248,12 @@ class VoiceSessionNode(Node):
         self.get_logger().info(
             f"음성 보고 인계: {delivery.state.value} ({delivery.detail})"
         )
+
+        # 안내를 먼저 끝내고 DIALOGUE_ENDED를 발행한다. 순서를 뒤집으면 Mission
+        # Manager가 즉시 탐사를 재개해, 로봇이 멀어지며 모터 소음 속에서 마지막
+        # 안내를 하게 되고 요구조자가 그것을 듣지 못한다.
+        self._announce_delivery(delivery)
+
         signal = dialogue_ended_signal(
             context, termination_reason=result.termination_reason
         )
@@ -240,6 +263,49 @@ class VoiceSessionNode(Node):
         self.get_logger().info(
             f"DIALOGUE_ENDED 발행 encounter={context.encounter_id[:8]}"
         )
+
+    def _announce_delivery(self, delivery: DeliveryResult) -> None:
+        """전송 상태에 맞는 안내를 재생한다.
+
+        즉시 재개 정책(관제 전달 완료 = 다음 지역 탐사)이므로, 임무가 진행 중인
+        상태라면 탐사 문구를 함께 말한다. 이 시점에는 아직 DIALOGUE_ENDED를 보내지
+        않았으므로 재개를 관측할 수 없고, 대신 중단·정지·종료 상태가 아님을 확인한다.
+
+        재생 실패는 기록만 하고 노드를 죽이지 않는다.
+        """
+
+        code = delivery.guide_code
+        resume_expected = False
+        if code == GuideCode.REPORT_SUCCEEDED_DEPARTURE:
+            with self._lock:
+                state = self._mission_state
+                aborted = self._abort_state is not None
+            resume_expected = not aborted and mission_resume_expected(state)
+            if not resume_expected:
+                # 발신은 끝났지만 재개를 약속할 수 없다. 안전 주장이 없는
+                # 진행형 안내로 낮춘다. 대기 지시 문구는 두지 않는다.
+                code = GuideCode.REPORT_PENDING
+                self.get_logger().info(
+                    f"탐사 재개를 약속하지 않는다 (임무 상태 {state}) — "
+                    "진행형 안내로 낮춤"
+                )
+        try:
+            from .pipeline import guide_player
+
+            result = guide_player.play(
+                code, exploration_resume_approved=resume_expected
+            )
+        except Exception as error:  # 오디오 장치 오류가 노드를 멈추게 하지 않는다.
+            self.get_logger().warn(
+                f"안내 음성 재생 예외: {type(error).__name__}: {error}"
+            )
+            return
+        if result.ok:
+            self.get_logger().info(f"안내 음성 재생: {code.value}")
+        else:
+            self.get_logger().warn(
+                f"안내 음성 재생 실패: {result.status.value} ({result.detail})"
+            )
 
     def _publish_report(self, report: dict) -> bool:
         if not report.get("missionId"):

@@ -54,9 +54,12 @@ def queue_report(
             f"전송 대기열 인계 실패: {type(error).__name__}",
         )
     if accepted:
+        # 발신 완료 안내로 기존 완료+탐사 자산을 재사용한다(팀 결정 2026-07-30).
+        # 탐사 재개 가능 여부는 임무 상태를 아는 호출자(ros_node)가 판단하며,
+        # 약속할 수 없으면 REPORT_PENDING으로 낮춘다.
         return DeliveryResult(
             DeliveryState.QUEUED,
-            GuideCode.REPORT_PENDING,
+            GuideCode.REPORT_SUCCEEDED_DEPARTURE,
             "전송 대기열 인계 완료, 관제 ACK 대기",
         )
     return DeliveryResult(

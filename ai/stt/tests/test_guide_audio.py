@@ -105,34 +105,28 @@ class GuideAudioTest(unittest.TestCase):
         )
         self.assertEqual(allowed.status, PlaybackStatus.PLAYED)
 
-    def test_departure_message_requires_report_and_resume_approval(self):
+    def test_departure_message_requires_resume_only(self):
+        """S15P11A301-183: 완료+탐사 안내는 발신 완료만으로 재생한다.
+
+        관제 ACK 잠금(requires_report_success)을 떼고 탐사 재개 조건만 남겼다.
+        근거와 수용한 위험은 docs/README.md 2-6에 있다.
+        """
         write_test_wav(
             self.asset_path(GuideCode.REPORT_SUCCEEDED_DEPARTURE)
         )
         player = GuidePlayer(FakeBackend(), self.assets)
 
-        report_blocked = player.play(
+        resume_blocked = player.play(GuideCode.REPORT_SUCCEEDED_DEPARTURE)
+        allowed_without_ack = player.play(
             GuideCode.REPORT_SUCCEEDED_DEPARTURE,
-            exploration_resume_approved=True,
-        )
-        resume_blocked = player.play(
-            GuideCode.REPORT_SUCCEEDED_DEPARTURE,
-            report_succeeded=True,
-        )
-        allowed = player.play(
-            GuideCode.REPORT_SUCCEEDED_DEPARTURE,
-            report_succeeded=True,
             exploration_resume_approved=True,
         )
 
         self.assertEqual(
-            report_blocked.status, PlaybackStatus.REPORT_NOT_CONFIRMED
-        )
-        self.assertEqual(
             resume_blocked.status,
             PlaybackStatus.EXPLORATION_RESUME_NOT_APPROVED,
         )
-        self.assertEqual(allowed.status, PlaybackStatus.PLAYED)
+        self.assertEqual(allowed_without_ack.status, PlaybackStatus.PLAYED)
 
     def test_unapproved_free_text_is_rejected(self):
         result = GuidePlayer(FakeBackend(), self.assets).play_text(
@@ -167,7 +161,10 @@ class GuideAudioTest(unittest.TestCase):
             actual[GuideCode.REPORT_SUCCEEDED_DEPARTURE],
             "mini_report_succeeded_departure.wav",
         )
-        self.assertEqual(len(actual), 10)
+        # 개수를 고정하지 않는다. 안내를 추가할 때마다 이 테스트가 깨지면
+        # 실제 검증(코드마다 원본 파일명이 하나씩 대응)의 의미가 흐려진다.
+        self.assertEqual(len(actual), len(GuideCode))
+        self.assertEqual(len(set(actual.values())), len(GuideCode))
 
 
 if __name__ == "__main__":

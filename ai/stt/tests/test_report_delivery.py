@@ -10,10 +10,14 @@ class ReportDeliveryTest(unittest.TestCase):
         self.assertEqual(result.state, DeliveryState.PENDING)
         self.assertEqual(result.guide_code, GuideCode.REPORT_PENDING)
 
-    def test_queue_acceptance_is_not_report_success(self):
+    def test_queue_acceptance_uses_departure_guide(self):
+        """발신 완료 시점에 완료+탐사 안내를 쓴다(S15P11A301-183)."""
         result = queue_report({"sessionId": "session-1"}, lambda _: True)
         self.assertEqual(result.state, DeliveryState.QUEUED)
-        self.assertEqual(result.guide_code, GuideCode.REPORT_PENDING)
+        self.assertEqual(
+            result.guide_code, GuideCode.REPORT_SUCCEEDED_DEPARTURE
+        )
+        self.assertNotEqual(result.guide_code, GuideCode.REPORT_PENDING)
 
     def test_queue_failure_uses_network_wait(self):
         result = queue_report({"sessionId": "session-1"}, lambda _: False)

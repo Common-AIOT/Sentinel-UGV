@@ -73,17 +73,28 @@ GUIDE_ASSETS: dict[GuideCode, GuideAsset] = {
         "guide_report_pending.wav",
         "구조 요청을 관제에 전달하고 있습니다. 잠시만 기다려 주세요.",
     ),
+    # 단독 완료 안내. 관제 ACK를 확인한 경우에만 열린다(S15P11A301-182).
+    # 탐사 문구가 없어 재개하지 않는 상황에서만 쓰이므로, 발신 완료 시점에는
+    # 사용하지 않는다.
     GuideCode.REPORT_SUCCEEDED: GuideAsset(
         GuideCode.REPORT_SUCCEEDED,
         "guide_report_succeeded.wav",
         "구조 요청이 관제에 전달되었습니다.",
         requires_report_success=True,
     ),
+    # 완료 + 다음 지역 탐사. 세션 종료 안내로 사용한다.
+    #
+    # requires_report_success를 떼어 발신 완료(QUEUED) 시점에 재생할 수 있게 했다
+    # (팀 결정 2026-07-30, S15P11A301-183). 문구가 수동태여서 엄밀히는 관제 수신을
+    # 주장하지만, bridge의 Outbox(SQLite)가 단절 중 보관·재전송하므로 전달은
+    # 결국 이뤄진다. 새 문구를 녹음하는 대신 이 자산을 재사용한다.
+    #
+    # 남는 위험: 브로커·서버가 계속 죽어 있으면 Outbox에 쌓인 상태로 남는데
+    # 로봇은 이미 전달되었다고 말한 상태다. 상세는 docs/README.md 2-6.
     GuideCode.REPORT_SUCCEEDED_DEPARTURE: GuideAsset(
         GuideCode.REPORT_SUCCEEDED_DEPARTURE,
         "guide_report_succeeded_departure.wav",
         "구조 요청이 관제에 전달되었습니다. 다른 구역을 확인하기 위해 탐사를 계속하겠습니다.",
-        requires_report_success=True,
         requires_exploration_resume=True,
     ),
     GuideCode.NETWORK_WAIT: GuideAsset(

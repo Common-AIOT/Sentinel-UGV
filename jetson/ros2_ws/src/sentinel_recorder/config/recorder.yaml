@@ -16,7 +16,29 @@
     post_seconds: 3
 
     # 32-5 종료 예외
-    no_response_timeout_seconds: 30
+    #
+    # no_response_timeout_seconds를 명세의 30초가 아니라 max_event_seconds와 같게
+    # 둡니다. 음성 상호작용이 구현되기 전까지의 잠정값입니다(S15P11A301-142).
+    #
+    # 30초의 의도는 "우리 질문에 요구조자가 응답하지 않으면 종료"입니다. 판정
+    # 기준이 state_machine의 `last_activity_at`인데, 그 값을 갱신하는 것은 상호작용
+    # 상태 변화뿐이고 음성 스택이 아직 없습니다. 그래서 기준이 `started_at`으로
+    # 내려가 **모든 이벤트가 정확히 30초에 NO_RESPONSE_TIMEOUT으로 끝납니다.**
+    # 응답 여부와 무관하게 발화하므로 지금은 명세의 의도와 반대로 동작합니다.
+    #
+    # 게다가 mission_manager는 사람이 추적되는 동안 같은 encounterId로 CONFIRMED를
+    # 계속 발행합니다. 30초에 마감된 뒤 다음 CONFIRMED가 오면 recording_manager가
+    # 같은 encounter를 `_2`에 다시 녹화합니다. 두 녹화의 mediaId는 다른데 백엔드가
+    # 만드는 object key는 같아서(29.6은 encounterId까지만 쓴다) media_assets.s3_key
+    # 유니크 제약을 위반하고, 업로드가 영구히 500으로 실패합니다.
+    #
+    #   사람이 2분 서 있으면  녹화 4개, 그중 3개가 영구 실패
+    #
+    # 이 값을 올리면 5분 이내 이벤트가 녹화 하나로 유지되어 트리거가 사라집니다.
+    # 근본 원인(마감된 encounter의 CONFIRMED 처리)은 S15P11A301-142에서 고치고,
+    # 음성 상호작용이 들어오면 30초로 되돌립니다. 그때는 last_activity_at이 실제로
+    # 갱신되므로 명세의 의도대로 동작합니다.
+    no_response_timeout_seconds: 300
     max_event_seconds: 300
 
     # TBD-VID-001에서 확정한 pending 보존 상한. 30분 분량 약 580MB이며

@@ -106,6 +106,19 @@ class RecordingManagerNode(Node):
                 f'pending 디렉터리를 만들 수 없다({error}). 이벤트를 저장할 수 없다.'
             )
 
+        # 이 프로세스에서 이미 마감한 encounterId (S15P11A301-142).
+        #
+        # 부팅 복구와 운영 중 재트리거를 구별하는 데 쓴다. 디스크에 완성 영상이
+        # 있다는 사실만으로는 둘을 가릴 수 없다.
+        #
+        #   부팅 직후    이전 프로세스가 남긴 영상이다. 이 집합에 없다
+        #   운영 중      우리가 방금 마감한 것이다. 이 집합에 있다
+        #
+        # 임무 하나의 탐사 시간이 최대 7분이므로(23.4) 이 집합은 수십 건에서
+        # 멈춘다. 상한을 두지 않는다 — 상한을 두면 밀려난 encounterId가 다시
+        # 트리거될 수 있고, 그것이 바로 막으려는 결함이다.
+        self._finalized_encounters: set[str] = set()
+
         # 진행 중 이벤트의 작업 디렉터리와 수집한 조각.
         self.work_directory: Path | None = None
         self.collected: dict[int, Segment] = {}
@@ -365,6 +378,47 @@ class RecordingManagerNode(Node):
         mission_id = data.get('missionId')
         now = self._now()
 
+        # 이미 마감한 encounter는 다시 녹화하지 않는다 (S15P11A301-142).
+        #
+        # ## 왜 이 경로가 생기는가
+        #
+        # `mission_manager`는 사람이 추적되는 동안 같은 encounterId로 CONFIRMED를
+        # 계속 발행한다. 그런데 이 노드의 마감 조건(NO_RESPONSE_TIMEOUT,
+        # MAX_DURATION)은 `mission_manager`의 상태와 독립이다. 그래서 우리가 먼저
+        # 마감하고 나면 뒤이어 오는 CONFIRMED가 같은 encounterId로 새 녹화를
+        # 시작했다.
+        #
+        # ## 왜 그냥 두면 안 되는가
+        #
+        # 두 녹화의 `mediaId`가 다른데 백엔드가 만드는 object key는 같다. 29.6이
+        # key에 encounterId까지만 쓰기 때문이다. 그래서 `media_assets.s3_key`
+        # 유니크 제약을 위반하고 업로드가 500으로 영구 실패한다. 재시도는 망 단절
+        # 복구(VID-06)를 위해 무한이므로 그 이벤트가 30초마다 백엔드를 두드리며
+        # pending 상한까지 점유한다.
+        #
+        # ## 왜 무시가 맞는가
+        #
+        # 마감했다는 것은 `REPORT_COMMITTED`를 이미 보냈다는 뜻이고, 그 발견은
+        # 보고가 끝난 상태다. 32-5가 이벤트 길이를 5분으로 제한한 것 자체가
+        # "한 발견 = 한 파일"을 전제한 것으로 읽힌다.
+        #
+        # **대가가 있다.** 5분을 넘겨 머문 사람의 뒷부분 영상은 남지 않는다.
+        # 다른 선택지는 이랬다.
+        #
+        #   새 encounter로 취급    같은 사람이 발견 2건으로 집계된다
+        #   첫 파일에 이어붙인다    5분 상한을 우회하게 된다
+        #
+        # 둘 다 잘못된 기록을 만든다. 영상 뒷부분을 잃는 것이 기록을 틀리게 하는
+        # 것보다 낫다고 판단했다. 음성 상호작용이 들어와 `last_activity_at`이 실제로
+        # 갱신되면 5분 안에 대화가 끝나므로 이 대가는 대부분 사라진다.
+        if encounter_id in self._finalized_encounters:
+            self.get_logger().info(
+                f'{phase.value} 무시: {encounter_id[:8]}는 이미 마감했다. '
+                '같은 encounter를 두 번 녹화하면 업로드가 영구 실패한다'
+                ' (S15P11A301-142).'
+            )
+            return
+
         was_idle = self.machine.event is None
         active = self.machine.event.encounter_id if self.machine.event else None
         transition = self.machine.on_encounter(
@@ -419,6 +473,21 @@ class RecordingManagerNode(Node):
         #
         # 접미사를 붙여 둘 다 남긴다. 관제가 같은 encounterId의 영상 두 개를 보는
         # 편이 하나를 잃는 것보다 낫다.
+        # `_2`는 **부팅 복구 전용 안전망**이다 (S15P11A301-142).
+        #
+        # 이 노드가 살아 있는 동안 마감한 encounter는 `_on_encounter`가 걸러내므로
+        # 여기 오지 않는다. 여기까지 왔다면 완성 영상이 이전 프로세스가 남긴
+        # 것이라는 뜻이다 — 노드가 재시작됐고 `mission_manager`는 같은 encounter를
+        # 아직 진행 중으로 알고 있는 경우다.
+        #
+        # 그때 덮어쓰면 안 된다. 이전 프로세스의 영상은 아직 업로드되지 않았을 수
+        # 있고, 그것을 잃으면 발견 기록이 사라진다. 그래서 이름을 비켜 쓴다.
+        #
+        # 이 경로에서도 두 파일의 `mediaId`가 달라 업로드 하나가 500으로 실패한다.
+        # 근본 원인은 29.6의 object key가 encounterId까지만 쓰는 것이고, 그것은
+        # 백엔드가 멱등하게 처리하거나 409로 내려야 할 몫이다(S15P11A301-142의
+        # 백엔드 항목). 여기서는 영상을 잃지 않는 쪽을 택한다 — 재시작은 드물고,
+        # 잘못된 실패는 고칠 수 있지만 지워진 영상은 복구할 수 없다.
         base = self.pending.directory / event.encounter_id
         candidate = base
         suffix = 1
@@ -429,7 +498,8 @@ class RecordingManagerNode(Node):
             self.get_logger().warn(
                 f'{base.name}에 이미 완성된 영상이 있다. '
                 f'{candidate.name}에 새로 기록한다. '
-                '노드 재시작 후 같은 encounterId가 다시 온 것으로 보인다.'
+                '이 노드가 재시작된 뒤 같은 encounterId가 다시 온 것이다. '
+                '업로드 하나가 object key 충돌로 실패할 수 있다(S15P11A301-142).'
             )
 
         self.work_directory = candidate
@@ -714,6 +784,10 @@ class RecordingManagerNode(Node):
         신호를 나누면 실패한 이벤트에서 임무가 멈춘다.
         """
         if encounter_id:
+            # 다시 트리거되지 않게 기록한다. `_publish_report_committed` 앞에 둔다 —
+            # 그 발행이 mission_manager를 EXPLORING으로 되돌리고, 그 직후 오는
+            # 주기적 CONFIRMED가 여기 도착하기 때문이다(S15P11A301-142).
+            self._finalized_encounters.add(encounter_id)
             self._publish_report_committed(encounter_id)
         self.work_directory = None
         self.collected = {}

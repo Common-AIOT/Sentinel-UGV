@@ -213,6 +213,83 @@ DISK_FULL로 포기합니다.** 그래서 `audio_bitrate_kbps`를 80으로 두�
 순환하므로 점유량이 약 2.5MB로 고정됩니다. 2.5Mbps는 시간당 1.1GB의 쓰기
 *처리량*이지 누적량이 아닙니다.
 
+## 한 encounter는 한 번만 녹화합니다 (S15P11A301-142)
+
+이미 마감한 `encounterId`로 `CONFIRMED`가 다시 오면 무시합니다.
+
+### 왜 그 경로가 생기는가
+
+`mission_manager`는 사람이 추적되는 동안 같은 `encounterId`로 `CONFIRMED`를 계속
+발행합니다. 그런데 이 노드의 마감 조건(`NO_RESPONSE_TIMEOUT`, `MAX_DURATION`,
+`PERSON_LOST`)은 `mission_manager`의 상태와 독립입니다. 그래서 우리가 먼저 마감한 뒤
+오는 `CONFIRMED`가 같은 `encounterId`로 새 녹화를 시작했습니다.
+
+### 왜 그냥 두면 안 되는가
+
+두 녹화의 `mediaId`는 다른데 백엔드가 만드는 object key는 같습니다. 29.6이 key에
+`encounterId`까지만 쓰기 때문입니다.
+
+```text
+missions/{missionId}/encounters/{encounterId}/event.mp4
+```
+
+`media_assets.s3_key`가 UNIQUE라 두 번째 발급이 유니크 제약을 위반하고 **500으로
+영구 실패**합니다. 재시도는 망 단절 복구(VID-06)를 위해 무한이므로, 그 이벤트가
+30초마다 백엔드를 두드리며 pending 상한까지 점유합니다.
+
+실측에서 이렇게 나왔습니다.
+
+```text
+6a75f497-...      mediaId=dc81c239-...
+6a75f497-..._2    mediaId=73f6d1bb-...
+→ media_uploader: PRESIGN_SERVER_ERROR 500 (무한 반복)
+```
+
+### 왜 무시가 맞는가 — 그리고 무엇을 포기하는가
+
+마감했다는 것은 `REPORT_COMMITTED`를 이미 보냈다는 뜻이고, 그 발견은 보고가 끝난
+상태입니다. 32-5가 이벤트 길이를 5분으로 제한한 것 자체가 "한 발견 = 한 파일"을
+전제한 것으로 읽힙니다.
+
+**대가가 있습니다.** 마감 이후에도 머문 사람의 뒷부분 영상은 남지 않습니다. 다른
+선택지는 이랬습니다.
+
+| 선택 | 결과 | 왜 택하지 않았나 |
+|---|---|---|
+| **마감된 encounter 무시** | 뒷부분 영상 없음 | 택함 |
+| 새 encounter로 취급 | 발견 2건으로 기록 | 같은 사람이 2명으로 집계된다 |
+| 첫 파일에 이어붙임 | 영상 온전 | 32-5의 5분 상한을 우회한다 |
+
+뒤 두 개는 **잘못된 기록**을 만듭니다. 영상 뒷부분을 잃는 것이 기록을 틀리게 하는
+것보다 낫다고 판단했습니다.
+
+음성 상호작용이 들어와 `last_activity_at`이 실제로 갱신되면 대화가 5분 안에 끝나므로
+이 대가는 대부분 사라집니다. 지금은 그 값을 갱신하는 경로가 없어
+`no_response_timeout_seconds`를 `max_event_seconds`와 같게 두었습니다(recorder.yaml
+주석 참고).
+
+### `_2`는 부팅 복구 전용입니다
+
+이 노드가 살아 있는 동안 마감한 encounter는 위 가드가 걸러내므로 `_2` 경로에 오지
+않습니다. 거기까지 왔다면 완성 영상이 **이전 프로세스가 남긴 것**이라는 뜻입니다 —
+노드가 재시작됐고 `mission_manager`는 같은 encounter를 아직 진행 중으로 아는
+경우입니다.
+
+그때는 덮어쓰지 않고 이름을 비켜 씁니다. 이전 영상은 아직 업로드되지 않았을 수 있고
+그것을 잃으면 발견 기록이 사라집니다. 이 경로에서는 여전히 key가 충돌하지만,
+재시작은 드물고 **잘못된 실패는 고칠 수 있지만 지워진 영상은 복구할 수 없습니다.**
+
+그 충돌의 근본 해결은 백엔드 몫입니다 — 같은 key 재발급을 멱등하게 처리하거나 409로
+내려야 합니다(S15P11A301-142의 백엔드 항목).
+
+### 재시도 상한은 두지 않았습니다
+
+"N번 실패하면 영구 실패"로 막고 싶어지지만 하면 안 됩니다. `retryable` 오류에 망
+단절이 포함되고, VID-06(망 단절과 복구)이 그 무한 재시도에 의존해 통과했습니다.
+상한을 걸면 긴 단절에서 이벤트가 영구 실패로 굳어, 재난 현장 Wi-Fi 단절을 전제로
+만든 설계가 무너집니다. 500과 망 오류를 횟수로 구분할 수 없으므로 그 방향은 막힌
+길입니다.
+
 ## 부팅 복구
 
 `.partial`이 남아 있으면 지우고 `CORRUPT`로 표시합니다. **재다중화를 다시
@@ -308,6 +385,32 @@ DISK_FULL일 때 썸네일이 없었습니다. 로그는 "썸네일과 보고서
 `sequence`에 구멍이 없으므로 조각 누락이 0입니다. non-leaky 큐가 프레임을 버리지
 않아도 디스크 쓰기 지연이 조각을 잃을 수 있는데, microSD에서 180초 동안 그런 일이
 없었습니다.
+
+### 중복 녹화 방지 (S15P11A301-142)
+
+결함을 재현했던 순서를 그대로 밟았습니다. `no_response_timeout_seconds`를 30으로
+되돌려 원래 조건을 만들었습니다.
+
+```text
+ 2s CONFIRMED   BUFFERING->RECORDING (encounter=4f6a6336)
+ 8s LOST        RECORDING->POST_RECORDING → FINALIZING
+                이벤트 저장 완료: event.mp4 4.13MB 13.0초 385프레임
+                REPORT_COMMITTED 발행 4f6a6336
+16s CONFIRMED   무시: 4f6a6336는 이미 마감했다
+18s CONFIRMED   무시
+22s CONFIRMED   무시
+```
+
+`_2` 디렉터리가 생기지 않았습니다. 가드 전에는 같은 순서에서 `_2`가 생기고 업로드
+하나가 500으로 영구 실패했습니다.
+
+가드가 과하지 않은지도 확인했습니다. 다른 `encounterId`는 정상 녹화됩니다.
+
+```text
+4f6a6336   4.13MB  mediaId=c6bef0a2  audio=있음  endReason=PERSON_LOST
+c56afcae   4.18MB  mediaId=744b9b8f  audio=있음  endReason=PERSON_LOST
+→ object key 충돌 없음
+```
 
 ### 오디오 (S15P11A301-131)
 

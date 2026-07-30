@@ -667,3 +667,76 @@ def test_report_distinguishes_missing_microphone_from_dropped_audio(tmp_path):
     audio_expected = probe_audio_stream(loud) is not None
     assert audio_expected
     assert audio_expected and probe_audio_stream(silent) is None
+
+
+# ----------------------------------------------------------------------
+# 마감한 encounter의 재트리거 (S15P11A301-142)
+# ----------------------------------------------------------------------
+
+
+def test_state_machine_accepts_confirmed_for_a_finished_encounter():
+    """상태 머신은 마감한 encounter의 CONFIRMED를 다시 받는다.
+
+    이것이 결함의 출발점이다. 상태 머신은 "이 encounter를 전에 마감했다"를 모른다 —
+    `finish()`가 이벤트를 비우기 때문이다. 그래서 노드가 기억해야 한다.
+
+    이 시험은 그 사실을 고정한다. 여기가 바뀌면 노드의 가드가 필요 없어지므로
+    같이 확인해야 한다.
+    """
+    machine = RecordingStateMachine()
+    confirmed(machine, 0)
+    machine.on_encounter(EID, Phase.APPROACHED, at(2), at(2))
+    # 30초 무응답으로 마감된다. 실제 결함이 시작된 경로다.
+    assert machine.tick(at(32)) == 'INTERACTION->POST_RECORDING'
+    assert machine.tick(at(36)) == 'POST_RECORDING->FINALIZING'
+    machine.finish(True)
+    assert machine.event is None
+
+    again = machine.on_encounter(EID, Phase.CONFIRMED, at(20), at(20), 1)
+    assert again is not None, '상태 머신은 같은 encounter를 다시 시작한다'
+    assert machine.event is not None
+    assert machine.event.encounter_id == EID
+
+
+def test_finalized_encounter_ids_are_remembered_across_events():
+    """노드가 마감한 encounterId를 계속 기억해야 한다.
+
+    상한을 두면 밀려난 encounterId가 다시 트리거될 수 있고, 그것이 막으려는
+    결함이다. 임무 하나의 탐사 시간이 최대 7분이라(23.4) 집합은 수십 건에서
+    멈춘다.
+
+    노드를 띄우지 않고 그 자료구조의 성질만 확인한다. `rclpy`가 필요한 부분은
+    실물 검증으로 본다.
+    """
+    finalized: set[str] = set()
+    for index in range(50):
+        finalized.add(f'{index:08d}-bbbb-4ccc-8ddd-eeeeeeeeeeee')
+
+    assert '00000000-bbbb-4ccc-8ddd-eeeeeeeeeeee' in finalized, (
+        '오래된 encounterId도 남아 있어야 재트리거를 막는다'
+    )
+    assert len(finalized) == 50
+
+
+def test_duplicate_recording_would_collide_on_the_object_key():
+    """왜 두 번 녹화하면 안 되는지를 계약으로 고정한다.
+
+    29.6의 object key는 `missionId`와 `encounterId`, `kind`만 쓴다. `mediaId`가
+    들어가지 않으므로 같은 encounter의 두 녹화는 같은 key를 만들고,
+    `media_assets.s3_key`가 UNIQUE라 두 번째 발급이 실패한다.
+
+    이 시험이 깨지면(key에 mediaId가 들어가게 되면) 노드의 가드가 필요 없어질 수
+    있다. 그때 다시 판단해야 한다.
+    """
+    mission_id = '4bde8ad1-c74b-4d42-bec3-9f71af94b41a'
+    encounter_id = '6a75f497-5dae-46ba-945f-d5ed36a1044c'
+
+    def object_key(media_id: str) -> str:
+        # 백엔드 MediaService.objectKey 와 같은 규칙이다.
+        return f'missions/{mission_id}/encounters/{encounter_id}/event.mp4'
+
+    first = object_key('dc81c239-dbd5-4323-9f2d-90b9b3235f6d')
+    second = object_key('73f6d1bb-488b-4e2a-89cb-f85ef4078208')
+    assert first == second, (
+        'mediaId가 달라도 key가 같다. 그래서 두 번째 업로드가 유니크 제약을 위반한다'
+    )

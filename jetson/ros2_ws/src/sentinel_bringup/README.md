@@ -230,6 +230,20 @@ ros2 launch sentinel_bringup demo.launch.py enable_detector:=false
 
 ### 선행 조건 (기기당 한 번)
 
+**라이다 udev 규칙 설치가 먼저입니다 (S15P11A301-173).** 이것 없이는 라이다가
+뜨지 않습니다.
+
+```bash
+sudo cp scripts/udev/99-sentinel-lidar.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules && sudo udevadm trigger
+ls -la /dev/sentinel-lidar     # ttyUSB* 로 심링크가 걸려야 정상
+```
+
+`/dev/ttyUSB0` 같은 번호를 설정에 박으면 안 됩니다. ESP32 보드가 붙으면서 번호가
+밀려 **설정이 ESP32를 열고 있던 사고**가 실제로 있었습니다 — 시리얼 포트는 열려
+`Lidar successfully connected`가 찍히고 그 뒤 `Operation timed out`으로 죽어서,
+"라이다 고장"으로 오인하기 쉽습니다. 자세한 경위는 S15P11A301-173입니다.
+
 ```bash
 sudo mkdir -p /var/lib/sentinel/media && sudo chown -R orin:orin /var/lib/sentinel
 # ~/.config/sentinel/secrets.yaml (600):   broker_password: <MQTT 비밀번호>

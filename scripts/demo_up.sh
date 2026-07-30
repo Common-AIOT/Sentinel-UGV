@@ -15,7 +15,11 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # set -u 와 ROS setup.bash 는 함께 못 쓴다. 소싱 동안만 푼다.
 set +u
+# 설치된 ROS 환경 파일은 저장소 밖에 있어 ShellCheck가 따라갈 수 없다.
+# shellcheck disable=SC1091
 source /opt/ros/humble/setup.bash
+# 빌드 후 생성되는 setup 파일이므로 정적 분석 시에는 존재하지 않을 수 있다.
+# shellcheck disable=SC1091
 source "${REPO_ROOT}/jetson/ros2_ws/install/setup.bash"
 set -u
 

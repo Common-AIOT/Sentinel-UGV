@@ -261,6 +261,16 @@ export default function StatusPanel() {
           <Navigation size={13} />
           {missionState === "PAUSED" ? "탐사 재개" : "탐사 시작"}
         </button>
+        {/* 일시정지 — 주행 중에만 의미가 있다. 재개는 위 버튼이 "탐사 재개"로 바뀐다. */}
+        {(missionState === "EXPLORING" || missionState === "PERSON_APPROACHING") && (
+          <button
+            onClick={() => handleCommand("pause", "일시정지")}
+            className="w-full text-xs font-medium px-3 py-2 rounded border border-border bg-secondary/40 text-foreground hover:bg-secondary/70 transition-colors flex items-center justify-center gap-2"
+          >
+            <Pause size={13} />
+            일시정지
+          </button>
+        )}
         <button
           onClick={() => handleCommand("return", "베이스캠프 복귀")}
           disabled={danger}

@@ -98,6 +98,8 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
   const mockMission = useRef<MissionState>("SAFE_IDLE");
   const startTime = useRef(Date.now());
   const exploreStart = useRef<number | null>(null);
+  // 탐사 경과는 "탐사 계열 상태였던 초"의 누적이다 — 일시정지 동안은 흐르지 않는다.
+  const exploreElapsedSec = useRef(0);
 
   // 실 임무 상태. missionId 가 있으면 임무 상태는 서버 폴링이 결정하고,
   // 목 시뮬레이션의 가짜 탐지·자동 전이는 멈춘다(지도 주행 애니메이션만 유지).
@@ -105,6 +107,12 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
   const missionIdRef = useRef<string | null>(null);
   const robotPosRef = useRef(robotPos);
   useEffect(() => { robotPosRef.current = robotPos; }, [robotPos]);
+
+  // 명령 직후 유예 창. 202 접수 후 ACK 가 서버에 반영되기 전에 폴링이 옛 상태를
+  // 가져와 낙관적 표시("복귀 중")를 "탐사 중"으로 되돌리는 경합을 막는다.
+  // 유예 안에 "명령 이전과 같은 상태"가 오면 무시하고, 새 상태는 즉시 반영한다.
+  const pendingCommand = useRef<{ before: MissionState; at: number } | null>(null);
+  const COMMAND_GRACE_MS = 10_000;
 
   // ── Mock simulation ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -119,11 +127,12 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
       setStatus(s => ({
         ...s,
         connected: true,
-        missionState: "SAFE_IDLE",
+        // 새로고침 복구가 먼저 활성 임무를 이어받았으면 그 상태를 덮지 않는다.
+        missionState: missionIdRef.current ? s.missionState : "SAFE_IDLE",
         safetyState: "READY",
         health: { mcuConnected: true, lidarOk: true, cameraOk: true },
       }));
-      mockMission.current = "SAFE_IDLE";
+      if (!missionIdRef.current) mockMission.current = "SAFE_IDLE";
     }, 1000);
 
     // Robot movement — 10Hz. 주행하는 상태만 좌표를 갱신한다.
@@ -178,11 +187,13 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
     const missionTimer = setInterval(() => {
       setStatus(s => {
         if (exploreStart.current === null) return s;
-        const elapsed = Math.floor((Date.now() - exploreStart.current) / 1000);
-        const driving =
+        // 탐사 계열 상태에서만 1초씩 누적한다. PAUSED·MANUAL·RETURNING 은 흐르지 않는다.
+        const exploring =
           mockMission.current === "EXPLORING" ||
           mockMission.current === "PERSON_APPROACHING";
-        if (driving && elapsed >= s.explorationLimitSec && !missionIdRef.current) {
+        if (exploring) exploreElapsedSec.current += 1;
+        const elapsed = exploreElapsedSec.current;
+        if (exploring && elapsed >= s.explorationLimitSec && !missionIdRef.current) {
           // 실 임무 중에는 종료 조건도 서버·로봇의 판단을 따른다.
           mockMission.current = "RETURNING";
           return { ...s, explorationElapsedSec: elapsed, missionState: "RETURNING" };
@@ -324,6 +335,7 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
           : type === "pause" ? "PAUSE"
           : resuming ? "RESUME"
           : "START";
+        pendingCommand.current = { before: mockMission.current, at: Date.now() };
         await api.issueCommand(mid, cmd);
       }
     }
@@ -343,7 +355,10 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
           if (from === "SAFE_IDLE" || from === "PAUSED" || from === "COMPLETED") {
             missionState = "EXPLORING";
             controlMode = "AUTO";
-            if (exploreStart.current === null) exploreStart.current = Date.now();
+            if (exploreStart.current === null) {
+              exploreStart.current = Date.now();
+              exploreElapsedSec.current = 0; // 새 임무의 탐사 시계는 0부터
+            }
           }
           break;
 
@@ -392,6 +407,33 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
   // ── 실 임무 폴링 ─────────────────────────────────────────────────────────
   // STOMP 가 프론트·백 모두 없어(S15P11A301-169) REST 폴링으로 대체한다.
 
+  // 새로고침 복구 — missionId 는 리액트 상태에만 있으므로, 페이지 로드 시
+  // 서버의 활성 임무(endedAt 없음)를 찾아 이어받는다. 없으면 목 초기 상태 그대로.
+  useEffect(() => {
+    (async () => {
+      try {
+        const active = (await api.missions()).find(m => m.endedAt === null);
+        if (!active) return;
+        missionIdRef.current = active.id;
+        setMissionId(active.id);
+        const mapped = SERVER_MISSION_STATE[active.status];
+        if (mapped) {
+          mockMission.current = mapped;
+          setStatus(s => ({ ...s, missionState: mapped }));
+        }
+        // 잔여 탐사 시간 게이지도 서버의 실제 시작 시각으로 복원한다.
+        // 서버는 일시정지 구간을 기록하지 않으므로 벽시계 근사값이다.
+        if (active.startedAt) {
+          exploreStart.current = Date.parse(active.startedAt);
+          exploreElapsedSec.current = Math.max(
+            0, Math.floor((Date.now() - Date.parse(active.startedAt)) / 1000));
+        }
+      } catch {
+        // 서버에 못 붙으면 목 초기 상태로 남는다. 폴링이 아니므로 재시도하지 않는다.
+      }
+    })();
+  }, []);
+
   // 임무 상태 3초 폴링 — 서버 상태가 로봇 ACK 의 결과이므로 이것이 진실이다.
   useEffect(() => {
     if (!missionId) return;
@@ -400,12 +442,25 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
         const m = await api.missionDetail(missionId);
         const mapped = SERVER_MISSION_STATE[m.status];
         if (!mapped) return;
+        const pc = pendingCommand.current;
+        if (pc && Date.now() - pc.at < COMMAND_GRACE_MS && mapped === pc.before) {
+          // 아직 ACK 반영 전 — 낙관적 표시를 유지한다.
+          return;
+        }
+        pendingCommand.current = null;
         mockMission.current = mapped;
-        setStatus(s => ({ ...s, missionState: mapped }));
+        setStatus(s => ({
+          ...s,
+          missionState: mapped,
+          // 완료된 임무의 탐사 시계가 계속 돌면 안 된다 — 게이지를 내린다.
+          ...(mapped === "COMPLETED" ? { explorationElapsedSec: 0 } : {}),
+        }));
         if (m.status === "COMPLETED") {
-          // 다음 explore 가 새 임무를 만들 수 있게 활성 임무를 비운다.
+          // 다음 explore 가 새 임무를 만들 수 있게 활성 임무를 비우고 탐사 시계도 끈다.
           missionIdRef.current = null;
           setMissionId(null);
+          exploreStart.current = null;
+          exploreElapsedSec.current = 0;
         }
       } catch {
         // 일시적 네트워크 오류는 다음 폴링에 맡긴다.

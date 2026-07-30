@@ -22,7 +22,7 @@
 |------|------|------|
 | VAD | Silero VAD (로컬) | 노이즈 1차 컷, torch 기반 경량 |
 | STT | faster-whisper **`small`** (로컬, 젯슨은 CPU/int8) | 저SNR·약한발화 강건성 |
-| LLM | **`gpt-5.4-mini`** (GMS API) | Jira 118 프롬프트 v2 실측 44/44 완전 정답으로 선정. 로컬 3b는 젯슨 피크 5.62GB·OOM([근거](docs/메모리-예산.md)) |
+| LLM | **`gpt-5.4-mini`** (GMS API) | Jira 118 프롬프트 v2 실측 44/44 완전 정답으로 선정. 로컬 3b는 젯슨 피크 5.62GB·OOM([근거](docs/measurements/메모리-예산.md)) |
 | LLM 폴백 | 키워드 파서(`llm.keyword_extract`) | STT 완료 후 GMS 호출만 실패한 경우의 축소 보고 |
 | 안내 음성 | **승인된 사전녹음 WAV 재생**(`assets/`) | TTS 모델 미탑재로 RAM 절약. 형식 검사는 `python -m tools.validate_guide_assets` |
 | 등급 | 규칙(`safety.triage_rule`) | LLM 자유판단 배제, 재현·설명 가능 |
@@ -49,16 +49,17 @@
 | `bench/` | 측정용 다회차 벤치(지연·일관성) |
 | `tests/` | 하드웨어 없이 실행 가능한 상태머신·안전 규칙 단위 테스트 |
 | `prompts/` | 정보 추출 프롬프트(진단 금지, 사실만) |
-| `docs/` | 실행 런북, 안전 정책, 메모리·정량·오디오 검증 기준과 [팀 공통 용어집](docs/음성-파이프라인-용어집.md) |
+| `docs/README.md` | **단일 기준 문서** — 설계·안전 정책·보고 계약·실행 절차·테스트·검증 기준·용어집 |
+| `docs/measurements/` | 원본 측정 기록 (RAM 실측, GMS 모델 비교 표) — 재현 근거 보존용 |
 
 AI·음성 담당이 아닌 팀원은 세부 문서를 읽기 전에
-[`docs/음성-파이프라인-용어집.md`](docs/음성-파이프라인-용어집.md)에서
+[`docs/README.md` §13 용어집](docs/README.md)에서
 약어, 평가 지표, 보고 필드와 장애 처리 용어를 확인할 수 있습니다.
 오디오 검사 코드가 수집하는 항목과 산출물은
-[`docs/오디오-입출력-검증-도구.md`](docs/오디오-입출력-검증-도구.md)에 설명합니다.
+[`docs/README.md` §7-4](docs/README.md)에 설명합니다.
 실제 장비의 합격 여부는 별도 검증 절차로 판정합니다.
 사전녹음 파일 목록과 제작·청취·에코 검증은
-[`docs/사전녹음-안내-음성.md`](docs/사전녹음-안내-음성.md)를 따릅니다.
+[`docs/README.md` §6 안내 음성 자산](docs/README.md)를 따릅니다.
 
 가중치·녹음 데이터·`results/`·**`.env`(GMS 키)**는 커밋하지 않습니다(`.gitignore`).
 
@@ -100,19 +101,19 @@ cp .env.example .env       # Linux/Jetson
 ```
 
 필드별 한글 의미, `null`과 `UNKNOWN`의 차이, 결정 주체와 오류 예시는
-[`docs/음성-세션-보고-스키마.md`](docs/음성-세션-보고-스키마.md)를 따릅니다.
+[`docs/README.md` §3 보고 계약](docs/README.md)를 따릅니다.
 관제 보고 생성부터 ACK 확인, Mission Manager 재개 승인, Closing 재생과 후속
 MQTT·ROS 2 연결 경계는
-[`docs/보고-ACK-탐사-재개.md`](docs/보고-ACK-탐사-재개.md)에 용어와 사례를 포함해 설명합니다.
+[`docs/README.md` §5-2](docs/README.md)에 용어와 사례를 포함해 설명합니다.
 비전 Encounter의 `CONFIRMED`·`APPROACHED` 사건과 음성 세션 시작·중단 조건은
-[`docs/비전-트리거-음성-세션.md`](docs/비전-트리거-음성-세션.md)를 따릅니다.
+[`docs/README.md` §5-1](docs/README.md)를 따릅니다.
 
 GMS와 키워드 폴백은 인원 수·이동 가능 여부·긴급 상태 언급만 추출합니다.
 응답 감지 여부와 종료 사유는 VAD·상태머신이 결정합니다.
 
 색상 등급은 최종 구조 우선순위가 아니라 관제 검토용 참고값입니다. 로봇은 이를 요구조자에게
 직접 안내하지 않으며, 구조 ETA는 관제가 제공한 유효한 값만 승인된 템플릿으로 전달합니다.
-세부 계약은 [`docs/대화-안전-정책.md`](docs/대화-안전-정책.md)를 따릅니다.
+세부 계약은 [`docs/README.md` §2 안전 정책](docs/README.md)를 따릅니다.
 
 ---
 
@@ -121,7 +122,7 @@ GMS와 키워드 폴백은 인원 수·이동 가능 여부·긴급 상태 언�
 x86(개발 PC) → ARM64(Jetson) 아키텍처 차이와 8GB 메모리 제약이 최대 함정입니다.
 `torch`·`faster-whisper(CTranslate2)`를 **일반 pip로 설치하면 거의 반드시 막힙니다.**
 
-> ✅ **2026-07-24 실측으로 검증된 절차는 [`docs/젯슨-실행-런북.md`](docs/젯슨-실행-런북.md)를 따르세요.**
+> ✅ **2026-07-24 실측으로 검증된 절차는 [`docs/README.md` §7 실행 절차](docs/README.md)를 따르세요.**
 > 아래 STEP들은 초기 계획으로, 실전에서 일부가 달랐습니다 — 특히 **jetson-containers 경로는
 > 디스크 초과(이미지 19.6GB)로 실패**했고 **네이티브 설치가 정답**이었습니다. 시계 리셋(RTC 없음),
 > numpy<2, STT CPU 실행, page cache OOM 등 함정도 런북의 트러블슈팅에 정리돼 있습니다.
@@ -187,7 +188,7 @@ python -m tools.check_env --load   # STT/VAD 실제 로드까지 최종 확인
 `[FAIL]`부터 해결하세요.
 
 BRIO 100 마이크와 Bluetooth 스피커의 실제 장치 선택·녹음·재생은
-[`docs/오디오-입출력-검증.md`](docs/오디오-입출력-검증.md)의 절차로 별도 검증합니다.
+[`docs/README.md` §7-4](docs/README.md)의 절차로 별도 검증합니다.
 
 ### STEP 3 — 실행
 
@@ -220,15 +221,13 @@ python -m bench.pipeline_bench   # results/pipeline_bench_summary.csv
 > 가장 중요한 측정은 마지막 줄입니다. GMS 전환으로 오디오 예상 피크가 ~3.3GB로 줄었지만
 > (LLM 미탑재), 통합 실측으로 확인하기 전까지는 여유를 단정하지 않습니다. 부족하면 STT `small`→`base` 검토.
 
-> 📄 RAM 예산과 실측 기록은 [`docs/메모리-예산.md`](docs/메모리-예산.md)에 정리합니다(팀 공유용).
+> 📄 RAM 예산과 실측 기록은 [`docs/measurements/메모리-예산.md`](docs/measurements/메모리-예산.md)에 정리합니다(팀 공유용).
 > 예상 예산표 + 젯슨에서 채우는 실측 템플릿이 들어 있습니다.
-> Jetson 자원 측정은 [`docs/Jetson-자원-측정-런북.md`](docs/Jetson-자원-측정-런북.md)의
-> 자동 로거로 baseline·실행 중 peak·종료 60초 후 값을 함께 남깁니다.
-> 실제 Jetson 작업 명령은
-> [`docs/Jetson-자원-측정-테스트-매뉴얼.md`](docs/Jetson-자원-측정-테스트-매뉴얼.md)를
-> 위에서부터 순서대로 실행합니다.
+> Jetson 자원 측정은 [`docs/README.md` §9-6](docs/README.md)의 자동 로거
+> (`bench/jetson_resource_bench.py`)로 baseline·실행 중 peak·종료 60초 후 값을 함께 남깁니다.
+> 실행 명령과 단계별 통과 기준도 같은 절에 있습니다.
 > 전체 STT·GMS·E2E·자원 통과 기준과 공통 결과 필드는
-> [`docs/정량-검증-기준.md`](docs/정량-검증-기준.md)를 따릅니다.
+> [`docs/README.md` §10 정량 검증 기준](docs/README.md)를 따릅니다.
 
 ### GMS 후보 모델 비교
 
@@ -262,9 +261,9 @@ python -m bench.gms_model_bench \
 
 결과는 `results/gms-bench/`에 생성되며 기본적으로 Git에 포함되지 않습니다.
 상세한 판정 기준과 결과 파일 설명은
-[`docs/GMS-모델-비교-런북.md`](docs/GMS-모델-비교-런북.md)를 참고합니다.
+[`docs/README.md` §9-2](docs/README.md)를 참고합니다.
 단계별 실측 결과와 모델 선정 근거는
-[`docs/GMS-모델-비교-결과.md`](docs/GMS-모델-비교-결과.md)에 누적합니다.
+[`docs/measurements/GMS-모델-비교-결과.md`](docs/measurements/GMS-모델-비교-결과.md)에 누적합니다.
 
 ---
 
@@ -284,9 +283,9 @@ python -m bench.gms_model_bench \
 | `SENTINEL_GMS_PROBE_TIMEOUT` | 2 | 신규 세션 전 GMS 호스트 연결 확인 제한 시간(초) |
 
 GMS 장애 분류와 관제 전송 대기 상태는
-[`docs/GMS-장애-대응.md`](docs/GMS-장애-대응.md)를 따릅니다.
+[`docs/README.md` §5-3](docs/README.md)를 따릅니다.
 관제 ACK와 탐사 재개 Closing 규칙은
-[`docs/보고-ACK-탐사-재개.md`](docs/보고-ACK-탐사-재개.md)를 따릅니다.
+[`docs/README.md` §5-2](docs/README.md)를 따릅니다.
 
 ```bat
 python -m tools.check_gms_resilience

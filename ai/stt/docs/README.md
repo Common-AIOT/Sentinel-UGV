@@ -1,0 +1,1447 @@
+# 음성 파이프라인(STT·LLM·TTS) 통합 문서
+
+> 대상 코드: [`ai/stt/`](../) · 갱신: 2026-07-30 · 기준: `origin/develop`
+> 관련 Jira: 49, 50, 69, 109~120, 157, 159, 165
+> 설계 기준 명세: 33장 피해자 음성 상호작용([`docs/04-자율주행-AI.md`](../../../docs/04-자율주행-AI.md))
+>
+> **이 문서가 `ai/stt` 문서의 단일 기준이다.** 원본 측정 표는 [`data/`](measurements/)에만 둔다.
+> 코드 사용법과 폴더 구조는 [`ai/stt/README.md`](../README.md)를 본다.
+
+## 목차
+
+| § | 내용 |
+|---|---|
+| [1](#1-개요) | 개요 · 파이프라인 흐름 · 설계 변경 이력 |
+| [2](#2-안전-정책) | **안전 정책** — 모든 판단의 최상위 제약 |
+| [3](#3-보고-계약-33-6) | 보고 계약 33-6 · 9필드 · 전송 Envelope |
+| [4](#4-대화-흐름) | 대화 흐름 · 응답 4분류 · 상태 |
+| [5](#5-외부-연동) | 비전 Encounter · Mission Manager · 관제 ACK · GMS 장애 |
+| [6](#6-안내-음성-자산) | 사전녹음 WAV 10개 · 제작 규격 |
+| [7](#7-실행-절차-젯슨) | 젯슨 실행 절차 · 환경 점검 |
+| [8](#8-테스트-시나리오-ae) | 육성 테스트 시나리오 A~E |
+| [9](#9-측정-결과) | RAM · 모델 선정 · 육성 테스트 실측 |
+| [10](#10-정량-검증-기준) | 합격선(측정 전 고정) |
+| [11](#11-알려진-한계와-후속-과제) | **알려진 한계** · MVP 제외 항목 |
+| [12](#12-트러블슈팅) | 트러블슈팅 |
+| [13](#13-용어집) | 팀 공통 용어집 |
+
+---
+
+## 1. 개요
+
+### 1-1. 한 줄 결론
+
+VISION 트리거 → 세션 게이트 → 다턴 대화(VAD → STT → 환각 가드 → GMS 정보 추출)
+→ 규칙 위험도 → 관제 보고 → 승인된 사전녹음 안내.
+**LLM은 진단하지 않고 사실만 구조화하며, 등급은 버전 고정 규칙으로 산출한다.**
+
+| 단계 | 채택 | 근거 |
+|---|---|---|
+| 트리거 | **비전 객체탐지** (SED 제외) | §1-4 |
+| VAD | Silero VAD | 노이즈 1차 컷, torch 경량 |
+| STT | **faster-whisper `small`** (젯슨 `cpu/int8`) | 저SNR·약한 발화 강건성 |
+| LLM | **GMS API `gpt-5.4-mini`** | 프롬프트 v2 회귀 **44/44 완전 정답** ([data](measurements/GMS-모델-비교-결과.md)) |
+| TTS | **사전녹음 WAV 10개** (모델 미탑재) | RAM 절감 + 자유 생성 문장 위험 제거 |
+| 등급 | 규칙 `voice-risk-v1.0` | 재현·설명·감사 가능 |
+
+### 1-2. 파이프라인 흐름
+
+```text
+VISION 트리거(/perception/encounter APPROACHED)
+ → 세션 게이트(GMS 호스트 도달성)
+ → 다턴 대화 INTRO → COUNT → MOBILITY → URGENT → CLOSING
+      각 턴: 안내 WAV 재생 → 녹음 → 무음판정 → 정규화 → VAD → STT → 환각 가드
+                            → GMS 정보 추출(실패 시 33-8 키워드 폴백)
+ → 33-6 보고 9필드 조립 · 값 검증·보정
+ → 규칙 위험도 참고값 계산
+ → /interaction/report 발행 → cloud bridge → MQTT events(QoS 1, 단절 시 Outbox)
+ → /mission/signal DIALOGUE_ENDED 발행
+ → 관제 ACK · 탐사 재개 승인(S15P11A301-116, 미연결)
+```
+
+### 1-3. 현재 구현 상태
+
+| 항목 | 상태 |
+|---|---|
+| 다턴 대화 상태머신 · 응답 4분류 | ✅ 구현·단위테스트 |
+| 실제 마이크·STT·GMS·안내음성 배선 | ✅ 구현 (`session_runner.py`) |
+| 33-6 보고 생성 · 값 보정 · 규칙 위험도 | ✅ 구현 |
+| ROS 2 노드 (`ros_node.py`, `voice.launch.py`) | ✅ 구현 |
+| 전송 계약 (`common/schemas/interaction-report.schema.json`) | ✅ 확정 |
+| `/interaction/report` 발행 → bridge → MQTT | ✅ 구현 (`QUEUED`) |
+| **관제 ACK 수신 · 탐사 재개 결합** | ❌ **미연결 (116)** — `report_lifecycle.py`는 상태머신만 완성 |
+| 젯슨 육성 실기기 검증 | ⚠️ A·B·D·E 통과, **C(무응답) 미검증** (§9-3) |
+
+> `QUEUED`는 **관제 수신 성공이 아니다.** ACK가 오기 전에는 "전달되었습니다"를 재생하지 않는다.
+
+### 1-4. 설계 변경 이력
+
+원래 계획과 현재가 다른 이유를 남긴다(문서 유지 원칙 — 차이는 근거와 함께 기록).
+
+| # | 변경 | 근거 |
+|---|---|---|
+| 1 | **SED 제외, 트리거는 비전** | 순수 모터소음·비언어 소리 검증 부담이 크고 시연 핵심이 아님. "무응답=중증" 보고 경로는 유지 (Jira 50) |
+| 2 | 명세 33장의 base급 STT + 키워드 파싱 → **small + LLM 정보 구조화** | 저SNR·자유발화에서 더 안정적. 키워드 파싱은 33-8 폴백으로 유지 (Jira 50) |
+| 3 | **로컬 LLM `qwen2.5:3b` → GMS API** | 젯슨 피크 5.62GB + page cache 압박 시 GPU 로드 OOM ([data](measurements/메모리-예산.md) §3) |
+| 4 | GMS 모델 `gpt-5-nano` → **`gpt-5.4-mini`** | Jira 118 정량 비교. v1에서는 Haiku 우세였으나 프롬프트 v2에서 Mini가 정확도 100%·오판 0 ([data](measurements/GMS-모델-비교-결과.md) §6) |
+| 5 | **MeloTTS → 사전녹음 WAV** | 상주 −1.3~2.0GB. PyPI 패키징 버그로 ARM64 빌드 실패도 겹침 |
+| 6 | 구 추출 스키마(의식·통증부위·환경위험) → **33-6 9필드** | 의료 추론 위험 제거. 단일 마이크로 개인 귀속 불가 |
+| 7 | 마이크 어레이(DOA) 미채택 | 비용. 단일 USB 마이크 전제 → 모든 발화를 `GROUP` 범위로 취급 |
+| 8 | 사투리 지원 범위 제외 | 성능 보장 불가. Jira 120 합격 점수에서 제외 |
+
+---
+
+## 2. 안전 정책
+
+> Jira: S15P11A301-109. **이 절의 제약이 다른 모든 절보다 우선한다.**
+
+### 2-1. 결정 권한
+
+- GMS는 발화에서 **관찰 가능한 사실만** 추출한다. 진단, 생존 가능성 판단, 구조 순서 결정, 도착 시간 추정을 하지 않는다.
+- `risk_assessment()`의 결과는 관제의 빠른 검토를 위한 **위험도 참고값**이다.
+- 최종 구조 우선순위와 현장 지시는 **관제 담당자 또는 구조대원**이 결정한다.
+- 로봇은 참고값을 요구조자에게 말하지 않는다. "당신은 적색 환자입니다", "가장 먼저 구조됩니다" 같은 확정 안내를 금지한다.
+- `finalTriage`, `confirmedSeverity`, `medicalPriority` 같은 확정 표현을 생성하지 않는다.
+
+### 2-2. 위험도 참고값 규칙 (`voice-risk-v1.0`)
+
+판정 순서 — 위에서 먼저 걸리면 확정:
+
+| 조건 | `riskLevel` | 기존 색상 표시 |
+|---|---|---|
+| `terminationReason`이 `NORMAL`/`UNKNOWN`이 아님 | `UNKNOWN` | 미확인 |
+| `anyResponseDetected == null` | `UNKNOWN` | 미확인 |
+| `anyResponseDetected == false` | **`IMMEDIATE`** | 적색(즉시) |
+| `urgentConditionReported == YES` | **`IMMEDIATE`** | 적색(즉시) |
+| `mobilityStatus == NO` | `URGENT` | 황색(응급) |
+| `mobilityStatus == YES` 이고 `urgentConditionReported == NO` | `DELAYED` | 녹색(경증) |
+| 그 외 | `UNKNOWN` | 미확인 |
+
+```json
+{
+  "riskLevel": "IMMEDIATE",
+  "riskReasons": ["긴급 상태가 있다고 발화함"],
+  "ruleVersion": "voice-risk-v1.0",
+  "operatorReviewRequired": true
+}
+```
+
+- `operatorReviewRequired`는 **항상 `true`**다.
+- `riskReasons`에는 실제 관찰값과 적용된 규칙만 기록한다.
+- **시스템 장애·마이크 오류·STT 실패·네트워크 실패는 `IMMEDIATE`의 근거가 아니다.**
+- 정상적으로 질문을 재생하고 청취했는데 반응이 없을 때만 무응답을 기록할 수 있다.
+- 정보가 부족하면 등급을 추측하지 않고 `UNKNOWN`을 쓴다.
+
+> ⚠️ 첫 두 줄(종료 사유·관찰 실패)이 현재 **수집한 값을 버리는 문제**를 만든다. §11-2 참고.
+
+### 2-3. 왜 의료 triage가 아닌가
+
+음성 세션이 수집하는 값은 음성 응답 여부, 자기보고 인원, 자력 이동 가능 여부,
+긴급 상태 자기보고 네 가지뿐이다. 정식 의료 triage에 필요한 임상 관찰을 충족하지 못한다.
+
+WHO의 MC-IITT는 보행 가능 여부 외에 기도 문제, 호흡 곤란, 대량 출혈·관류 문제,
+의식 변화를 평가하며 **반복 재평가**를 요구한다. 미국 HHS의 START도 자발 호흡,
+호흡수, 관류, 명령 수행 능력을 함께 사용한다. WHO MC-IITT FAQ는 대량환자 triage를
+**경험 있는 임상 인력**이 수행해야 한다고 안내한다.
+
+따라서 로봇의 역할은 네 가지로 한정한다.
+
+1. GMS와 규칙 파서가 발화에서 관찰 가능한 사실을 구조화한다.
+2. 버전 고정 규칙 엔진이 `riskLevel`과 `riskReasons`를 계산한다.
+3. 관제 화면이 영상·음성 원본, 구조화 리포트, 적용 규칙을 함께 표시한다.
+4. **실제 구조 우선순위는 그 정보를 검토한 사람이 결정한다.**
+
+참고: [WHO Triage Tool](https://www.who.int/tools/triage) ·
+[WHO MC-IITT](https://cdn.who.int/media/docs/default-source/integrated-health-services-%28ihs%29/csy/mass-casualty---iitt-a0.pdf?sfvrsn=4e8859_1) ·
+[MC-IITT FAQ](https://cdn.who.int/media/docs/default-source/integrated-health-services-%28ihs%29/csy/mc-iitt-faq.pdf?sfvrsn=3d3d71e9_1) ·
+[HHS START](https://chemm.hhs.gov/startalgotext.htm)
+
+### 2-4. 무응답과 시스템 실패 구분
+
+**명세 33-3이 요구하는 핵심 구분이다.** 시스템 실패를 요구조자의 무응답으로 기록하면 안 된다.
+
+| 상황 | 응답 분류 | 로봇 동작 |
+|---|---|---|
+| 질문 재생 성공, 마이크 정상, 청취 구간에 음성 없음 | `NO_VOICE_DETECTED` | INTRO는 1회 재질문 후 무응답 관찰 기록 |
+| 음성은 있으나 STT 무효 | `VOICE_DETECTED_STT_FAILED` | **무응답으로 기록하지 않음.** 관제 확인 대상 |
+| 답은 했으나 값을 확정 불가 | `RESPONSE_UNRECOGNIZED` | `UNKNOWN` 기록, 관제 확인 대상 |
+| 값 확정 | `ANSWER_STRUCTURED` | 해당 필드 기록 |
+| 마이크 열기·녹음 실패 | — | `terminationReason=AUDIO_DEVICE_ERROR`, 무응답 아님 |
+| 세션 시작 전 GMS 단절 | — | 신규 STT 없이 안전 안내 + 전송 대기 |
+| STT 완료 후 GMS 실패 | — | 제한 재시도 후 33-8 축소 보고 |
+
+무응답 관찰만으로 의학적 상태를 확정하지 않는다. 관제 검토가 필요한 높은 위험
+신호로 전달할 수 있으며 최종 우선순위는 관제가 결정한다.
+
+### 2-5. 구조 ETA 정책
+
+**허용** — 관제 서버가 제공한 `etaMinutes`·`etaUpdatedAt`만 사용하고, 확정 표현 대신
+범위와 변동 가능성을 알린다. 오래된 ETA는 재사용하지 않는다.
+
+```text
+구조대가 약 15분 후 도착할 예정입니다. 현장 상황에 따라 달라질 수 있습니다.
+```
+
+**금지** — GMS·로봇이 이동 거리만 보고 ETA를 생성·보정하는 행위, 관제 승인값 없는
+임의 시간 안내, "정확히 10분 뒤 도착합니다" 같은 확정 표현, 네트워크 복구 후 오래된
+ETA 재생.
+
+ETA가 없으면 고정 문구를 쓴다.
+
+```text
+구조 요청을 관제에 전달하고 있습니다. 현재 위치에서 안전하게 기다려 주세요.
+```
+
+동적 ETA 안내는 승인 템플릿 결합 기능이 마련되기 전까지 재생하지 않는다.
+
+### 2-6. 안내 음성 정책
+
+안전 필수 문구는 **사전녹음 WAV만** 사용한다. 자유 생성 문장을 쓰지 않는다.
+자산 목록과 규격은 §6.
+
+문구 작성 원칙:
+
+- 짧고 한 번에 한 가지 행동만 요청한다.
+- 공포를 유발하거나 구조 순서를 확정하는 표현을 쓰지 않는다.
+- **관제 전송이 실제로 성공한 뒤에만** "전달했습니다"라고 말한다. 대기 상태에서는 "전달하고 있습니다"로 구분한다.
+- 이동을 권하기 전에 현장 안전과 관제 지시를 우선한다.
+- 상대 좌표만으로 "현재 위치가 관제에 전달되었습니다"라고 안내하지 않는다.
+- 탐사 재개 안내는 관제 전송 성공 **및** Mission Manager 재개 승인이 **모두** 확인된 경우에만 재생한다.
+
+---
+
+## 3. 보고 계약 33-6
+
+> Jira: S15P11A301-113. 기준: 명세 33-4·33-6.
+
+### 3-1. 세션 보고 9필드
+
+BRIO 100 마이크 하나로 화자를 구분할 수 없으므로 **모든 발화를 그룹 단위로 저장**한다.
+`safety.coerce_report()`가 이 계약을 강제한다.
+
+| 필드 | 의미 | 타입·허용값 | 결정 주체 |
+|---|---|---|---|
+| `responseScope` | 발화 정보가 적용되는 범위 | `GROUP` **고정** | 시스템 정책 |
+| `anyResponseDetected` | 세션 중 음성 응답을 감지했는지 | `true`/`false`/`null` | VAD·상태머신 |
+| `reportedResponsiveCount` | 화자 본인 포함, 발화자가 직접 보고한 **응답 가능** 총인원 | 1 이상 정수, `null` | GMS·폴백 |
+| `reportedCountStatus` | 인원 수의 출처·확정 상태 | `SELF_REPORTED_GROUP_COUNT`/`CONFIRMED_BY_OPERATOR`/`UNKNOWN` | 시스템·관제 |
+| `countConfidence` | 인원 수 인식 신뢰도 | 0.0~1.0, `null` | STT·검증 (현재 미구현 → `null`) |
+| `mobilityStatus` | 그룹이 스스로 이동할 수 있다고 답했는지 | `YES`/`NO`/`UNKNOWN` | GMS·폴백 |
+| `urgentConditionReported` | 심한 출혈·호흡 곤란 등을 발화로 알렸는지 | `YES`/`NO`/`UNKNOWN` | GMS·폴백 |
+| `operatorReviewRequired` | 관제 담당자의 최종 확인 필요 여부 | `true`/`false` (현재 항상 `true`) | 안전 정책 |
+| `terminationReason` | 세션 종료 이유 | §3-2 | 상태머신 |
+
+**`null`과 `UNKNOWN`은 다르다.**
+
+- `null` — 값을 관찰하거나 계산할 수 없었음
+- `UNKNOWN` — 질문은 처리했지만 답을 확정할 수 없었음
+
+**`reportedResponsiveCount` 계약** — 주변 사람만 세는 값이 아니다. 음성으로 답하는
+화자 본인을 포함하며 사람만 센다. "저 혼자", "사람은 저밖에 없다", "저 말고 대답할
+사람은 없다"는 모두 `1`이다. 발화에 등장한 사람 수를 응답 가능 인원으로 추론하지
+않으며, 응답 가능 총원이 명시되지 않으면 `null`이다.
+**카메라가 감지한 전체 사람 수는 이 필드에 합치지 않고 `visionPersonCount`로 분리한다.**
+
+### 3-2. 종료 사유
+
+| 값 | 의미 |
+|---|---|
+| `NORMAL` | 질문 흐름을 정상적으로 마침 |
+| `TIMEOUT` | 세션 제한 시간 초과 |
+| `ABORTED_MANUAL` | 작업자 수동 중단 (MANUAL·PAUSED) |
+| `ABORTED_SAFETY` | 로봇·현장 안전 조건으로 중단 (ESTOP·ERROR) |
+| `AUDIO_DEVICE_ERROR` | 마이크 열기·녹음 등 오디오 장치 오류 |
+| `GMS_UNAVAILABLE` | GMS를 사용할 수 없어 세션 종료 |
+| `UNKNOWN` | 아직 종료되지 않았거나 이유 확정 불가 |
+
+### 3-3. 책임 분리
+
+GMS와 키워드 폴백이 추출하는 것은 **세 필드뿐**이다.
+
+```json
+{ "reportedResponsiveCount": 2, "mobilityStatus": "NO", "urgentConditionReported": "UNKNOWN" }
+```
+
+GMS가 **생성하지 않는** 필드: `responseScope`(시스템 고정) · `anyResponseDetected`(VAD·상태머신) ·
+`reportedCountStatus`(시스템·관제) · `countConfidence`(실측값 있을 때만) ·
+`operatorReviewRequired`(안전 정책) · `terminationReason`(상태머신).
+
+**잘못된 값 보정** — GMS가 음수 인원, 허용되지 않은 문자열, 잘못된 타입을 반환해도
+그대로 쓰지 않는다. `coerce_report()`가 `null` 또는 `UNKNOWN`으로 낮추고
+`operatorReviewRequired`를 안전 기본값 `true`로 유지한다.
+
+### 3-4. 전송 Envelope
+
+실제 전송 계약은 `common/schemas/interaction-report.schema.json`이다
+(`additionalProperties: false` — CI가 검증한다).
+
+```json
+{
+  "interactionId": "…",
+  "encounterId": "c81f6d20-5a47-4e93-b2d8-1f70e4a95c33",
+  "missionId": "4a43f45c-779f-4df5-ac04-1695724829a4",
+  "visionPersonCount": 3,
+  "startedAt": "2026-07-30T09:16:22.000Z",
+  "endedAt": "2026-07-30T09:17:31.000Z",
+  "sessionReport": {
+    "responseScope": "GROUP",
+    "anyResponseDetected": true,
+    "reportedResponsiveCount": 2,
+    "reportedCountStatus": "SELF_REPORTED_GROUP_COUNT",
+    "countConfidence": null,
+    "mobilityStatus": "NO",
+    "urgentConditionReported": "YES",
+    "operatorReviewRequired": true,
+    "terminationReason": "NORMAL"
+  },
+  "riskAssessment": {
+    "riskLevel": "IMMEDIATE",
+    "riskReasons": ["긴급 상태가 있다고 발화함"],
+    "ruleVersion": "voice-risk-v1.0",
+    "operatorReviewRequired": true
+  },
+  "usedFallback": false
+}
+```
+
+비전·임무 식별자를 `sessionReport` 안에 섞지 않는다. `coerce_report()`가 허용하지 않은
+필드를 제거하고 책임도 불명확해진다. `visionPersonCount`는 비전 탐지 인원이며
+`reportedResponsiveCount`와 의미가 다르다 — **두 값을 자동으로 같다고 간주하지 않는다.**
+
+**오디오 장치 오류 예시** — `anyResponseDetected`에 `false`를 쓰지 않는다.
+사람이 응답하지 않은 것이 아니라 시스템이 관찰하지 못했기 때문이다.
+
+```json
+{ "anyResponseDetected": null, "reportedResponsiveCount": null,
+  "mobilityStatus": "UNKNOWN", "urgentConditionReported": "UNKNOWN",
+  "operatorReviewRequired": true, "terminationReason": "AUDIO_DEVICE_ERROR" }
+```
+
+### 3-5. 의도적으로 제외한 정보
+
+| 항목 | 이유 |
+|---|---|
+| 통증 부위·진단명 | 수집 대상 아님. 의료 추론 위험 |
+| ETA | 관제 승인값만 별도 안내. GMS가 생성하지 않음 |
+| 특정 피해자 ID | 단일 마이크로 화자 식별 불가 → 자동 귀속 금지 |
+| GMS/폴백 출처 | 세션 필드가 아니라 Envelope의 `usedFallback`에 기록 |
+| 위험도 참고값 | 원본 관찰값과 분리해 별도 계산 (`riskAssessment`) |
+
+**MVP 제외 항목은 §11-1에 별도로 명시한다.**
+
+---
+
+## 4. 대화 흐름
+
+> Jira: S15P11A301-112(상태머신), 157(실물 배선)
+
+### 4-1. 질문 5개 — 고정 목록을 한 번 훑는다
+
+```text
+INTRO → COUNT → MOBILITY → URGENT → CLOSING
+```
+
+| 질문 | 채우는 필드 | 청취창 | 재질문 |
+|---|---|---|---|
+| INTRO | `anyResponseDetected` | 5초 | **무음일 때만 1회** |
+| COUNT | `reportedResponsiveCount` | 6초 | 없음 |
+| MOBILITY | `mobilityStatus` | 6초 | 없음 |
+| URGENT | `urgentConditionReported` | 8초 | 없음 |
+| CLOSING | — (마무리 안내) | — | — |
+
+**중요한 성질 세 가지.**
+
+1. **질문 1개 = 필드 1개.** 답을 못 받아도 다시 묻지 않고 `UNKNOWN`으로 넘어간다.
+   "보고서가 채워질 때까지 되묻는" 적응형 흐름은 **S15P11A301-148 범위**(보류)다.
+2. **INTRO 발화는 내용을 분석하지 않는다.** `interpret()`이 즉시 `True`를 반환하므로
+   GMS를 호출하지 않는다. "발화가 있었다"만 기록한다.
+3. **안내 음성이 끝나는 즉시 녹음이 시작된다.** 별도 신호가 없다. 청취창은 고정 길이라
+   답을 마쳐도 시간이 끝날 때까지 기다린다.
+
+세션 제한 시간은 **120초**이며 **질문 사이에서만** 검사한다(진행 중인 녹음·STT를
+중단하지 않는다). 정상 세션은 약 75초에 끝나므로 도달하지 않는 비상 상한이다.
+
+### 4-2. 응답 4분류 (명세 33-3)
+
+```text
+음성 미검출                     → NO_VOICE_DETECTED
+음성 있음 + STT 무효            → VOICE_DETECTED_STT_FAILED   ← 무응답으로 기록 금지
+STT 성공 + 값 확정 불가         → RESPONSE_UNRECOGNIZED
+STT 성공 + 값 확정              → ANSWER_STRUCTURED
+```
+
+환각 가드(`safety.is_valid_stt`)가 무효로 처리하는 것: 빈 출력 ·
+`no_speech_prob > 0.7` · 같은 토큰 4회 이상 반복 · STT 프라이밍 프롬프트 복사.
+
+### 4-3. 세션 상태
+
+`NOT_STARTED` → `PROMPTING` → `LISTENING` → `TRANSCRIBING` → `LLM_INTERPRETING`
+→ `TTS_RESPONDING` → (`RETRYING`) → `COMPLETED`
+종료 상태: `ABORTED_MANUAL` · `ABORTED_SAFETY` · `FAILED_AUDIO`
+
+---
+
+## 5. 외부 연동
+
+### 5-1. 비전 Encounter (입력)
+
+> Jira: S15P11A301-117, 159
+
+`/perception/encounter`의 **유일한 발행자는 Mission Manager**다. YOLO·음성·주행
+노드가 각자 phase를 발행하면 순서와 `encounterId`가 충돌하므로, 각 모듈은 자신이
+관찰한 사실만 Mission Manager에 알린다.
+
+```mermaid
+flowchart LR
+    YOLO["YOLO<br/>사람 후보"] --> MM["Mission Manager<br/>encounterId·phase 결정"]
+    STOP["주행 정지 사실"] --> MM
+    MM -->|"CONFIRMED / APPROACHED"| COORD["EncounterSessionCoordinator"]
+    COORD -->|"START_CONVERSATION"| CONV["ConversationMachine"]
+    CONV -->|"/mission/signal DIALOGUE_ENDED"| MM
+    CONV -->|"/interaction/report"| BRIDGE["cloud bridge"]
+    BRIDGE -->|"MQTT events QoS 1 / Outbox"| REPORT["관제 서버"]
+    MM -->|"ENDED"| COORD
+    REPORT --> ACK["관제 ACK·재개 상태머신<br/>미연결(116)"]
+```
+
+**시작 조건**
+
+- `CONFIRMED` — `encounterId`와 최초 비전 문맥을 등록한다. **녹음하지 않는다.**
+- `APPROACHED` — Mission Manager가 안전 위치 정지를 확인한 사건. **이때 한 번만** 세션을 시작한다.
+- 같은 `encounterId`의 반복 사건은 두 번째 세션을 만들지 않는다.
+- 다른 Encounter가 진행 중이면 현재 세션을 덮어쓰지 않는다.
+- `APPROACHED`의 `personCount`가 0이어도 최초 `CONFIRMED`의 사람 수를 보고 문맥으로 보존한다.
+
+**종료와 안전**
+
+- 음성 모듈은 `ENDED`를 직접 발행하지 않는다. 대화 완료 사실만 알리고 Mission Manager가 `ENDED`를 결정한다.
+- `LOST`·수동 중단·안전 중단에서는 진행 중 대화를 중단하고 **자동 재개를 요청하지 않는다.**
+- **음성 모듈은 모터 명령을 생성하지 않는다.**
+
+**확정 계약**
+
+| 방향 | 항목 | 값 |
+|---|---|---|
+| 입력 | 토픽·타입 | `/perception/encounter`, `std_msgs/String` |
+| 입력 | 본문 | `common/schemas/encounter.schema.json` |
+| 출력 | 대화 완료 | `/mission/signal`, `signal=DIALOGUE_ENDED`, `source=VOICE` |
+| 출력 | 보고 | `/interaction/report`, `common/schemas/interaction-report.schema.json` |
+| 출력 | 관제 경로 | cloud bridge MQTT `events`, QoS 1, 단절 시 Outbox |
+| 출력 | 중복 키 | `interactionId`를 MQTT `messageId`로 재사용 |
+| 안전 | 중단 매핑 | ESTOP·ERROR → `ABORTED_SAFETY` / MANUAL·PAUSED → `ABORTED_MANUAL` |
+| 실행 | 명령 | `.venv/bin/python -m sentinel_voice.ros_node` (`voice.launch.py`) |
+
+### 5-2. 관제 ACK·탐사 재개 (미연결, Jira 116)
+
+**`ACK 성공`과 `재개 승인`은 다른 신호다.** ACK는 관제가 보고를 받았다는 뜻이고,
+재개 승인은 로컬 안전 조건을 통과했다는 뜻이다. **둘을 분리해서 확인한다.**
+
+`report_lifecycle.py`의 상태머신은 완성됐고 실제 MQTT·ROS 어댑터만 미연결이다.
+
+| 상태 | 의미 | 안내·동작 |
+|---|---|---|
+| `WAITING_REPORT_ACK` | 관제 ACK 대기 | 없음 |
+| `WAITING_RESUME_DECISION` | ACK 성공, 재개 결정 대기 | 짧은 Closing 대기 |
+| `READY_TO_RESUME` | ACK 성공 **및** 재개 승인 | 결합형 안내 1회 + 재개 요청 1회 |
+| `REPORT_CONFIRMED_STAY` | ACK 성공, 재개 거부·시간초과 | 성공 안내만, 정지 유지 |
+| `REPORT_PENDING` | ACK 없이 시간초과 | 전송 대기 안내, Outbox 유지 |
+| `DELIVERY_FAILED` | 전송 실패 확정 | 네트워크 대기 안내 |
+
+**사건 계약** — 모든 사건은 같은 `reportId`를 가져야 한다.
+`REPORT_ACK_SUCCEEDED` / `REPORT_ACK_FAILED`(전송 어댑터) ·
+`RESUME_APPROVED` / `RESUME_REJECTED`(Mission Manager) · `CLOSING_TIMEOUT`(세션 조정 계층)
+
+**예외 처리 규칙**
+
+- 재개 승인이 ACK보다 먼저 와도 ACK 전에는 재생·재개 요청을 하지 않는다. 순서가 바뀌어도 결과는 같다.
+- 다른 `reportId`의 늦은 ACK는 무시한다. 과거 ACK로 현재 로봇이 출발하지 않는다.
+- 같은 사건이 여러 번 와도 한 번만 처리한다. 성공 ACK 뒤 늦게 온 실패 ACK는 무시한다.
+- 종료 상태가 된 보고에는 추가 음성·재개 요청을 만들지 않는다.
+
+**중복 안내 방지** — `REPORT_SUCCEEDED_DEPARTURE`에는 성공과 탐사 지속 안내가 함께
+들어 있다. ACK 직후 성공 음성을 먼저 재생하면 문구가 두 번 반복되므로, 짧은 Closing
+구간 동안 ACK와 재개 결정을 **함께** 기다린다.
+
+### 5-3. GMS 장애 대응
+
+> Jira: S15P11A301-115
+
+**세션 시작 전** — `session_gate.check_session_gate()`가 ① `GMS_KEY` 설정 ②
+`SENTINEL_GMS_BASE` 호스트·포트 ③ 제한 시간 내 TCP 연결 가능 여부를 확인한다.
+기본 2초. **API 요청을 보내지 않아 크레딧을 소비하지 않는다.**
+차단이면 오디오 장치를 열지 않는다.
+
+| 결과 | 신규 STT 세션 | 안내 |
+|---|---|---|
+| `READY` | 시작 | 없음 |
+| `GMS_MISCONFIGURED` | 차단 | `NETWORK_WAIT` |
+| `GMS_UNAVAILABLE` | 차단 | `NETWORK_WAIT` |
+
+TCP 연결 성공은 **인증 성공이 아니다.** 키 오류는 실제 호출의 HTTP 401/403으로 구분한다.
+
+**STT 완료 후 GMS 실패 분류** — 기본 최대 2회 호출(최초 1 + 재시도 1), 간격 0.5초.
+
+| 분류 | 대표 조건 | 재시도 | 최종 처리 |
+|---|---|---:|---|
+| `DEPENDENCY` | `openai` SDK 등 누락 | 안 함 | 배포 환경 수정 |
+| `NETWORK` | DNS·연결 거부·손실 | 1회 | 33-8 폴백 |
+| `TIMEOUT` | 호출 제한 시간 초과 | 1회 | 33-8 폴백 |
+| `AUTH` | 키 누락, 401/403 | 안 함 | 33-8 폴백 + 운영자 확인 |
+| `RATE_LIMIT` | 429 | 1회 | 33-8 폴백 |
+| `SERVER` | 5xx | 1회 | 33-8 폴백 |
+| `INVALID_RESPONSE` | JSON 파싱·계약 오류 | 안 함 | 33-8 폴백 |
+| `CLIENT` | 그 밖의 4xx | 안 함 | 33-8 폴백 |
+
+운영 로그에는 분류·예외 종류·시도 횟수만 남긴다.
+**GMS 키, 인증 헤더, 요구조자 발화 원문을 장애 메시지에 넣지 않는다.**
+
+**전송 대기 상태** (`report_delivery.queue_report()`)
+
+| 상태 | 의미 | 허용 안내 |
+|---|---|---|
+| `PENDING` | 전송 어댑터 미연결 | `REPORT_PENDING` |
+| `QUEUED` | bridge·Outbox가 인수함 | `REPORT_PENDING` |
+| `FAILED` | 대기열 인계 실패 | `NETWORK_WAIT` |
+| `SUCCEEDED` | 관제 ACK 확인 | Jira 116에서 연결 |
+
+---
+
+## 6. 안내 음성 자산
+
+> Jira: S15P11A301-114 · 코드: `sentinel_voice/guide_audio.py` · 파일: `ai/stt/assets/`
+
+젯슨에 TTS 모델을 설치하지 않는다. 승인 문구를 미리 만든 PCM WAV로 재생해 RAM 사용과
+자유 생성 문장의 위험을 줄인다.
+
+- 등록되지 않은 문장은 재생하지 않는다(`UNAPPROVED_TEXT`).
+- WAV가 없거나 잘못돼도 **동적 TTS로 대체하지 않는다.**
+- 재생 실패와 마이크 무응답은 서로 다른 오류다.
+- 관제 전송 성공이 확인되지 않으면 "전달했습니다" 파일을 재생하지 않는다(`REPORT_NOT_CONFIRMED`).
+
+### 6-1. 필수 자산 10개
+
+| 코드 | 파일 | 문구 | 사용 조건 |
+|---|---|---|---|
+| `INTRO` | `guide_intro.wav` | 탐사 로봇입니다. 구조 요청을 돕겠습니다. 제 말이 들리면 대답해 주세요. | 세션 시작 |
+| `ASK_COUNT` | `guide_ask_count.wav` | 본인을 포함해서, 지금 여기 대화할 수 있는 분은 모두 몇 명인가요? | 인원 질문 |
+| `ASK_MOBILITY` | `guide_ask_mobility.wav` | 지금 스스로 움직일 수 있나요? | 이동 능력 질문 |
+| `ASK_URGENT` | `guide_ask_urgent.wav` | 지금 어디가 가장 불편한가요? 숨쉬기 어렵거나 피가 많이 나면 말씀해 주세요. | 긴급 징후 질문 |
+| `RETRY_NO_RESPONSE` | `guide_retry_no_response.wav` | 제 말이 들리면 다시 한번 대답해 주세요. | 무응답 1회 재질문 |
+| `RETRY_UNCLEAR` | `guide_retry_unclear.wav` | 목소리가 잘 들리지 않았습니다. 천천히 다시 말씀해 주세요. | STT 불명확 |
+| `REPORT_PENDING` | `guide_report_pending.wav` | 구조 요청을 관제에 전달하고 있습니다. 잠시만 기다려 주세요. | 성공 미확인 |
+| `REPORT_SUCCEEDED` | `guide_report_succeeded.wav` | 구조 요청이 관제에 전달되었습니다. | 전송 성공, 재개 미승인 |
+| `REPORT_SUCCEEDED_DEPARTURE` | `guide_report_succeeded_departure.wav` | 구조 요청이 관제에 전달되었습니다. 다른 구역을 확인하기 위해 탐사를 계속하겠습니다. | 전송 성공 **및** 재개 승인 |
+| `NETWORK_WAIT` | `guide_network_wait.wav` | 통신 연결을 확인하고 있습니다. 연결되는 대로 구조 요청을 전달하겠습니다. | 네트워크 단절 |
+
+### 6-2. 제작 규격과 생성 이력
+
+**WAV 규격** — mono · 16,000Hz · PCM 16-bit · 길이 0.3~15초 ·
+peak ≤ −1dBFS · RMS −32~−12dBFS. `validate_wav()`가 검사한다.
+
+| 항목 | 적용값 |
+|---|---|
+| 생성 서비스 / 모델 | MiniMax / `speech-2.8-hd` |
+| Voice / Speed / Pitch / Volume | `Brave Female Warrior` / `1.1` / `0` / `1.75` |
+| Emotion · Sound tag · Pause tag | 사용하지 않음 |
+| 생성일 | 2026-07-28 |
+| 변환 | FFmpeg → 16kHz mono PCM 16-bit, 목표 RMS −20dBFS |
+
+Sound tag와 효과음은 VAD·STT 재유입 가능성이 있어 넣지 않는다.
+모든 파일을 같은 설정으로 생성하고 설정값을 검수 기록에 남긴다.
+
+MiniMax 원본은 `ai/stt/`에 `mini_*.wav`로 저장하며 **커밋 대상이 아니다.** 일괄 변환:
+
+```bash
+python -m tools.convert_guide_assets --source-dir . --force
+```
+
+> 2026-07-29 인원 수 계약을 "화자 본인 포함"으로 명확히 하면서 `guide_ask_count.wav`의
+> 승인 문구가 변경됐다. 구 문구가 녹음된 WAV는 새로 생성·변환·청취 검증해 교체한다.
+
+### 6-3. 검증
+
+**자동 검사** — 10개 전부 `[OK]`여야 한다.
+
+```bash
+python -m tools.validate_guide_assets --report results/guide-assets.json
+```
+
+**청취 검수** (파일별 3회) — 문구가 표와 한 글자도 다르지 않음 · 3회 모두 다시 듣지
+않고 이해 · 첫·끝 음절 잘림 없음 · 잡음·클리핑·팝 없음 · 파일 전환 시 음량 급변 없음 ·
+차분하며 구조 확정·의료 진단으로 오해되지 않는 말투.
+
+**실장 검증 권장 기준** — 파일별 재생 성공률 3/3 · 재생 시작 지연 P95 ≤ 0.5초 ·
+끊김 0회 · **로봇 안내 음성의 STT 재유입 0회** · 장치 오류를 무응답으로 기록한 건수 0건.
+
+> 안내 재생 중에는 청취를 시작하지 않는다. 재생 종료 후 **300ms** 뒤 청취를 시작해
+> 에코 재유입을 확인한다. 300ms는 초기 검증값이며 실측에 따라 조정한다.
+> ⚠️ **이 지연은 아직 코드에 없다.** §11-3 참고.
+
+### 6-4. Closing과 탐사 재개 계약
+
+```text
+관제 전송 성공 AND Mission Manager 재개 승인
+ → REPORT_SUCCEEDED_DEPARTURE 재생 → 재생 완료 확인 → 주행 안전 확인 → 탐사 재개
+```
+
+전송만 성공하고 재개가 승인되지 않으면 `REPORT_SUCCEEDED`만 재생한다. 전송 성공 전에는
+`REPORT_PENDING` 또는 `NETWORK_WAIT`을 쓴다. **음성 모듈은 모터를 직접 제어하지 않는다.**
+
+로봇의 상대 좌표는 요구조자의 절대 위치를 보장하지 않으므로, 어떤 문구도 "현재 위치가
+관제에 전달되었습니다"라고 말하지 않는다.
+
+---
+
+## 7. 실행 절차 (젯슨)
+
+> 2026-07-24 실제로 성공한 절차. 환경: Jetson Orin Nano 8GB · JetPack 6.2.1
+> (L4T R36.4.7) · CUDA 12.6 · Python 3.10
+
+### 7-1. ⚠️ 시작 전 반드시: 시계 확인
+
+이 보드는 **RTC 배터리가 없어 전원이 끊기면 시계가 과거로 리셋**된다. 시계가 틀리면
+TLS 검증이 깨져 **GMS·pip·HF·Docker가 전부 401/인증 오류**로 실패한다.
+
+```bash
+timedatectl status
+sudo date -s "YYYY-MM-DD HH:MM:SS"   # 폰 시계 참고
+```
+
+교내망은 NTP(UDP 123)가 막혀 자동 동기화가 안 된다. 수동 설정이 정답이다.
+**재부팅을 피한다.** 그룹 적용이 필요하면 `newgrp`을 쓴다.
+
+### 7-2. 환경 구축 (최초 1회)
+
+```bash
+# 8GB 스왑 (모델 로딩 OOM 방지)
+sudo fallocate -l 8G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile \
+  && sudo swapon /swapfile && echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+
+# 모니터링
+sudo pip3 install -U jetson-stats && sudo jtop --install-service && newgrp jtop
+
+# venv는 저장소 루트에
+cd ~/projects/S15P11A301 && python3 -m venv .venv
+source .venv/bin/activate && pip install -U pip
+
+# Jetson용 PyTorch — 인덱스 URL 끝의 /+simple/ 이 없으면 실패한다
+pip install torch==2.8.0 torchaudio==2.8.0 \
+  --index-url https://pypi.jetson-ai-lab.io/jp6/cu126/+simple/
+pip install "numpy<2"            # torch 휠이 numpy 1.x 기준 빌드
+
+# 나머지 (melotts 제외 — PyPI 패키징 버그, 사전녹음 방식이라 불필요)
+sudo apt install -y portaudio19-dev libsndfile1 pulseaudio-utils v4l-utils
+pip install sounddevice soundfile scipy librosa faster-whisper silero-vad openai
+```
+
+측정 세션마다 (부팅 시 초기화됨):
+
+```bash
+sudo nvpmodel -m 0 && sudo jetson_clocks
+```
+
+GMS 키:
+
+```bash
+cd ~/projects/S15P11A301/ai/stt && cp -n .env.example .env
+# GMS_KEY=<팀 GMS 키> 입력
+```
+
+> **GMS 키는 팀 크레딧과 연결된 비밀 값이다.** 코드·문서·커밋·로그·채팅에 넣지 않는다.
+> `.env`는 `.gitignore`에 등록되어 있다.
+
+### 7-3. 환경 점검
+
+```bash
+SENTINEL_DEVICE=cpu python -m tools.check_env --load
+```
+
+| 항목 | 통과 기준 |
+|---|---|
+| `platform` | `aarch64 / Jetson / R36.4.7` |
+| `torch+CUDA` | torch 2.8.0, Orin |
+| `config` | `device=cpu compute=int8 jetson=True stt=small llm=gpt-5.4-mini` |
+| `faster-whisper` `silero-vad` `sounddevice(장치)` `librosa` | 전부 `[OK]` |
+| `guide-audio` | 사전녹음 WAV 10개 보유 |
+| `memory/swap` | RAM 7.4GB, Swap 8GB↑ |
+| `STT 로드` / `VAD 로드` | `[OK]` |
+| **`GMS 실호출`** | `GMS 응답 정상 (...)` — `[WARN]`이면 키·네트워크·**시계** 확인 |
+
+마지막 줄이 `✅ 전부 통과`여야 한다.
+
+> `SENTINEL_DEVICE=cpu`인 이유: ARM64용 CTranslate2에 CUDA 빌드가 없어 faster-whisper는
+> **CPU로만 동작**한다. 빼면 `CTranslate2 not compiled with CUDA`로 실패한다.
+> GPU STT가 필요해지면 whisper.cpp(CUDA 빌드) 전환을 검토한다.
+
+### 7-4. 오디오 입출력 검증
+
+> Jira: S15P11A301-111
+
+BRIO 100의 USB 마이크를 입력으로 쓰므로 Bluetooth 스피커는 통화용 HFP/HSP가 아닌
+**A2DP 출력 프로필**을 사용한다.
+
+```bash
+pactl list short sinks && pactl info | grep 'Default Sink'
+# Active Profile 이 a2dp-sink 계열인지 확인
+
+python -m tools.check_audio_io                       # 목록만 (녹음·재생 안 함)
+python -m tools.check_audio_io \
+  --input-match "BRIO" --output-match "<스피커명>" \
+  --record-seconds 10 --playback \
+  --wav ~/audio_io_sample.wav --report ~/audio_io_report.json
+```
+
+**통과 조건** — 입력 이름에 `BRIO` 포함 · `mono/float32/16000Hz` `[OK]` ·
+`[FAIL]`·underrun·연결 해제 없음 · 발화 구간 `peak_dbfs < -3dBFS`이고 `clipped_ratio = 0` ·
+WAV 재청취 시 음성 식별 가능. RMS는 환경·거리에 따라 달라지므로 절대 합격선으로 쓰지 않는다.
+
+**추가 시험** — ① BRIO 카메라(`v4l2-ctl --stream-mmap=3 --stream-count=300`)와 마이크
+동시 실행 ② Bluetooth 전원 재연결 3회 후 기본 sink 유지·첫 음절 누락 여부.
+첫 음절이 반복해서 잘리면 안내 음성 앞에 무음 프리롤을 추가하는 후속 업무로 등록한다.
+
+> 개인 음성이 포함된 WAV는 커밋하지 않는다.
+
+### 7-5. 실행
+
+```bash
+# 단독 CLI (수동 트리거)
+SENTINEL_DEVICE=cpu python -u -m sentinel_voice.pipeline 2>&1 | tee ~/voice_test.log
+
+# ROS 2 노드 (실제 비전 트리거)
+./scripts/demo_up.sh
+ros2 topic echo /interaction/report std_msgs/msg/String
+ros2 topic echo /mission/signal    std_msgs/msg/String
+```
+
+> `-u` 필수. 없으면 `tee` 버퍼링 때문에 멈춘 것처럼 보인다.
+
+### 7-6. 환경 변수
+
+| 변수 | 기본값 | 의미 |
+|---|---|---|
+| `SENTINEL_DEVICE` | 자동 감지 | 젯슨에서는 **`cpu` 필수** |
+| `SENTINEL_COMPUTE` | Jetson `int8` | 연산 정밀도 |
+| `SENTINEL_STT_MODEL` | `small` | faster-whisper 모델 |
+| `SENTINEL_LLM` | `gpt-5.4-mini` | GMS 모델명 |
+| `GMS_KEY` | — | **필수.** `ai/stt/.env`, 커밋 금지 |
+| `SENTINEL_GMS_BASE` | `https://gms.ssafy.io/gmsapi/api.openai.com/v1` | GMS 엔드포인트 |
+| `SENTINEL_LLM_TIMEOUT` | `10` | 초과 시 33-8 폴백 |
+| `SENTINEL_GMS_MAX_ATTEMPTS` | `2` | 최초 호출 포함 최대 호출 수 |
+| `SENTINEL_GMS_RETRY_DELAY` | `0.5` | 재시도 전 대기(초) |
+| `SENTINEL_GMS_PROBE_TIMEOUT` | `2` | 세션 시작 전 TCP 확인(초) |
+
+고정 파라미터: `SILENCE_RMS=0.005` · `NORM_TARGET_RMS=0.08` ·
+VAD `threshold=0.5, min_speech_duration_ms=150, min_silence_duration_ms=500, speech_pad_ms=300` ·
+STT 프라이밍 프롬프트 `"살려주세요, 도와주세요, 다쳤어요, 가스, 화재"`
+
+---
+
+## 8. 테스트 시나리오 A~E
+
+> Jira: S15P11A301-157. 사람이 직접 말해서 명세 33-3 4분류와 33-6 9필드를 검증한다.
+
+시나리오마다 로그 파일명을 바꿔 `~/voice_test_<A~E>.log` 5개를 남긴다.
+
+### A — 표준 (중증) · 가장 먼저
+
+| # | 로봇 문구 | 말할 대사 |
+|---|---|---|
+| 1 | 탐사 로봇입니다… 제 말이 들리면 대답해 주세요. | **"네, 들려요."** |
+| 2 | …모두 몇 명인가요? | **"저랑 아저씨 한 분, 두 명이요."** |
+| 3 | 지금 스스로 움직일 수 있나요? | **"다리가 눌려서 못 움직여요."** |
+| 4 | …숨쉬기 어렵거나 피가 많이 나면 말씀해 주세요. | **"숨쉬기가 좀 힘들어요."** |
+| 5 | 구조 요청을 관제에 전달하고 있습니다… | (종료) |
+
+**합격** — `riskLevel=IMMEDIATE` · `urgentConditionReported=YES` · `reportedResponsiveCount=2`
+
+### B — 경상 (A의 반대 극단)
+
+`"네, 들립니다."` → `"저 혼자예요."` → `"네, 걸을 수 있어요."` → `"아니요, 괜찮습니다. 다친 데 없어요."`
+
+**합격** — `riskLevel=DELAYED` · `mobilityStatus=YES` · `urgentConditionReported=NO`
+관전 포인트는 4번이다. 부정문을 긴급 **없음**으로 옳게 뒤집는지 본다.
+
+### C — 완전 무응답 (의식 없음 상정)
+
+INTRO에서 5초 침묵 → 재질문 재생 → 다시 5초 침묵 → 이후에도 침묵.
+
+**합격** — `[NOVOICE]` 2회 + 재질문 WAV 재생 + `anyResponseDetected=false` + `riskLevel=IMMEDIATE`
+이 시나리오에서도 COUNT/MOBILITY/URGENT를 끝까지 물어본다(§11-4).
+
+### D — 발화는 있으나 STT 실패 ⭐ 명세 33-3 핵심
+
+INTRO에서 **말이 아닌 소리**를 5초간 낸다(신음, 웅얼거림, 숨 몰아쉬기).
+
+**합격** — `[STTFAIL]` 로그 + **`anyResponseDetected=true`** + `operatorReviewRequired=true`
+
+여기서 `false`가 나오면 **명세 위반이며 즉시 보고할 결함**이다. 음성은 감지됐고 STT만
+실패했으므로 무응답·의식없음으로 기록해서는 안 된다.
+
+### E — 모호한 답
+
+A와 같게 진행하되 MOBILITY에서만 `"글쎄요… 잘 모르겠어요."`
+
+**합격** — `mobilityStatus='UNKNOWN'` + 세션이 중단되지 않고 URGENT까지 진행
+
+### 로그 태그 사전
+
+| 태그 | 의미 |
+|---|---|
+| `[PLAY]` | 안내 WAV 재생 완료 (이 줄 직후 녹음 시작) |
+| `[STT]` | 유효 발화 인식 성공 |
+| `[NOVOICE]` | 무음 또는 VAD 음성 미검출 |
+| `[STTFAIL]` | 음성 있음, STT 무효 (무응답으로 기록 **안 함**) |
+| `[LLM]` | 추출 경로가 GMS가 **아닐** 때만 출력 (= 33-8 폴백) |
+| `[WARN]` | 안내 음성 재생 실패 |
+| `[FAIL]` | 오디오 장치 오류 → `FAILED_AUDIO` 종료 |
+
+### 공통 확인
+
+- `[LLM] … 추출 경로` 줄이 **없어야** 함 (있으면 GMS 호출 실패)
+- `[WARN] … 안내 음성 재생 실패`가 **없어야** 함
+- `E2E < 120s` (초과 시 `terminationReason=TIMEOUT`으로 격하)
+- **5개 질문 WAV가 스피커로 실제 들렸는가** — 로그만으로 판단 불가
+
+---
+
+## 9. 측정 결과
+
+원본 표와 상세 조건은 [`data/`](measurements/)에 있다.
+
+### 9-1. RAM — [상세](measurements/메모리-예산.md)
+
+| 구성 | 피크 | 여유 | 상태 |
+|---|---|---|---|
+| 로컬 LLM `qwen2.5:3b` | **5.62GB / 7.4GB** | ~1.9GB | GMS 전환 근거로 보존 |
+| **GMS 구성 (현재)** | **4102MB / 7620MB** | **3518MB** | 2026-07-30 실측 |
+
+GMS 구성 실측 조건: 15W mode 0 · `jetson_clocks` **미적용** · idle 2670MB(GUI·PulseAudio·
+Bluetooth 포함) · 시나리오 A 실발화 · `tegrastats` 1초. 세션 E2E 76.8초.
+
+이전 예상 ~3.3GB보다 절대 사용량이 높은 이유는 GUI 포함 베이스라인에서 시작했기
+때문이다. **통합 예산에는 보수적으로 4102MB를 쓴다.**
+
+⚠️ **배포 리스크 (로컬 LLM 시절 발견)** — 여유 RAM이 있어 보여도 page cache가 차 있으면
+GPU 로드가 OOM으로 실패한다. 젯슨 nvgpu 할당기는 캐시를 회수하지 못하므로 `available`이
+커도 진짜 free가 부족하면 실패한다. GMS 전환으로 이 경로는 사라졌으나, 향후 온디바이스
+모델을 다시 올릴 때 재발한다.
+
+### 9-2. 모델 선정 — [상세](measurements/GMS-모델-비교-결과.md)
+
+| 단계 | 결과 |
+|---|---|
+| 1차 선별 (v1, 25회) | Mini·Opus 100%, 후보 압축 |
+| 남은 15문장 (v1, 30회) | Haiku 우세(97.78%), Mini 반전 오류 1건 |
+| 안전 핵심 5회 반복 (v1) | **Mini 동일 위험→안전 오판 5/5 재현** |
+| 프롬프트 v2 고난도 (48회) | **Mini 100%·오판 0**, Haiku 91.67%·환각 3 |
+| v2 전체 회귀 | **Mini 완전 일치 44/44 → 최종 선정** |
+| 누적 | 143회 이상, 최소 1,260.97 크레딧 |
+
+**프롬프트 v2가 추가한 규칙** — 한 명이라도 이동 불가면 그룹은 `NO` · 전원 이동 가능이
+확인된 경우만 `YES` · 일부만 가능하고 나머지 미확인은 `UNKNOWN` · 중대한 출혈·호흡 이상이
+하나라도 명시되면 긴급 `YES` · **단순 통증만으로 이동·긴급을 추측하지 않음**.
+프롬프트 해시 `sha256:c2ac36ebd461`.
+
+> 서로 다른 데이터셋의 정확도를 직접 개선율로 계산하지 않는다.
+> Mini의 v1 반전 오류는 모델 크기보다 **불명확한 프롬프트 규칙**의 영향이 컸다는 것이 근거다.
+
+**모델 선정 규칙** — 아래를 **모두** 만족해야 운영 후보가 된다. 가장 크거나 최신인
+모델을 자동 선정하지 않으며, 안전 기준을 통과한 모델 중 지연·사용량이 작은 쪽을 우선한다.
+
+```text
+위험→안전 오판 0건 · 파싱 성공률 ≥99% · 슬롯 정확도 ≥90%
+숫자·이동가능 정확도 ≥95% · 환각 슬롯 ≤2% · 완전일치 일관성 ≥95% · 성공 P95 ≤3초
+```
+
+우선순위는 ① 위험→안전 오판 없음 ② 없는 사실 생성 없음 ③ 세 필드 정확 추출
+④ JSON 계약 안정성 ⑤ 허용 지연 내 일관성 ⑥ 그중 사용량이 합리적인 모델 순이다.
+
+**재현** — 크레딧 절감을 위해 단계를 나눈다. `--confirm-live` 없이는 크레딧을 쓰지 않는다.
+
+```bash
+python -m bench.gms_model_bench --dry-run                    # 호출 없음
+python -m bench.gms_model_bench --models gpt-5.4-mini --runs 1 \
+  --case-id all-fields-urgent --confirm-live                 # 스모크
+python -m bench.gms_model_bench --models <목록> --runs 2 --confirm-live
+```
+
+각 단계 결과를 검토하기 전에는 다음 단계를 실행하지 않는다. 모델 ID 오류(401·403·404)가
+나면 임의로 다른 모델로 대체하지 않고 오류를 보존한 뒤 정확한 ID를 확인한다.
+
+**결과 공유 주의** — `.env`·GMS 키를 첨부하지 않는다 · **실제 요구조자 음성·전사문을
+비교 데이터로 쓰지 않는다** · 모델 미지원 오류를 품질 실패로 해석하지 않고 "GMS 접근
+불가"로 분리한다 · 네트워크·실행 시각이 다른 결과를 단순 지연 순위로 비교하지 않는다 ·
+원본을 검토하지 않고 요약 CSV만으로 운영 모델을 확정하지 않는다.
+
+### 9-3. 젯슨 육성 테스트 (2026-07-30, commit `e36f910`)
+
+장비: Logitech BRIO 100 / TS-BTS25-2-D (Bluetooth A2DP) · 15W mode 0 ·
+`jetson_clocks` 미적용(sudo 권한 없음) · 단위 테스트 94개 통과.
+
+| 시나리오 | 회차 | riskLevel | E2E | 판정 |
+|---|---|---|---|---|
+| A 표준 | 1차 | IMMEDIATE | 76.8s | ✅ |
+| B 경상 | 2차 | DELAYED | 75.5s | ✅ |
+| **C 무응답** | 3차 | — | — | **⏸ 환경 무효** |
+| D STT실패 | 2차 | UNKNOWN | 111.2s | ✅ 핵심 조건 |
+| E 모호 | 1차 | IMMEDIATE | 75.2s | ✅ 핵심 조건 |
+
+**재시도 사유** (실패를 감추지 않고 기록)
+
+- **B 1차** — MOBILITY 발화가 `"네"`까지만 인식되어 `UNKNOWN`. 또렷하게 말한 2차에서 `YES` 확인.
+- **C** — 1·3차는 주변 대화가 문장으로 인식되어 무효. 주변 대화를 중단한 2차에서도
+  INTRO 첫 청취만 `[NOVOICE]`였고 **재질문 청취가 `[STTFAIL]`로 분류**됐다. Bluetooth
+  출력을 80%→35%로 낮춘 3차에도 별도 발화가 유입되어 음량 조정 효과를 판정할 수 없었다.
+  코드 결함으로 단정하지 않고 **조용한 환경·유선 출력 재시험 필요**로 남긴다(§11-3).
+- **D 1차** — 신음 레벨이 VAD 임계값에 못 미쳐 무효(§11-5).
+
+> 개인 음성이 포함된 `~/voice_test_*.log`, `~/audio_io_sample.wav`, `~/voice_ram.log`는
+> 저장소에 커밋하지 않는다.
+
+### 9-4. 미측정 항목
+
+| 항목 | 왜 남았나 |
+|---|---|
+| **C 무응답 경로 (`anyResponseDetected=false`)** | **결과가 가장 무거운 경로인데 미검증** (§11-3) |
+| STT WER · 핵심 표현 보존율 | 라벨 데이터셋 필요 (Jira 120) |
+| GMS 왕복 지연 P50/P95 · 일관성 | bench 재실행 |
+| **통합 구동 (비전+SLAM 동시)** | **가장 중요.** 안전 게이트 §9-5 |
+| `jetson_clocks` 적용 상태 재측정 | sudo 권한 필요 |
+
+### 9-5. 통합 측정 안전 게이트 — 순서를 건너뛰지 말 것
+
+이 코드는 모터를 제어하지 않지만, 통합 시 **OOM 킬러가 주행·안전 노드를 죽일 수 있다.**
+
+| 단계 | 내용 | 로봇 상태 | 통과 조건 |
+|---|---|---|---|
+| 1 ✅ | 음성 단독 | 정지 | 완료 (§9-1) |
+| 2 | 비전+SLAM+음성 **동시** RAM 측정 | **바퀴 띄움/정지** | 총 RAM 8GB 안 + 여유 확보, OOM·스로틀 없음 |
+| 3 | 실제 주행 중 동시 구동 | 주행 | **단계 2 통과 시에만** + 물리 E-Stop 확인 |
+
+**다운시프트 순서** (부족하면 위에서부터)
+
+| 순위 | 조치 | 효과 | 트레이드오프 |
+|---|---|---|---|
+| 1 ✅ | TTS 사전녹음 확정 | 상주 −1.3~2.0GB | 없음 (적용됨) |
+| 2 ✅ | LLM을 GMS로 이관 | 로컬 LLM RAM 0 | 네트워크 의존 (적용됨) |
+| 3 | STT `small` → `base` | 소폭 | 저SNR 강건성 하락 — 최후수단 |
+| 4 | 규칙 기반 파싱으로 LLM 대체 (33-8) | GMS 호출 0 | 자유발화 이해 포기 |
+
+### 9-6. 자원 측정 도구와 절차 (Jira 119)
+
+측정이 답해야 하는 질문은 네 개다.
+
+1. 로컬 `qwen2.5:3b` 피크 5,620MB 대비 GMS 구성의 피크 RAM이 얼마나 줄었는가?
+2. 음성 파이프라인을 추가한 뒤에도 available RAM이 **1GB 이상** 남는가?
+3. 세션 종료 60초 뒤 RAM·Swap이 baseline으로 돌아오는가?
+4. 비전·SLAM과 동시 실행해도 OOM·열 스로틀링·비전 FPS 10% 초과 하락이 없는가?
+
+> GMS 서버의 메모리는 Jetson RAM에 포함되지 않는다. 이 측정은 **Jetson에서 실제로 쓴
+> 메모리**만 비교한다.
+
+**도구** — [`bench/jetson_resource_bench.py`](../bench/jetson_resource_bench.py)가 세 구간을
+자동으로 나눈다.
+
+```text
+baseline 10초  →  측정 명령 실행  →  종료 후 after 60초
+```
+
+| 산출물 | 내용 |
+|---|---|
+| `tegrastats.log` | 구간 표시가 붙은 tegrastats 원문 |
+| `resource-samples.csv` | RAM·available RAM·Swap·CPU·GPU·온도 시계열 |
+| `resource-summary.json` | baseline·peak·after, 최소 여유 RAM, 판정 |
+| `console.log` | 측정 대상 프로그램의 stdout·stderr |
+
+`resource-summary.json` 주요 필드: `ramBaselineMb`(실행 전 10초 중앙값) ·
+`ramPeakMb` · `ramIncreaseFromBaselineMb` · `ramAfterMb`(종료 후 마지막 5샘플 중앙값) ·
+`ramRetainedAfterMb` · `memAvailableMinimumMb` · `swapPeakMb` · `temperatureMaxC`
+
+**환경 기록** — 비교 실행끼리 전원 모드·GUI 여부·`jetson_clocks`·연결 장치·테스트
+음원·반복 횟수·백그라운드 서비스를 **동일하게** 유지하고 조건을 남긴다.
+
+```bash
+mkdir -p results/jetson-resource
+{ date --iso-8601=seconds; git rev-parse HEAD; cat /etc/nv_tegra_release
+  sudo nvpmodel -q; sudo jetson_clocks --show; free -h
+  python -c "from sentinel_voice import config; print(config.summary())"
+} | tee results/jetson-resource/environment.txt
+```
+
+**스모크 테스트** — 실제 측정 전에 도구 자체가 도는지 확인한다.
+`commandExitCode = 0` · `phaseSampleCounts`의 baseline·command·after가 각각 1 이상 ·
+`ramPeakMb`와 `memAvailableMinimumMb`가 숫자 · `passed = true`.
+
+**단계 1 — 음성 단독**
+
+```bash
+python -m bench.jetson_resource_bench \
+  --label voice-gms --output-dir results/jetson-resource/voice-gms \
+  --baseline-seconds 10 --after-seconds 60 \
+  -- bash -lc 'python -u -m bench.pipeline_bench 2>&1 | tee results/jetson-resource/voice-gms/console.log'
+```
+
+⚠️ 먼저 `find data -type f -name '*.wav'`로 벤치 WAV가 실제로 있는지 확인한다.
+없으면 `pipeline_bench`가 `NO_FILE`로 스킵해 **STT·GMS E2E 측정으로 인정할 수 없다.**
+
+통과: `commandExitCode = 0` · `memAvailableMinimumMb ≥ 1024` · OOM·강제 종료 0건 ·
+종료 후 Swap 증가 ≤ 256MB
+
+**단계 2 — 음성 30회 안정성**
+
+같은 래퍼로 감싸되 **단순 GMS 요청 30회가 아니라 VAD → STT → GMS → 보고 → 안내 음성
+전체 세션**이어야 한다. 현재 `pipeline_bench.py`는 오디오 재생·관제 ACK를 포함하지
+않으므로 이 단계의 완전한 대체물이 아니다.
+
+**단계 3 — 비전·SLAM 통합** (바퀴 띄움/정지 상태)
+
+① 비전만 → baseline FPS·RAM ② 비전+SLAM ③ 비전+SLAM+음성. 같은 래퍼로 실행하고
+비전 로그에서 FPS를 별도 추출한다. 통합 launch는 **ROS 2 담당자가 확정한 실제 launch
+파일**을 쓰고 임의로 추정하지 않는다.
+
+```text
+FPS 하락률 = (비전 단독 FPS − 음성 동시 FPS) / 비전 단독 FPS × 100
+```
+
+**결과표** — 채워서 [`measurements/메모리-예산.md`](measurements/메모리-예산.md)에 기입한다.
+
+| 구성 | 피크 RAM | 최소 available | 종료 후 RAM | 피크 Swap | 판정 |
+|---|---:|---:|---:|---:|---|
+| 로컬 qwen2.5:3b | 5,620MB | 미측정 | 미측정 | 미측정 | OOM 위험 확인 |
+| GMS 음성 단독 | 4,102MB | 측정 예정 | 측정 예정 | 측정 예정 | §9-1 |
+| 비전+SLAM+GMS 음성 | 측정 예정 | 측정 예정 | 측정 예정 | 측정 예정 | 미측정 |
+
+```text
+절감량(MB) = 5,620 − GMS 피크 RAM        절감률(%) = 절감량 / 5,620 × 100
+```
+
+> 기존 로컬 LLM 측정과 GUI·전원 모드 조건이 다르면 직접적인 A/B 실험이라고 표현하지
+> 않고 **과거 기준 대비 참고 비교**라고 명시한다.
+
+**팀에 전달할 것** — 장비·전원·commit·환경 정보 · 원본 tegrastats 로그 ·
+baseline·peak·after RAM과 최소 available RAM · Swap·최고 온도·CPU/GPU ·
+전환 전후 RAM 차이와 조건 차이 · 통합 시 비전 FPS 변화 · **실패 로그와 재현 명령**.
+한 단계에서 오류가 나면 다음으로 넘어가지 말고 명령과 전체 출력을 보존한다.
+
+> API 키, 인증 헤더, 개인 식별 가능 음성·전사문은 커밋하지 않는다.
+
+---
+
+## 10. 정량 검증 기준
+
+> Jira: S15P11A301-110. **테스트 전에 통과 기준을 고정하기 위한 절이다.**
+> 모델을 골라 놓고 결과를 설명하는 문서가 아니다.
+
+**판정 원칙** — 평균만으로 통과시키지 않고 P50·P95·최악값과 실패 건수를 함께 기록한다 ·
+STT·GMS·위험도 규칙·자원·장애 대응을 분리 측정한다 · **시스템 실패를 요구조자 무응답으로
+계산하지 않는다** · 같은 원본 음성을 모델별로 재사용한다 · 기준 미달 결과를 삭제하지 않고
+원본 로그와 함께 남긴다 · 기준 변경은 측정 **전에** 팀 합의와 사유를 기록한다.
+
+| 단계 | 목적 | Jira |
+|---|---|---|
+| A | GMS 정보 추출 품질·지연·비용 비교 | 118 ✅ |
+| B | Jetson RAM·E2E·통합 자원 측정 | 119 |
+| C | STT WER·핵심 슬롯·최종 시나리오 | 120 |
+
+### 10-1. 테스트 데이터
+
+화자 3명 이상 · 표준 한국어·구어체(**사투리 제외**) · 화자당 핵심 발화 10개 이상 ·
+소음 clean/SNR 10/5/0dB · 무음 10 + 생활 소음 10 + 신음 10개 이상 ·
+응답 가능 인원 1·2·3명과 모호한 수량 표현 포함.
+최소 STT 평가량 `3명 × 10발화 × 4조건 = 120개`.
+
+정답 라벨은 모델 출력을 본 뒤 수정하지 않는다. 애매한 샘플은 평가 전에 팀원 2명이
+합의하고, 합의되지 않으면 `UNKNOWN` 정답으로 분리한다.
+
+### 10-2. 통과 기준
+
+| 구분 | 항목 | 기준 |
+|---|---|---|
+| STT | clean / SNR 10 / 5dB WER | ≤ 15% / 20% / 25% |
+| STT | SNR 0dB WER | 기록, 목표 ≤ 40% (핵심 표현 기준 우선) |
+| STT | 핵심 표현 보존율 | 전체 ≥ 90%, 숫자·가능/불가 ≥ 95% |
+| VAD | 발화 검출 재현율 | ≥ 95% |
+| VAD | 무음 오검출 / 비발화 오검출률 | 10개 중 0건 / ≤ 5% |
+| STT | RTF | P95 ≤ 1.0 |
+| GMS | JSON 파싱·스키마 준수율 | ≥ 99% |
+| GMS | 핵심 슬롯 정확도 / 숫자·가능불가 | ≥ 90% / ≥ 95% |
+| GMS | 발화에 없는 슬롯 생성률 | ≤ 2% |
+| GMS | 위험도 규칙 정답 일치율 | ≥ 95% |
+| GMS | 반복 일관성 (완전일치) | ≥ 95% |
+| GMS | 호출 성공 시 지연 | P95 ≤ 3초 |
+| E2E | 트리거→최초 안내 시작 | P95 ≤ 1초 |
+| E2E | STT 완료→GMS 완료 | P95 ≤ 3초 |
+| E2E | 발화 종료→관제 전송 완료 | P95 ≤ 5초 |
+| E2E | 전송 완료→안내 시작 | P95 ≤ 0.5초 |
+| 자원 | OOM·강제 종료 / 열 스로틀링 | 0건 / 0건 |
+| 자원 | 피크 시 available RAM | ≥ 1GB |
+| 자원 | 세션 종료 60초 후 swap 증가 | ≤ 256MB |
+| 자원 | 음성 추가 후 비전 FPS 저하 | ≤ 10% |
+| 자원 | 30회 세션 후 메모리 증가 | ≤ 10% |
+
+블루투스 절전 복귀로 첫 음절이 잘리는 경우는 지연 통과와 별개로 **실패 처리**한다.
+
+### 10-3. 치명 오류 — 목표 0건
+
+평균 정확도와 별개로 한 건이라도 나오면 원인과 완화책을 리뷰한다.
+
+- `움직일 수 없다`를 `가능`으로 반전
+- 요구조자가 말하지 않은 긴급 상태 생성
+- 응답 가능 인원 수를 임의 생성
+- **시스템 장애를 요구조자 무응답으로 변환**
+- GMS가 구조 ETA 또는 최종 구조 순위를 생성
+
+### 10-4. 장애 시나리오
+
+| 시나리오 | 최소 반복 | 통과 기준 |
+|---|---:|---|
+| 정상 청취 후 무응답 | 5 | 무응답 관찰 기록 100%, 시스템 장애와 혼동 0건 |
+| 세션 전 네트워크 단절 | 5 | 신규 STT 0회, 안전 안내 100%, 전송 대기 100% |
+| STT 후 GMS 타임아웃 | 5 | 제한 재시도 후 33-8 폴백 100% |
+| GMS 401/403 | 3 | 오프라인 오분류 0건, 설정 장애 보고 100% |
+| GMS 429 / 5xx | 각 3 | 정책에 맞는 재시도·폴백 100% |
+| 마이크 분리 | 5 | 무응답 분류 0건, 장치 오류 보고 100% |
+| 관제 전송 실패 | 5 | "전달했습니다" 재생 0회, 대기 문구 100% |
+| 연속 음성 세션 | 30 | 완료율 ≥ 95%, 비정상 종료 0건 |
+
+### 10-5. 결과 기록 형식
+
+```text
+runId, timestamp, gitCommit, device, powerMode, sampleId, speakerId, snrDb,
+sttModel, gmsModel, promptVersion, sttStatus, sttText, referenceText,
+wer, keyTermCorrect, gmsStatus, schemaValid, slotCorrect, hallucinatedSlots,
+riskExpected, riskActual, riskReasons, riskRuleVersion,
+vadMs, sttMs, gmsMs, reportMs, e2eMs,
+ramBaselineMb, ramPeakMb, ramAfter60sMb, swapPeakMb, temperatureMaxC,
+visionFpsBaseline, visionFpsDuringAudio, outcome, errorType
+```
+
+원본 로그·CSV에 **GMS 키, 인증 헤더, 요구조자 개인정보를 저장하지 않는다.**
+발표·포트폴리오 자료에는 화자 식별자를 익명화하고 집계값만 쓴다.
+
+**최종 판정** — `PASS`(모든 필수 기준 충족, 치명 오류 0) ·
+`CONDITIONAL`(비필수 목표만 미달 + 완화책·재시험 일정 승인) ·
+`FAIL`(필수 기준 미달, 치명 오류, 로그 누락, 조건 불일치)
+
+### 10-6. 현재 벤치의 한계
+
+[`bench/pipeline_bench.py`](../bench/pipeline_bench.py)는 STT 단일 실행 시간, GMS
+평균·최소·최대 지연, 반복 결과의 일관성, CSV만 제공한다. 최종 검증 전 보완 필요:
+정답 transcript·슬롯 라벨로 WER·슬롯 정확도 계산 · 조건별·화자별 반복과 RTF ·
+P50·P95·오류율 추가 · 완전일치와 환각 슬롯 비교 · 단계별 monotonic timestamp로 E2E ·
+`tegrastats` 로그와 `runId` 연결 · SED 기반 경로가 STT 실패를 무응답으로 만드는 기존
+경로 제거.
+
+**현재 벤치 결과만으로 STT 품질이나 GMS 전환 효과가 검증됐다고 결론 내리지 않는다.**
+
+---
+
+## 11. 알려진 한계와 후속 과제
+
+### 11-1. MVP 제외 항목 — 응답 불가 동반자 ⚠️
+
+**결정: MVP 구현에서 제외한다** (2026-07-30).
+
+요구조자가 `"저는 괜찮은데 제 애가 옆에 쓰러져 있어요"`라고 말하면, 그 아이를 기록할
+필드가 **어디에도 없다.**
+
+| 필드 | 담을 수 있나 |
+|---|---|
+| `reportedResponsiveCount` | ❌ 계약상 **응답 가능** 인원만 센다. 의식 없는 사람은 제외 |
+| `mobilityStatus` / `urgentConditionReported` | ❌ `GROUP` 단위 값 하나뿐. 사람별로 다른 상태를 표현 불가 |
+| `visionPersonCount` | ❌ 비전 계약. 가려진 사람을 못 볼 수 있고 음성이 기여할 경로가 없음 |
+| 자유 서술 | ❌ 9필드가 전부. 텍스트 칸이 없음 |
+
+**결과** — 위 발화로 세션을 진행하면 `mobilityStatus=YES`, `urgentConditionReported=NO`가
+되어 **`riskLevel=DELAYED`(대기 가능)**로 관제에 올라갈 수 있다. 의식 없는 사람이
+현장에 있는데도.
+
+**제외 근거** — 필드 추가는 `interaction-report.schema.json`(`additionalProperties: false`,
+CI 검증) 변경이므로 백엔드 파싱·DB·프론트 표시·명세 33-6이 함께 움직여야 한다.
+남은 기간에 4개 모듈 합의는 비현실적이다. 또한 "말로 전달된 제3자 정보를 음성 계약에
+담을지, 비전 계약을 보정할지, Mission Manager가 합칠지"는 경계 문제여서 팀 합의가 필요하다.
+
+**완화** — 대화 원문 저장(§11-6)이 있으면 구조화되지 않아도 **정보 자체는 보존**된다.
+`operatorReviewRequired`가 항상 `true`이므로 사람이 원문을 읽어 만회할 수 있다.
+**"미구현"과 "조용히 소실"은 다른 등급이며, 최소한 후자는 막는다.**
+
+### 11-2. 세션 미완료 시 수집 결과가 버려진다 ⚠️
+
+`risk_assessment()`의 첫 조건이 `terminationReason`을 **게이트**로 사용한다.
+
+```python
+if report["terminationReason"] not in {"NORMAL", "UNKNOWN"}:
+    return {"riskLevel": "UNKNOWN", "riskReasons": [f"시스템 종료 사유: …"], …}
+```
+
+네 질문에 모두 답을 받고 CLOSING 안내만 남은 상태에서 120초를 1초 넘기면,
+`urgentConditionReported=YES`가 이미 잡혀 있어도 `riskLevel`이 `IMMEDIATE`가 아니라
+`UNKNOWN`이 된다. `riskReasons`도 `"시스템 종료 사유: TIMEOUT"` 한 줄뿐이어서
+관제 담당자가 요구조자 상태를 읽을 수 없다.
+
+`riskLevel`은 관제가 **우선순위를 정렬하는 필드**다. 이는 보수적인 처리가 아니라
+**알고 있던 정보를 버려서 늦어지는** 상황을 만든다.
+
+같은 경로로 새는 사유:
+
+| 사유 | 등급 무효화가 맞나 |
+|---|---|
+| `AUDIO_DEVICE_ERROR` · `GMS_UNAVAILABLE` | ✅ 맞다. 관찰 자체를 못 했다 |
+| `TIMEOUT` · `ABORTED_MANUAL` | ❌ 틀렸다. 관찰은 했다 |
+| **`ABORTED_SAFETY`** | ❌ **가장 위험.** 위험해서 대피한 상황의 정보가 사라진다 |
+
+규칙이 **"관찰을 못 했다"와 "관찰은 했는데 절차가 안 끝났다"를 한 덩어리로 묶었다.**
+구분 기준은 이미 보고서 안에 있다 — `anyResponseDetected`가 `null`인지 여부다.
+
+**수정 방향** — ① 예산 상향(120→180초) ② **부분 결과의 등급 보존**: 관찰이 있었다면
+정상 판정하고 `riskReasons`에 `"세션 미완료: TIMEOUT"`을 **덧붙인다**(덮어쓰지 않고).
+②가 본질이다. 예산을 얼마로 늘려도 초과는 언젠가 나기 때문이다.
+
+### 11-3. 안내 음성 에코가 응답으로 오인될 수 있다 ⚠️
+
+> Jira: S15P11A301-165
+
+시나리오 C가 3차까지 재현되지 않은 원인 가설이며, 코드에 실재하는 구멍이다.
+
+1. **AEC(음향 반향 제거)가 파이프라인에 없다.** 스피커 출력이 마이크로 유입되는 것을 막는 장치가 없다.
+2. **재생 종료 판정이 실제 가청 종료보다 이르다.** `GuidePlayer.play()`는
+   `backend.play()` 후 `backend.wait()`로 반환하는데, `sd.wait()`는 로컬 PortAudio
+   스트림 기준이다. Bluetooth A2DP는 그 뒤에 100~250ms 싱크 버퍼가 더 있어, 반환된
+   뒤에도 스피커에서 안내 음성 꼬리가 재생된다. **녹음은 그 순간 시작된다.**
+   §6-3의 300ms 지연은 문서에만 있고 **코드에 없다.**
+3. **에코가 유효 발화로 통과한다.** `is_valid_stt()`의 "프롬프트 복사" 가드는
+   `config.STT_PROMPT`와만 대조하고 **안내 문구 텍스트와는 대조하지 않는다.**
+
+**영향** — `anyResponseDetected=true` 오탐. **의식 없는 요구조자를 "응답 있음"으로
+보고할 수 있다.** 그리고 그 반대 경로인 `NO_VOICE_DETECTED` → `IMMEDIATE`가 실기기에서
+아직 검증되지 않았다.
+
+**수정 방향** — `is_valid_stt`에 `guide_audio.GUIDE_BY_TEXT`(승인 문구 10개) 대조 추가 ·
+재생과 청취 사이 주입 가능한 지연(기본 300ms) · **유선 출력으로 C 재시험**(A2DP 지연을
+변수에서 제거) · 진단용 원본 오디오 보존.
+
+### 11-4. 무응답인데도 남은 질문을 계속 한다
+
+상태머신이 INTRO 무응답 시 조기 종료하지 않고 COUNT→MOBILITY→URGENT를 끝까지 재생한다.
+현장에서는 반응 없는 요구조자 앞에서 30초를 낭비하는 셈이다. 조기 종료 판단은
+**S15P11A301-148** 범위다.
+
+### 11-5. 약한 발성이 감지되지 않는다
+
+Silero VAD는 **speech 모델**이라 신음·헐떡임 같은 **비언어 발성을 설계상 놓친다.**
+threshold를 낮춰도 종류가 다른 소리라 잘 잡히지 않는다(D 1차 실패 원인).
+
+**중상자일수록 크게 말할 수 없으므로 방향이 위험하다.** 명세 33-3이 구분하라고 요구한
+`NO_VOICE_DETECTED`와 `VOICE_DETECTED_STT_FAILED`가 실기기에서 하나로 합쳐진다.
+
+**수정 방향** — VAD 단독 판정을 2단으로 바꾼다.
+
+```text
+raw_rms < SILENCE_RMS                      → NO_VOICE_DETECTED
+VAD 검출됨                                  → 발화 있음 → STT
+VAD 미검출 + rms 충분 + 지속시간 ≥ N ms      → 발화 있음 (STT 실패로 처리)   ← 신규
+```
+
+⚠️ **순서 주의.** 감도를 올리면 에코·잡음도 더 들어오므로 §11-3의 echo 가드를 **먼저**
+넣어야 한다. 두 작업은 서로 반대 방향으로 당긴다.
+
+### 11-6. 대화 내역이 어디에도 저장되지 않는다
+
+`sentinel_voice/`에 파일 쓰기가 한 줄도 없다. 보고서는 `print()`와 ROS 토픽 발행으로만
+나가고, 청취 원본 오디오와 STT 원문은 콘솔 로그 외에 남지 않는다.
+
+**이것이 C 원인 규명 실패의 직접 원인이다.** "무슨 소리가 마이크로 들어왔는지"를 사후에
+확인할 방법이 없어 코드 결함인지 주변 잡음인지 판정할 수 없었다.
+
+**부수 효과** — 저장이 붙으면 ① §11-1의 정보 소실을 완화하고 ② Jira 120(STT WER)의
+"테스트 wav가 개발 PC에 있어서 못 함" 제약이 풀리고(실제 육성 녹음이 코퍼스가 된다)
+③ 현장 증적이 생긴다.
+
+**설계 방향**
+
+```text
+sessions/<timestamp>/
+  session.jsonl      턴별: question, response_class, stt_text, no_speech_prob,
+                     extraction_source, 확정 필드값, 타임스탬프
+  report.json        33-6 9필드 + 위험도
+  turn_01_INTRO.wav  청취 원본 (정규화 전)
+```
+
+⚠️ **제약** — 기본 비활성, 환경변수로 경로가 주어질 때만 저장 · 개인 음성은 민감정보이므로
+**저장소 커밋 금지** · 보관 기간·삭제 책임을 문서에 명시 · 세션 디렉터리를 `.gitignore` 등록.
+
+### 11-7. 그 밖의 한계
+
+| # | 한계 | 비고 |
+|---|---|---|
+| 1 | **안내 문구가 두 번 들린다** | CLOSING이 `REPORT_PENDING`을 쓰고, 직후 전송 대기 안내도 같은 WAV를 재생 |
+| 2 | **질문 1개 = 필드 1개** | "저 혼자고 다리 못 움직여요"도 COUNT만 채우고 MOBILITY를 또 묻는다. GMS가 뽑은 나머지 필드는 `_extractions`에 모이지만 **아무도 읽지 않는다** → 148이 저렴하다는 뜻 |
+| 3 | **문구가 구버전** | 자연스러움 개편(146~149) 전. 어색하다는 피드백은 인지된 사항 |
+| 4 | `operatorReviewRequired`가 항상 `true` | `risk_assessment()`가 모든 분기에서 `True`를 반환. 안전 기본값이며 결함 아님 |
+| 5 | `countConfidence`가 항상 `null` | 신뢰도 측정 미구현 |
+| 6 | 근-침묵 환각 | 완전 무음이 아닌 작은 잔향에서 STT가 헛단어를 뱉는 우회 경로 관측(Jira 50). 원본 RMS 게이트 + `is_valid_stt`로 방어하나 완전하지 않다 |
+
+### 11-8. 후속 작업 순서
+
+```text
+[대화 내역 저장]  ← 계측. 없으면 나머지가 재현 안 됨 (§11-6)
+      │
+      ├──> [165 echo 가드 + C 재검증] ──> [VAD 보조 게이트] (§11-3 → §11-5, 순서 강제)
+      │
+      └──> [타임아웃 결과 보존] (§11-2, 독립·병렬 가능)
+
+[116 관제 ACK·재개 연결]           ← 별도 트랙
+[149 스키마] → [148 적응형 흐름]    ← 팀 합의 필요, MVP 이후
+```
+
+---
+
+## 12. 트러블슈팅
+
+| 증상 | 원인 / 해결 |
+|---|---|
+| pip·HF·GMS·docker 전부 401/인증 오류 | **시계가 과거로 리셋됨**(RTC 배터리 없음) → `sudo date -s "…"` |
+| `⚠️ 음성 세션 시작 차단: GMS_MISCONFIGURED` | `.env`의 `GMS_KEY` 미설정 → §7-2 |
+| `⚠️ 음성 세션 시작 차단: GMS_UNAVAILABLE` | GMS 호스트 도달 실패 → 네트워크, 그다음 **시계** |
+| `pip install torch` → No matching distribution | 인덱스 URL에 **`/+simple/` 누락** → §7-2 |
+| torch import 시 `Failed to initialize NumPy` | numpy 2.x 충돌 → `pip install "numpy<2"` |
+| `requirements.txt` 설치 중 melotts 빌드 실패 | PyPI 패키징 버그 → melotts 제외 |
+| `[FAIL] STT 로드: CTranslate2 not compiled with CUDA` | ARM64에 CUDA 빌드 없음 → `SENTINEL_DEVICE=cpu` |
+| LLM 로드 시 `cudaMalloc failed: out of memory` | **page cache가 free를 잠식** → `sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'`. `available`이 커도 발생 (GMS 구성에서는 해당 없음) |
+| 안내 음성이 안 들림 (로그는 `[PLAY]`) | 스피커 출력 장치·볼륨 → §7-4 재실행 |
+| `[WARN] … ASSET_NOT_FOUND` | WAV 누락 → `python -m tools.validate_guide_assets` |
+| 계속 `[NOVOICE]`만 뜸 | 마이크 거리·볼륨(`SILENCE_RMS=0.005` 미달) 또는 입력 장치 오선택 |
+| `[LLM] … 추출 경로 FALLBACK` | GMS 호출 실패 → 33-8 축소 동작 중. 키·네트워크·시계 확인 |
+| `terminationReason=TIMEOUT` | 세션 120초 초과 → §11-2 |
+| 실행이 멈춘 것처럼 보임 (`tee` 사용) | 파이썬 stdout 버퍼링 → `python -u` |
+| `jtop`: "I can't access jtop.service" | 그룹 미적용 → `newgrp jtop` (재부팅 금지) |
+| 재부팅 후 느려짐 | `jetson_clocks`는 부팅마다 초기화 → 재실행 |
+| jetson-containers / l4t-pytorch 이미지 | **비추천** — 압축 6.3GB / 해제 19.6GB로 디스크 초과. 네이티브 설치(§7-2)가 정답 |
+
+---
+
+## 13. 용어집
+
+> 대상: AI 외 역할을 포함한 팀 전체. **일반적인 뜻보다 이 프로젝트에서의 의미를 우선한다.**
+
+### 13-1. 흐름과 구성요소
+
+| 용어 | 의미 |
+|---|---|
+| **음성 세션** | 로봇이 안내를 시작한 뒤 답변을 듣고 정보를 추출해 관제 보고를 만드는 한 번의 대화 단위 |
+| **VISION 트리거** | 비전 모듈이 사람을 발견해 세션 시작을 요청하는 신호. 음성 모듈이 항상 듣고 있는 것은 아니다 |
+| **SED** | Sound Event Detection. 신음·충격음 같은 소리 사건 감지. **현재 범위에서 제외**(§1-4) |
+| **VAD** | Voice Activity Detection. 말소리 구간을 찾는다. 내용은 이해하지 않는다 |
+| **STT** | Speech-to-Text. 젯슨에서 `faster-whisper small`을 로컬 실행 |
+| **LLM** | 발화에서 정해진 사실 3개를 추출하는 데만 사용. 의료 판단·구조 순위를 맡기지 않는다 |
+| **GMS** | SSAFY의 생성형 AI 호출 서비스. 젯슨에 LLM을 설치하는 대신 API로 `gpt-5.4-mini`를 호출 |
+| **TTS** | Text-to-Speech. **운영 경로에는 모델을 탑재하지 않고** 승인된 WAV를 재생 |
+| **다턴 대화** | 한 번 묻고 끝나지 않고 여러 질문·답변이 이어지는 대화 |
+| **E2E** | End-to-End. 트리거부터 관제 보고·안내까지 전체 경로를 연결해 시험 |
+
+### 13-2. 데이터와 보고
+
+| 용어 | 의미 |
+|---|---|
+| **전사문(transcript)** | STT 변환 결과. 사람이 말한 원본 의도와 다를 수 있다 |
+| **정보 추출** | 자유 문장에서 필요한 사실만 정해진 필드로 옮기는 작업 |
+| **응답 가능 총인원** | 화자 본인 포함, **음성으로 응답할 수 있다고 발화자가 직접 보고한** 사람 수. 동물과 응답 미확인 인원은 세지 않으며 카메라 감지 인원과도 구분 |
+| **슬롯(slot)** | 정보 추출 평가에서 정답 여부를 따로 세는 정보 칸. 현재 인원·이동·긴급 3개 |
+| **스키마 / 스키마 검증** | 필드·자료형·허용값을 정한 데이터 계약 / 그 계약을 지켰는지 검사. JSON 문법이 맞아도 계약을 어기면 실패 |
+| **`null`** | 값이 생성되지 않았거나 해당 단계가 실행되지 않아 값 자체가 없음 |
+| **`UNKNOWN`** | 처리는 했지만 답을 확정할 근거가 부족함. `null`과 동일하지 않다 |
+| **자기보고** | 카메라나 의료진이 확인한 사실이 아니라 요구조자가 말로 알려준 내용 |
+| **`riskLevel`** | 관제 검토를 돕는 위험도 참고값. `IMMEDIATE`·`URGENT`·`DELAYED`·`UNKNOWN` |
+| **의료 triage** | 의료 전문가가 임상 관찰과 공식 기준으로 우선순위를 정하는 절차. **`riskLevel`을 의료 triage나 최종 구조 순위라고 부르면 안 된다** |
+| **ACK** | Acknowledgement. 관제가 보고를 받았다는 확인. 내용 동의나 우선순위 확정이 아니다 |
+| **`reportId`** | 보고서마다 발급하는 고유 번호. 과거 보고의 늦은 ACK가 현재 보고에 잘못 적용되는 것을 방지 |
+| **Mission Manager** | 로봇 임무 흐름을 관리하는 상위 모듈. ACK 이후 탐사 재개 여부를 결정 |
+| **탐사 재개 승인** | 음성 모듈이 임의로 이동하지 않고 Mission Manager가 다음 탐사로 넘어가도 된다고 알리는 신호 |
+| **Outbox** | 전송하지 못한 메시지를 보관했다 다시 보내는 대기열. 실제 구현은 bridge 범위 |
+| **Safety Gate / Nav2** | 안전 조건 최종 확인 경계 / 경로 계획·주행 담당 |
+
+### 13-3. 안전 처리와 장애
+
+| 용어 | 의미 |
+|---|---|
+| **환각 / 환각 가드** | 입력에 없는 내용을 생성하는 현상 / 무음·반복·프롬프트 복사를 걸러내는 규칙. 모든 환각을 막지는 못한다 |
+| **폴백** | 주 처리가 실패했을 때 더 제한적이고 안전한 대체 경로 |
+| **33-8 키워드 폴백** | STT는 끝났지만 GMS만 실패한 경우의 축소 추출 경로. GMS와 같은 이해 성능을 보장하지 않는다 |
+| **세션 게이트** | 새 세션 전에 GMS 호스트 연결 가능성을 검사해 시작 여부를 결정하는 경계 |
+| **호스트 도달성 / TCP 연결 확인** | GMS 주소·포트까지 연결 가능한지. 다른 인터넷 접속 성공이나 모델 정상 응답과 같지 않다 |
+| **401/403 · 429 · 5xx** | 인증·권한 오류(재시도 무의미) · 요청 과다(제한 재시도) · 서버 오류(제한 재시도) |
+| **안전 기본값** | 정보 부족 시 낙관적 결론을 만들지 않고 `UNKNOWN`·재질문·관제 검토 필요로 처리하는 값 |
+| **에코 / 재유입** | 스피커의 로봇 안내가 마이크에 다시 들어가 요구조자 발화로 처리되는 현상(§11-3) |
+
+### 13-4. 평가 지표
+
+| 용어 | 의미 |
+|---|---|
+| **fixture / 정답 라벨** | 반복해도 같은 비교가 되도록 고정한 입력·기대값 / 채점 기준으로 사람이 확정한 정답 |
+| **요청 성공률 / 파싱 성공률 / 스키마 준수율** | 오류 없이 응답한 비율 / JSON으로 읽은 비율 / 출력 계약을 지킨 비율. **세 개 모두 정답을 뜻하지 않는다** |
+| **슬롯 정확도 / 완전 일치율** | 필드별 채점 / 한 문장의 모든 필드가 동시에 정답인 비율 |
+| **출력 일관성** | 같은 입력 반복 호출에서 같은 결과가 나오는 정도. **같은 오답도 일관적일 수 있다** |
+| **환각 슬롯 / 정보 누락** | 근거 없이 값을 만든 슬롯 / 명시된 정보를 못 찾고 `UNKNOWN`으로 남긴 경우 |
+| **위험→안전 오판** | 실제보다 안전하게 판정한 오류. 이동 불가 `NO`→`YES`, 긴급 `YES`→`NO` |
+| **WER** | Word Error Rate. `(치환+삭제+삽입)/정답 단어 수`. 낮을수록 좋다 |
+| **핵심 표현 보존율** | 인원·이동 불가·호흡 곤란처럼 후속 판단에 중요한 표현이 STT 결과에 남은 비율 |
+| **RTF** | Real-Time Factor. `STT 처리 시간 ÷ 음성 길이`. 1.0 이하면 실시간 |
+| **P50 / P95** | 중앙값 / 약 95%가 이 시간 안에 끝나는 경계값. 느린 요청을 반영해 운영 지연을 본다 |
+| **회귀 검증 / 스모크 테스트** | 개선 후 기존에 맞던 사례가 깨지지 않았는지 / 주요 경로가 최소 한 번 도는지 빠르게 확인 |
+
+### 13-5. GMS 호출과 비용
+
+| 용어 | 의미 |
+|---|---|
+| **API 키** | GMS 권한과 팀 크레딧에 연결된 비밀값. **`.env`에서만 관리하고 코드·로그·문서·커밋에 넣지 않는다** |
+| **프롬프트 버전 / 해시** | 규칙 변경 전후 구분 / 원문의 SHA-256 요약값. 문구 동일성 식별용이며 원문 복원값이 아니다 |
+| **토큰 / 추론 토큰** | 모델이 입·출력을 계산하는 텍스트 단위 / 일부 모델이 최종 답 전 내부 추론에 썼다고 보고하는 토큰 |
+| **GMS 크레딧** | GMS의 비용 단위. **토큰 수와 같은 값이 아니며** 모델별 입·출력 단가가 적용된다 |
+| **`reasoning_effort`** | GPT 계열 추론량 옵션. 단순 추출에서는 `none`으로 지연·비용을 줄인다 |
+| **라이브 호출** | 모의 응답이 아닌 실제 GMS 호출. 크레딧이 소비되므로 벤치에서 명시적 확인 플래그가 필요하다 |
+
+### 13-6. Jetson·실행 환경
+
+| 용어 | 의미 |
+|---|---|
+| **Jetson Orin Nano** | 파이프라인이 배포되는 NVIDIA 엣지 컴퓨터. 팀 장비는 RAM 8GB |
+| **엣지/온디바이스** | 로봇의 젯슨에서 직접 처리. 현재 VAD·STT는 온디바이스, LLM은 GMS 원격 |
+| **통합 메모리** | 젯슨은 CPU와 GPU가 같은 RAM을 쓴다. PC 측정값으로 대체할 수 없는 이유 |
+| **피크 RAM** | 측정 구간 중 최댓값. 순간 OOM 위험 판단에 중요 |
+| **Swap / OOM** | RAM 부족 시 저장장치를 임시 메모리로 쓰는 영역(느리고 OOM을 없애지 않는다) / 메모리 할당 실패로 프로세스가 종료되는 상태 |
+| **page cache** | OS가 파일 읽기 속도를 위해 RAM에 두는 캐시. **젯슨 nvgpu 할당기는 이를 회수하지 못한다**(§9-1) |
+| **가중치 캐싱 vs 상주 로드** | 배포 전 저장장치에 미리 다운로드 / 실행 중 RAM에 계속 유지 |
+| **CUDA / CTranslate2** | NVIDIA GPU 연산 플랫폼 / `faster-whisper`의 실행 엔진. **ARM64 패키지에 CUDA 지원이 없어 STT를 `cpu/int8`로 실행한다** |
+| **int8 / float16** | 계산 정밀도. 보통 int8이 메모리를 덜 쓰지만 환경에 따라 속도·정확도 차이가 있다 |
+| **가상환경** | PC는 Miniforge `sentinel-audio`, 젯슨은 저장소 루트 `.venv` |
+
+### 13-7. 오디오
+
+| 용어 | 의미 |
+|---|---|
+| **WAV / PCM** | 오디오 파일 형식 / 소리를 숫자 샘플로 저장하는 방식. 안내 음성은 PCM WAV로 통일 |
+| **sample rate / mono** | 1초에 소리를 몇 번 측정했는지 / 채널이 하나. STT 입력은 16kHz mono로 통일 |
+| **RMS / peak / dBFS** | 평균 에너지 / 순간 최대 진폭 / 디지털 최대를 0으로 둔 상대 음량. 0에 가까우면 clipping 위험 |
+| **clipping** | 신호가 표현 범위를 넘어 파형이 잘리고 왜곡되는 현상 |
+| **SNR** | Signal-to-Noise Ratio. 음성과 배경 소음의 크기 비율. 낮을수록 인식이 어렵다 |
+| **A2DP vs HFP/HSP** | Bluetooth 음악용 출력 프로필 vs 통화용. **안내 음성은 A2DP를 쓴다**(§7-4) |
+
+### 13-8. 자주 혼동하는 차이
+
+| 표현 | 구분 |
+|---|---|
+| GMS 응답 성공 vs 파싱 성공 vs 정답 | 응답을 받아도 JSON이 깨지면 파싱 실패, 파싱돼도 값이 틀리면 오답 |
+| `null` vs `UNKNOWN` | 값 없음·단계 미실행 vs 처리했지만 확정 불가 |
+| 슬롯 정확도 vs 완전 일치율 | 필드별 채점 vs 한 문장의 모든 필드가 맞아야 성공 |
+| 누락 vs 환각 vs 위험→안전 오판 | 못 찾음 vs 없던 정보 생성 vs 위험 정보를 안전하게 반전 |
+| `riskLevel` vs 의료 triage | 관제 참고용 규칙 결과 vs 전문가의 공식 임상 분류 |
+| `visionPersonCount` vs `reportedResponsiveCount` | 카메라 탐지 인원 vs 발화자가 보고한 응답 가능 인원. **자동으로 같다고 보지 않는다** |
+| `PENDING` vs `QUEUED` vs `SUCCEEDED` | 어댑터 미연결 vs 로컬 인수 성공 vs **관제 ACK 확인**. 앞의 둘은 관제 수신이 아니다 |
+| ACK vs 재개 승인 | 관제가 받았다 vs 로컬 안전 조건 통과. **분리해서 확인한다** |
+| 토큰 vs GMS 크레딧 | 처리량 단위 vs 모델별 단가가 반영된 비용 단위 |
+| 단위 테스트 vs 실제 장비 검증 | 코드 규칙 검증 vs BRIO 100·스피커·젯슨 실측 |
+
+---
+
+새 용어를 문서에 추가할 때는 §13에도 같은 의미를 추가한다. 같은 개념에 여러 이름을
+쓰지 않으며, 의료 판단으로 오해될 표현은 §2의 제한을 우선 적용한다.

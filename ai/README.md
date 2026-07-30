@@ -4,8 +4,8 @@
 카메라가 보지 못하는 요구조자(잔해 뒤, 어두운 곳)를 **소리와 대화**로 파악해
 부상 정보를 구조화하고 관제 서버에 보고합니다.
 
-- **온라인 음성 세션에서 STT·VAD는 Jetson 로컬**, **LLM은 GMS API(gpt-5-nano) 호출**입니다(팀 결정 2026-07-24).
-  - 전환 근거: 젯슨 실측에서 로컬 LLM(qwen2.5:3b) 피크 5.62GB·page cache OOM — [`stt/docs/메모리-예산.md`](stt/docs/메모리-예산.md)
+- **온라인 음성 세션에서 STT·VAD는 Jetson 로컬**, **LLM은 GMS API(gpt-5.4-mini) 호출**입니다(팀 결정 2026-07-24).
+  - 전환 근거: 젯슨 실측에서 로컬 LLM(qwen2.5:3b) 피크 5.62GB·page cache OOM — [`stt/docs/measurements/메모리-예산.md`](stt/docs/measurements/메모리-예산.md)
   - **네트워크 단절이 확인되면 신규 STT 대화를 시작하지 않습니다.** 안전 안내 음성만 재생하고 관제 전송을 대기열에 보관합니다.
   - 이미 STT가 끝난 뒤 GMS 호출만 실패한 경우에 한해 명세 33-8 축소안(키워드 파서)을 사용합니다([`stt/llm.py`](stt/llm.py)).
 - TTS는 **사전녹음 wav 재생**(고정 안내 문구, RAM 절약 1순위). MeloTTS는 개발 PC에서 wav 생성용.
@@ -26,9 +26,9 @@
 
 위험도는 관제 검토용 참고값이며 로봇이 구조 순서를 확정하지 않습니다. 구조 ETA도 GMS가
 추정하지 않고 관제가 제공한 유효한 값만 안내합니다. 무응답·ETA·고정 안내 문구의 상세 정책은
-[`stt/docs/대화-안전-정책.md`](stt/docs/대화-안전-정책.md)를 따릅니다.
+[`stt/docs/README.md` §2 안전 정책](stt/docs/README.md)를 따릅니다.
 
 STT·GMS 품질, E2E 지연, 장애 대응, Jetson 자원 사용량의 통과 기준과 결과 기록 형식은
-[`stt/docs/정량-검증-기준.md`](stt/docs/정량-검증-기준.md)를 따릅니다.
+[`stt/docs/README.md` §10 정량 검증 기준](stt/docs/README.md)를 따릅니다.
 
 세부 실행·설치·젯슨 최적화는 [`stt/README.md`](stt/README.md)를 참고하세요.

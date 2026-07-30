@@ -1,0 +1,37 @@
+# Sentinel UGV 데모 스택 자동 시작 (S15P11A301-156)
+#
+# 설치 (한 번):
+#   sudo cp scripts/systemd/sentinel-demo.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo loginctl enable-linger orin     # 부팅 시 PulseAudio(오디오 브랜치)용
+#
+# 기본은 비활성이다. 개발 중에 켜 두면 개발자가 올리는 launch 와 이중
+# 인스턴스가 되어 카메라 단일 오픈(32-3)이 깨진다. 데모 전에만 켠다:
+#   sudo systemctl enable --now sentinel-demo
+# 개발로 돌아올 때:
+#   sudo systemctl disable --now sentinel-demo
+# 로그:
+#   journalctl -u sentinel-demo -f
+[Unit]
+Description=Sentinel UGV demo stack (S15P11A301-156)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=orin
+Group=orin
+Environment=HOME=/home/orin
+# pulsesrc(이벤트 영상 오디오, S15P11A301-131)가 사용자 PulseAudio 소켓을
+# 찾는 경로다. enable-linger 없이는 부팅 시점에 이 디렉터리가 없고, 그 경우
+# 오디오만 꺼진 채 영상 녹화는 계속된다(131의 폴백).
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+ExecStart=/home/orin/projects/S15P11A301/scripts/demo_up.sh
+Restart=on-failure
+RestartSec=5
+# launch 는 SIGINT 로 자식 노드까지 정리한다. SIGTERM 은 노드를 남길 수 있다.
+KillSignal=SIGINT
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

@@ -202,3 +202,88 @@ ros2 run tf2_ros tf2_echo map base_footprint
 `min_laser_range`를 라이다의 `range_min`과 똑같이 주면 나옵니다. `/scan`의
 `range_min`이 float32라 `0.10000000149...`이고 `slam_toolbox`가 그 값과 비교하기
 때문입니다. 조금 크게(0.12) 주면 조용해집니다.
+
+## 데모 전체 스택 (S15P11A301-156)
+
+한 줄로 데모 구성 전부를 올립니다.
+
+```bash
+./scripts/demo_up.sh                          # 저장소 루트에서
+# 또는
+ros2 launch sentinel_bringup demo.launch.py
+```
+
+```text
+ 0s  sensors    usb_cam + lidar
+ 4s  slam · streaming(TLS WHEP)
+ 8s  recorder(recording_manager + media_uploader) · mission
+10s  bridge (MQTT wss://api.sentinel-ugv.xyz:443/mqtt)
+14s  detector (ai/detection wrapper — S15P11A301-155)
+```
+
+단계별 지연을 두는 이유는 부팅 직후 전부 동시에 뜨면 CPU·메모리 경합으로 NVMM
+버퍼 할당이 실패하기 때문입니다(실측). 구성 요소는 `enable_*` 인자로 끕니다.
+
+```bash
+ros2 launch sentinel_bringup demo.launch.py enable_detector:=false
+```
+
+### 선행 조건 (기기당 한 번)
+
+```bash
+sudo mkdir -p /var/lib/sentinel/media && sudo chown -R orin:orin /var/lib/sentinel
+# ~/.config/sentinel/secrets.yaml (600):   broker_password: <MQTT 비밀번호>
+# ~/.config/sentinel/certs/server.{crt,key}  — S15P11A301-145 공인 인증서
+```
+
+### 부팅 자동 시작 (systemd)
+
+유닛은 설치돼 있고 **기본 비활성**입니다. 개발 중에 켜 두면 개발자가 올리는
+launch와 이중 인스턴스가 되어 카메라 단일 오픈(32-3)이 깨집니다.
+
+```bash
+# 설치 (기기당 한 번)
+sudo cp scripts/systemd/sentinel-demo.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo loginctl enable-linger orin    # 부팅 시 PulseAudio(오디오 브랜치)용
+
+# 데모 전에 켜기 / 개발로 돌아올 때 끄기
+sudo systemctl enable --now sentinel-demo
+sudo systemctl disable --now sentinel-demo
+
+# 로그
+journalctl -u sentinel-demo -f
+```
+
+### launch 인자 이름 충돌을 조심하십시오
+
+여러 launch를 include할 때 `GroupAction(scoped=True)`로 감싸야 합니다.
+LaunchConfiguration은 launch context **전역**이라, lidar.launch가 설정한
+`params_file`이 뒤에 include되는 streaming·recorder·mission·bridge의 같은 이름
+인자 기본값을 조용히 덮습니다. 실측에서 `stream_pipeline`이
+`ydlidar_x4_pro.yaml`을 params로 받았고, 각 노드가 코드 기본값으로 돌아
+겉보기에는 정상이었습니다 — recorder의 `no_response_timeout` 300초
+(S15P11A301-142 완화)가 조용히 30초로 퇴행한 상태였습니다. `demo.launch.py`의
+`_include()`가 그 격리를 담당합니다.
+
+### 없는 launch 파일은 건너뜁니다
+
+include 대상 launch 파일이 없으면 demo.launch가 죽는 대신 해당 구성만 건너뛰고
+로그를 남깁니다. `detection.launch.py`는 S15P11A301-155가 넣는 파일이라 머지
+순서에 따라 없을 수 있고, 탐지 하나 때문에 스트리밍·녹화·관제까지 죽으면 32장
+장애 격리에 어긋납니다.
+
+### 검증 (2026-07-30)
+
+`demo.launch.py` 단독 기동으로 확인했습니다.
+
+```text
+프로세스 12개 전부 기동, 죽은 프로세스 0
+bridge     MQTT 연결됨 + cmd/mission 구독 (secrets.yaml에서 비밀번호)
+streaming  TLS WHEP 204, 링 버퍼 /var/lib/sentinel/media/buffer
+recorder   상한=580MB → recorder.yaml이 실제로 로드됨 (충돌 수정의 증거)
+조각        h264+aac 두 스트림 (S15P11A301-131 오디오 포함)
+```
+
+**재부팅 자동 기동은 아직 검증 전입니다.** 유닛을 enable한 상태의 재부팅
+시험은 장비를 공유하는 다른 작업이 없는 시점에 합니다(티켓의 시점 제약).

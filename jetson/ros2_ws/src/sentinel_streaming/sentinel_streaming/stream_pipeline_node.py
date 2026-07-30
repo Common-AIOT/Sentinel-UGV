@@ -122,6 +122,8 @@ class StreamPipelineNode(Node):
 
         # 입력 감시 타이머. 프레임이 끊기면 재시작 백오프를 돈다.
         self.create_timer(1.0, self._check_input_alive)
+        # 입력과 독립된 링 writer 감시. 프로세스가 살아 있는 교착을 잡는다.
+        self.create_timer(1.0, self._check_ring_alive)
         # GStreamer 버스 폴링. 시그널 워치는 GLib 루프가 없어 동작하지 않는다.
         self.create_timer(0.2, self._poll_bus)
         self.last_frame_wall = self.get_clock().now()
@@ -154,6 +156,9 @@ class StreamPipelineNode(Node):
         )
         self.declare_parameter('segment_seconds', 1)
         self.declare_parameter('ring_segments', 8)
+        # 카메라 입력은 살아 있는데 이 시간 동안 새 조각이 열리지 않으면
+        # splitmuxsink 교착으로 보고 파이프라인을 재구성한다(S15P11A301-161).
+        self.declare_parameter('ring_stall_timeout_seconds', 3.0)
         # true면 splitmuxsink가 상류에 force-keyframe을 보내 조각이 한 번 더
         # 쪼개진다. 실측에서 1001ms와 30ms가 번갈아 나왔다. ring_buffer.py 주석 참고.
         self.declare_parameter('send_keyframe_requests', False)
@@ -327,6 +332,8 @@ class StreamPipelineNode(Node):
         if self.first_stamp_ns is None:
             self.first_stamp_ns = stamp_ns
             self.stream_started = True
+            if self.ring is not None:
+                self.ring.reset_liveness()
             self.get_logger().info('첫 프레임 수신, PTS 기준을 0으로 설정')
         elif self.last_stamp_ns is not None and stamp_ns < self.last_stamp_ns:
             # stamp가 뒤로 갔다. 카메라 재시작이나 시각 점프다.
@@ -405,6 +412,39 @@ class StreamPipelineNode(Node):
         if not self.pending_restart:
             self.pending_restart = True
             self.restart_timer = self.create_timer(delay, self._do_restart)
+
+    def _check_ring_alive(self) -> None:
+        """입력은 살아 있는데 링 조각만 멎은 교착을 복구한다.
+
+        splitmuxsink 내부 경고는 GstBus ERROR가 아니라 GLib 경고로만 나올 수
+        있다. 프로세스도 종료되지 않아 systemd의 Restart=on-failure가 보지
+        못한다. 그래서 마지막 조각 시작 시각을 직접 감시한다.
+        """
+        if self.ring is None or not self.stream_started or self.pending_restart:
+            return
+
+        input_timeout = float(self._param('input_timeout_seconds'))
+        input_age = (
+            self.get_clock().now() - self.last_frame_wall
+        ).nanoseconds / 1e9
+        if input_age >= input_timeout:
+            # 카메라 입력 장애는 _check_input_alive가 담당한다.
+            return
+
+        timeout = float(self._param('ring_stall_timeout_seconds'))
+        if not self.ring.is_stalled(timeout):
+            return
+
+        age = self.ring.segment_age_seconds()
+        age_text = '알 수 없음' if age is None else f'{age:.1f}초'
+        self.get_logger().error(
+            f'RING_STALL: 카메라 입력은 계속되지만 새 조각이 {age_text}간 '
+            '열리지 않았다. 파이프라인을 재구성한다.'
+        )
+        message = String()
+        message.data = 'RING_STALL'
+        self.status_pub.publish(message)
+        self._schedule_sink_restart('ring_stall')
 
     def _declare_camera_fault(self) -> None:
         """재시도를 다 쓰면 CAMERA_FAULT를 알리고 멈춘다.

@@ -366,6 +366,48 @@ PoC-B 기준선 30.020 fps보다 0.9% 낮습니다. 이 측정 중 22초 동안 
 
 브라우저 확인 주소: `https://jetson.sentinel-ugv.xyz:8889/sentinel/` (인증서 경고 없이 열려야 정상)
 
+## 2026-07-30 검증 — 링 교착 복구와 재부팅 (S15P11A301-161, -156)
+
+### 원인과 수정
+
+GStreamer 1.20.3의 `splitmuxsink`를 `async-finalize=true`,
+`max-files=8`로 사용하면 이전 조각의 비동기 마감이 끝나기 전에 내부 sink 이름이
+순환해 `sink_8` 충돌이 났습니다. 프로세스와 카메라 콜백은 살아 있지만 링 조각과
+RTSP가 함께 멎어 systemd의 `Restart=on-failure`로는 감지할 수 없었습니다.
+
+MPEG-TS 링을 `muxer=mpegtsmux`, `async-finalize=false` 동기 마감으로 바꿨습니다.
+또한 카메라 입력이 살아 있는데 새 조각이 3초 이상 열리지 않으면 `RING_STALL`을
+발행하고 파이프라인을 재구성하는 독립 watchdog을 추가했습니다.
+
+합성 입력 300조각 A/B 결과:
+
+```text
+async-finalize=true   60초 안에 완료 못 함, 순환 파일 8개에서 정체
+async-finalize=false  300조각 완료, 0.454초, 순환 파일 8개 유지
+```
+
+### 실기기 전체 스택
+
+| 검증 항목 | 결과 |
+|---|---|
+| 단위·계약 시험 | `sentinel_streaming` 38개, 전체 계약 171개 통과 |
+| 저장소·빌드 | `validate_repository.sh`, 8개 ROS 패키지 빌드 통과 |
+| 재부팅 전 soak | detector 포함 전체 스택 16분 22초, sequence 979 |
+| 인위적 교착 | 3.7초에 `RING_STALL` 감지 → 1초 후 재구성 → 실제 RTSP 복구 |
+| 재부팅 자동 기동 | 부팅 13:42:56, systemd 13:43:15 시작(19초), 첫 프레임 13:43:35 |
+| 재부팅 후 soak | sequence 986 체크포인트까지 16분 19초, 링 파일 8개 유지 |
+| 조각 형식 | H.264 Constrained Baseline 1280×720 + AAC LC 48kHz mono |
+| 조각 길이 | 종료 직전 최근 8개 996~1012ms |
+| 실제 RTSP | 종료 직전 10초에 328패킷, H.264 1280×720 30fps |
+| WHEP | HTTPS OPTIONS 204 |
+| detector 경로 | 후보 publisher 1개, mission subscriber 1개, 디코딩 실패 0 |
+| 이벤트 적체 | `/var/lib/sentinel/media/pending` 0개, 0바이트 |
+| 오류·재시작 | `RING_STALL`, `Could not add sink`, GStreamer critical, 프로세스 사망 0건; systemd 재시작 0회 |
+
+검증 후 개발 중 이중 기동을 막기 위해 서비스는 다시
+`inactive/dead`, `disabled`로 돌렸고 관련 자식 프로세스가 남지 않았음을
+확인했습니다.
+
 ## 아직 검증되지 않은 것
 
 - **오디오 내용 자체.** 두 스트림이 있고 길이가 맞는 것은 확인했지만, 실제로 무슨 소리가 담겼는지는 듣지 않았습니다. 음성 상호작용 티켓에서 STT가 이 오디오를 쓰게 되면 그때 인식률로 판정됩니다(TBD-AUD-001).

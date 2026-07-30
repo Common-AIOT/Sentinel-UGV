@@ -39,7 +39,12 @@
     # 링 버퍼 분기 활성화 여부 (S15P11A301-123).
     # false면 tee에 fakesink를 붙여 분기 지점만 유지한다. tee의 한 분기를
     # 비워두면 파이프라인이 PREROLL에서 멈추므로 반드시 무엇이든 달아야 한다.
-    enable_record_branch: false
+    #
+    # 기본을 true로 바꿨다(S15P11A301-156). 이 값이 false였던 것은 녹화 노드가
+    # 생기기 전(S15P11A301-123 이전)의 흔적이고, 지금은 녹화가 상시 구성이다
+    # (32-5). buffer_directory를 만들 수 없으면 노드가 녹화 없이 스트리밍만
+    # 계속하므로(32장 장애 격리) 개발 기기에서도 이 기본값이 해롭지 않다.
+    enable_record_branch: true
 
     # 링 버퍼 (32-5). 1초 MPEG-TS 조각을 순환 보관한다.
     #
@@ -52,6 +57,9 @@
     buffer_directory: /var/lib/sentinel/media/buffer
     segment_seconds: 1
     ring_segments: 8
+    # 카메라 프레임은 계속 들어오는데 새 조각이 이 시간 이상 열리지 않으면
+    # splitmuxsink 교착으로 보고 파이프라인을 재구성한다(S15P11A301-161).
+    ring_stall_timeout_seconds: 3.0
 
     # 이벤트 영상 오디오 트랙 (S15P11A301-131, 32-5 「H.264/AAC 재다중화」).
     #

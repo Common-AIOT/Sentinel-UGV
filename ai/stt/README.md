@@ -33,6 +33,7 @@
 | `sentinel_voice/llm.py` | GMS 호출 + 33-8 키워드 폴백 (`extract()` 단일 진입점) |
 | `sentinel_voice/gms_resilience.py` | GMS 장애 분류·제한 재시도·호스트 도달성 검사 |
 | `sentinel_voice/session_gate.py` | 신규 STT 세션 시작 전 GMS 가용성 게이트 |
+| `sentinel_voice/encounter.py` | 비전 Encounter 계약 검증과 encounter당 음성 세션 1회 조정 |
 | `sentinel_voice/report_delivery.py` | 관제 전송 대기/대기열 인계 상태 계약 |
 | `sentinel_voice/report_lifecycle.py` | 관제 ACK·Mission Manager 재개 승인 상태머신 |
 | `sentinel_voice/pipeline.py` | 엔드투엔드 실행(마이크/파일) |
@@ -97,6 +98,8 @@ cp .env.example .env       # Linux/Jetson
 관제 보고 생성부터 ACK 확인, Mission Manager 재개 승인, Closing 재생과 후속
 MQTT·ROS 2 연결 경계는
 [`docs/보고-ACK-탐사-재개.md`](docs/보고-ACK-탐사-재개.md)에 용어와 사례를 포함해 설명합니다.
+비전 Encounter의 `CONFIRMED`·`APPROACHED` 사건과 음성 세션 시작·중단 조건은
+[`docs/비전-트리거-음성-세션.md`](docs/비전-트리거-음성-세션.md)를 따릅니다.
 
 GMS와 키워드 폴백은 인원 수·이동 가능 여부·긴급 상태 언급만 추출합니다.
 응답 감지 여부와 종료 사유는 VAD·상태머신이 결정합니다.

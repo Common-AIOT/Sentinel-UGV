@@ -1,44 +1,141 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { ChevronLeft, Play, Calendar, Film, User } from "lucide-react";
-import { MOCK_BLACKBOX_ENTRIES } from "@/features/robot/mockData";
+import { ChevronLeft, Play, Film, User, MapPin, Clock } from "lucide-react";
+import {
+  api,
+  type EncounterDetail,
+  type EncounterSummary,
+  type MissionSummary,
+  type TelemetryPoint,
+} from "@/lib/api";
+import TelemetryChart from "@/features/telemetry/TelemetryChart";
 
-type Entry = typeof MOCK_BLACKBOX_ENTRIES[number];
+/**
+ * 임무 이력 화면. 운영 API 실데이터로 임무 목록 → 발견(encounter) 목록 → 이벤트
+ * 영상 재생까지 이어진다 (S15P11A301-169).
+ *
+ * durationSec·distanceM·detectionCount 는 임무가 끝난 뒤 서버가 집계한다(#166).
+ * 진행 중이거나 집계 이전 임무는 null 이므로 "—" 로 보여준다.
+ */
 
-function formatDuration(minutes: number) {
-  const h = Math.floor(minutes / 60);
-  const m = minutes % 60;
-  return h > 0 ? `${h}시간 ${m}분` : `${m}분`;
+const MISSION_STATUS_LABEL: Record<string, string> = {
+  CREATED: "대기",
+  EXPLORING: "탐사 중",
+  PAUSED: "일시정지",
+  RETURNING: "복귀 중",
+  COMPLETED: "완료",
+};
+
+const ENCOUNTER_STATUS_LABEL: Record<string, string> = {
+  CONFIRMED: "발견 확정",
+  APPROACHED: "접근 완료",
+  ENDED: "상호작용 종료",
+  REDETECTED: "재감지",
+  LOST: "추적 종료",
+};
+
+function missionTone(status: string) {
+  if (status === "COMPLETED") return "text-primary border-primary/30 bg-primary/10";
+  if (status === "EXPLORING" || status === "RETURNING")
+    return "text-accent border-accent/30 bg-accent/10";
+  return "text-muted-foreground border-border bg-muted";
 }
 
-export default function BlackboxPage() {
-  const [selectedDate, setSelectedDate] = useState<string | null>(null);
-  const [playing, setPlaying] = useState<Entry | null>(null);
-  const [showDetections, setShowDetections] = useState(true);
-  const [progress, setProgress] = useState(0);
+function fmtDuration(sec: number | null) {
+  if (sec === null) return "—";
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return m > 0 ? `${m}분 ${s}초` : `${s}초`;
+}
 
-  const dates = useMemo(() => {
-    const s = new Set(MOCK_BLACKBOX_ENTRIES.map(e => e.date));
-    return [...s].sort().reverse();
+function fmtDistance(m: number | null) {
+  return m === null ? "—" : `${m.toFixed(1)} m`;
+}
+
+function fmtTime(iso: string | null) {
+  return iso ? new Date(iso).toLocaleTimeString("ko-KR", { hour12: false }) : "—";
+}
+
+function fmtDate(iso: string) {
+  return new Date(iso).toLocaleDateString("ko-KR", {
+    month: "2-digit",
+    day: "2-digit",
+  });
+}
+
+export default function MissionHistoryPage() {
+  const [missions, setMissions] = useState<MissionSummary[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<MissionSummary | null>(null);
+  const [encounters, setEncounters] = useState<EncounterSummary[]>([]);
+  const [encountersLoading, setEncountersLoading] = useState(false);
+  const [detail, setDetail] = useState<EncounterDetail | null>(null);
+  const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [videoError, setVideoError] = useState<string | null>(null);
+  const [telemetry, setTelemetry] = useState<TelemetryPoint[]>([]);
+
+  useEffect(() => {
+    api
+      .missions()
+      .then(list => {
+        setMissions(list);
+        setLoadError(null);
+        if (list.length > 0) setSelected(prev => prev ?? list[0]);
+      })
+      .catch(e => setLoadError(e.message));
   }, []);
 
-  const filtered = useMemo(() =>
-    selectedDate ? MOCK_BLACKBOX_ENTRIES.filter(e => e.date === selectedDate) : MOCK_BLACKBOX_ENTRIES,
-    [selectedDate]
-  );
+  useEffect(() => {
+    if (!selected) return;
+    setEncountersLoading(true);
+    setDetail(null);
+    setVideoUrl(null);
+    setVideoError(null);
+    api
+      .missionEncounters(selected.id)
+      .then(setEncounters)
+      .catch(() => setEncounters([]))
+      .finally(() => setEncountersLoading(false));
+  }, [selected]);
 
-  const handlePlay = (entry: Entry) => {
-    setPlaying(entry);
-    setProgress(0);
-    const interval = setInterval(() => {
-      setProgress(p => {
-        if (p >= 100) { clearInterval(interval); return 100; }
-        return p + 0.5;
-      });
-    }, 200);
-  };
+  // telemetry 그래프 — 끝난 임무는 1회 조회, 진행 중 임무는 5초 폴링(실시간).
+  useEffect(() => {
+    if (!selected) return;
+    setTelemetry([]);
+    const load = () =>
+      api.missionTelemetry(selected.id, 10).then(setTelemetry).catch(() => setTelemetry([]));
+    load();
+    if (selected.endedAt !== null) return;
+    const timer = setInterval(load, 5000);
+    return () => clearInterval(timer);
+  }, [selected]);
+
+  /** 발견 선택 → 상세(연결 미디어 포함) 조회 → AVAILABLE 영상이면 재생 링크 발급. */
+  const openEncounter = useCallback(async (enc: EncounterSummary) => {
+    setVideoUrl(null);
+    setVideoError(null);
+    try {
+      const d = await api.encounterDetail(enc.id);
+      setDetail(d);
+      const video = d.media.find(
+        m => m.type === "EVENT_VIDEO" && m.storageStatus === "AVAILABLE",
+      );
+      if (!video) {
+        setVideoError(
+          d.media.length === 0
+            ? "연결된 영상이 없습니다"
+            : "영상이 아직 업로드되지 않았습니다 (PENDING)",
+        );
+        return;
+      }
+      const { url } = await api.mediaViewUrl(video.mediaId);
+      setVideoUrl(url);
+    } catch (e) {
+      setVideoError(e instanceof Error ? e.message : "영상을 불러오지 못했습니다");
+    }
+  }, []);
 
   return (
     <div className="h-screen w-screen flex flex-col overflow-hidden bg-background text-foreground">
@@ -50,157 +147,177 @@ export default function BlackboxPage() {
           <div className="w-px h-4 bg-border" />
           <div className="flex items-center gap-1.5">
             <Film size={11} className="text-primary" />
-            <span className="font-mono text-[11px] text-primary">블랙박스</span>
+            <span className="font-mono text-[11px] text-primary">임무 이력</span>
           </div>
         </div>
-        <span className="font-mono text-[10px] text-muted-foreground">{MOCK_BLACKBOX_ENTRIES.length}개 녹화</span>
+        <span className="font-mono text-[10px] text-muted-foreground">{missions.length}개 임무</span>
       </div>
 
       <div className="flex-1 flex overflow-hidden">
-        <div className="w-48 flex-shrink-0 border-r border-border bg-card flex flex-col">
+        {/* 임무 목록 */}
+        <div className="w-64 flex-shrink-0 border-r border-border bg-card flex flex-col">
           <div className="p-3 border-b border-border">
-            <span className="font-mono text-[10px] text-muted-foreground uppercase tracking-wider">날짜 필터</span>
+            <span className="font-mono text-[10px] text-muted-foreground uppercase tracking-wider">임무 목록</span>
           </div>
           <div className="flex-1 overflow-y-auto p-2 space-y-1">
-            <button
-              onClick={() => setSelectedDate(null)}
-              className={`w-full text-left font-mono text-[10px] px-2 py-1.5 rounded transition-colors flex items-center gap-1.5 ${
-                !selectedDate ? "bg-primary/10 text-primary border border-primary/20" : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
-              }`}
-            >
-              <Calendar size={10} />
-              전체 날짜
-            </button>
-            {dates.map(date => {
-              const count = MOCK_BLACKBOX_ENTRIES.filter(e => e.date === date).length;
-              return (
-                <button
-                  key={date}
-                  onClick={() => setSelectedDate(date)}
-                  className={`w-full text-left font-mono text-[10px] px-2 py-1.5 rounded transition-colors ${
-                    selectedDate === date
-                      ? "bg-primary/10 text-primary border border-primary/20"
-                      : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
-                  }`}
-                >
-                  <div className="flex justify-between">
-                    <span>{date}</span>
-                    <span className="text-muted-foreground/60">{count}</span>
-                  </div>
-                </button>
-              );
-            })}
+            {loadError && (
+              <p className="font-mono text-[10px] text-destructive px-2 py-1.5">{loadError}</p>
+            )}
+            {!loadError && missions.length === 0 && (
+              <p className="font-mono text-[10px] text-muted-foreground px-2 py-1.5">임무 기록이 없습니다</p>
+            )}
+            {missions.map(m => (
+              <button
+                key={m.id}
+                onClick={() => setSelected(m)}
+                className={`w-full text-left font-mono text-[10px] px-2 py-2 rounded transition-colors border ${
+                  selected?.id === m.id
+                    ? "bg-primary/10 text-primary border-primary/20"
+                    : "text-muted-foreground border-transparent hover:text-foreground hover:bg-secondary/50"
+                }`}
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span>{fmtDate(m.createdAt)} {fmtTime(m.startedAt ?? m.createdAt)}</span>
+                  <span className={`px-1.5 py-0.5 rounded border text-[9px] ${missionTone(m.status)}`}>
+                    {MISSION_STATUS_LABEL[m.status] ?? m.status}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 text-muted-foreground/70 text-[9px]">
+                  <span><Clock size={8} className="inline mr-0.5" />{fmtDuration(m.durationSec)}</span>
+                  <span>{fmtDistance(m.distanceM)}</span>
+                  {m.detectionCount !== null && m.detectionCount > 0 && (
+                    <span className="text-accent"><User size={8} className="inline mr-0.5" />{m.detectionCount}</span>
+                  )}
+                </div>
+              </button>
+            ))}
           </div>
         </div>
 
+        {/* 임무 상세 */}
         <div className="flex-1 flex flex-col overflow-hidden">
-          {playing && (
+          {/* 영상 재생 패널 */}
+          {(videoUrl || videoError) && (
             <div className="flex-shrink-0 border-b border-border bg-[#141a22] p-4">
               <div className="flex gap-4">
-                <div
-                  className="flex-shrink-0 rounded border border-border flex items-center justify-center relative overflow-hidden"
-                  style={{ width: 320, height: 180, backgroundColor: `hsl(${playing.thumbnailHue}, 30%, 8%)` }}
-                >
-                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
-                    <Play size={24} className="text-primary/40" />
-                    <span className="font-mono text-[10px] text-primary/40">재생 시뮬레이션</span>
-                  </div>
-                  <div className="absolute bottom-0 left-0 h-0.5 bg-primary transition-all duration-200" style={{ width: `${progress}%` }} />
-                  <div className="absolute left-0 right-0 h-0.5 bg-primary/20 pointer-events-none" style={{ top: `${progress}%` }} />
-                  {showDetections && playing.detections > 0 && (
-                    <div className="absolute bottom-2 left-2 right-2 flex gap-1">
-                      {Array.from({ length: playing.detections }).map((_, i) => (
-                        <div key={i} className="h-1 flex-1 bg-accent/70 rounded-full" style={{ opacity: 0.6 + i * 0.05 }} />
-                      ))}
+                <div className="flex-shrink-0 rounded border border-border overflow-hidden bg-black" style={{ width: 400, height: 225 }}>
+                  {videoUrl ? (
+                    <video src={videoUrl} controls autoPlay className="w-full h-full object-contain" />
+                  ) : (
+                    <div className="w-full h-full flex flex-col items-center justify-center gap-2">
+                      <Play size={24} className="text-muted-foreground/40" />
+                      <span className="font-mono text-[10px] text-muted-foreground">{videoError}</span>
                     </div>
                   )}
                 </div>
-
-                <div className="flex-1 space-y-3">
-                  <div>
-                    <p className="font-mono text-xs text-foreground">{playing.date}</p>
-                    <p className="font-mono text-[10px] text-muted-foreground">
-                      {new Date(playing.startTime).toLocaleTimeString()} — {formatDuration(playing.duration)}
+                {detail && (
+                  <div className="flex-1 space-y-2 min-w-0">
+                    <p className="font-mono text-xs text-foreground">
+                      {ENCOUNTER_STATUS_LABEL[detail.status] ?? detail.status}
+                      <span className="text-muted-foreground"> · 발견 {fmtTime(detail.startedAt)}</span>
                     </p>
-                  </div>
-                  <div className="w-full bg-muted rounded-full h-1.5">
-                    <div className="bg-primary h-full rounded-full transition-all" style={{ width: `${progress}%` }} />
-                  </div>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <button onClick={() => setProgress(0)} className="font-mono text-[10px] px-2 py-1 border border-border rounded text-muted-foreground hover:text-foreground transition-colors">
-                      ⏮ 처음으로
-                    </button>
-                    <button onClick={() => handlePlay(playing)} className="font-mono text-[10px] px-2 py-1 border border-primary/30 bg-primary/10 rounded text-primary hover:bg-primary/20 transition-colors">
-                      ▶ 다시 재생
-                    </button>
-                    <button onClick={() => setPlaying(null)} className="font-mono text-[10px] px-2 py-1 border border-border rounded text-muted-foreground hover:text-foreground transition-colors">
+                    <div className="grid grid-cols-3 gap-2 max-w-md">
+                      {[
+                        ["감지 인원", detail.detectedPersonCount?.toString() ?? "—"],
+                        ["상호작용", detail.interactionStartedAt ? `${fmtTime(detail.interactionStartedAt)}~${fmtTime(detail.interactionEndedAt)}` : "—"],
+                        ["영상 개수", detail.media.length.toString()],
+                      ].map(([k, v]) => (
+                        <div key={k} className="border border-border rounded px-2 py-1.5 bg-secondary/20">
+                          <p className="font-mono text-[9px] text-muted-foreground">{k}</p>
+                          <p className="font-mono text-xs text-foreground truncate">{v}</p>
+                        </div>
+                      ))}
+                    </div>
+                    <button
+                      onClick={() => { setDetail(null); setVideoUrl(null); setVideoError(null); }}
+                      className="font-mono text-[10px] px-2 py-1 border border-border rounded text-muted-foreground hover:text-foreground transition-colors"
+                    >
                       ✕ 닫기
                     </button>
-                    <label className="flex items-center gap-1.5 cursor-pointer ml-auto">
-                      <input type="checkbox" checked={showDetections} onChange={e => setShowDetections(e.target.checked)} className="accent-primary w-3 h-3" />
-                      <span className="font-mono text-[10px] text-muted-foreground">탐지 마커</span>
-                    </label>
                   </div>
-                  <div className="grid grid-cols-3 gap-2">
-                    {[
-                      ["재생 시간", formatDuration(playing.duration)],
-                      ["탐지 수", playing.detections.toString()],
-                      ["파일 크기", playing.size],
-                    ].map(([k, v]) => (
-                      <div key={k} className="border border-border rounded px-2 py-1.5 bg-secondary/20">
-                        <p className="font-mono text-[9px] text-muted-foreground">{k}</p>
-                        <p className="font-mono text-xs text-foreground">{v}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+                )}
               </div>
             </div>
           )}
 
-          <div className="flex-1 overflow-y-auto p-4">
-            <div className="space-y-2">
-              {filtered.map(entry => (
-                <div
-                  key={entry.id}
-                  className={`border rounded p-3 bg-card hover:border-primary/30 transition-colors cursor-pointer ${
-                    playing?.id === entry.id ? "border-primary/40 bg-primary/5" : "border-border"
-                  }`}
-                  onClick={() => handlePlay(entry)}
-                >
-                  <div className="flex items-center gap-4">
-                    <div
-                      className="w-16 h-12 rounded flex-shrink-0 flex items-center justify-center border border-border/50"
-                      style={{ backgroundColor: `hsl(${entry.thumbnailHue}, 30%, 8%)` }}
-                    >
-                      <Play size={14} className="text-primary/40" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="font-mono text-[11px] text-foreground">{entry.date}</span>
-                        <span className="font-mono text-[9px] text-muted-foreground">{entry.size}</span>
+          <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            {selected && (
+              <>
+                {/* 임무 결과 요약 + 시스템 지표 — 한 블록. 왼쪽 2×2 카드, 오른쪽 그래프. */}
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-2 gap-2">
+                    {[
+                      ["걸린 시간", fmtDuration(selected.durationSec)],
+                      ["이동 거리", fmtDistance(selected.distanceM)],
+                      ["발견 인원", selected.detectionCount?.toString() ?? "—"],
+                      ["종료 사유", selected.endReason ?? "—"],
+                    ].map(([k, v]) => (
+                      <div key={k} className="border border-border rounded px-3 py-2 bg-card">
+                        <p className="font-mono text-[9px] text-muted-foreground mb-0.5">{k}</p>
+                        <p className="font-mono text-sm text-foreground">{v}</p>
                       </div>
-                      <div className="flex items-center gap-3">
-                        <span className="font-mono text-[10px] text-muted-foreground">{new Date(entry.startTime).toLocaleTimeString()}</span>
-                        <span className="font-mono text-[10px] text-muted-foreground">{formatDuration(entry.duration)}</span>
-                        {entry.detections > 0 && (
-                          <div className="flex items-center gap-1">
-                            <User size={9} className="text-accent" />
-                            <span className="font-mono text-[9px] text-accent">{entry.detections}건</span>
+                    ))}
+                  </div>
+                  <TelemetryChart points={telemetry} metric="cpu" label="CPU 사용률" unit="%" />
+                </div>
+
+                {/* 발견 목록 */}
+                <div>
+                  <p className="font-mono text-[10px] text-muted-foreground uppercase tracking-wider mb-2">
+                    발견 이벤트 {encounters.length > 0 && `(${encounters.length})`}
+                  </p>
+                  {encountersLoading && (
+                    <p className="font-mono text-[10px] text-muted-foreground">불러오는 중…</p>
+                  )}
+                  {!encountersLoading && encounters.length === 0 && (
+                    <p className="font-mono text-[10px] text-muted-foreground">이 임무에서 발견된 사람이 없습니다</p>
+                  )}
+                  <div className="space-y-2">
+                    {encounters.map(enc => (
+                      <div
+                        key={enc.id}
+                        onClick={() => openEncounter(enc)}
+                        className={`border rounded p-3 bg-card hover:border-primary/30 transition-colors cursor-pointer ${
+                          detail?.id === enc.id ? "border-primary/40 bg-primary/5" : "border-border"
+                        }`}
+                      >
+                        <div className="flex items-center gap-4">
+                          <div className="w-10 h-10 rounded-full flex-shrink-0 flex items-center justify-center border border-accent/30 bg-accent/10">
+                            <User size={14} className="text-accent" />
                           </div>
-                        )}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center justify-between mb-1">
+                              <span className="font-mono text-[11px] text-foreground">
+                                {ENCOUNTER_STATUS_LABEL[enc.status] ?? enc.status}
+                                {enc.detectedPersonCount !== null && (
+                                  <span className="text-accent"> · {enc.detectedPersonCount}명</span>
+                                )}
+                              </span>
+                              <span className="font-mono text-[9px] text-muted-foreground">{fmtTime(enc.startedAt)}</span>
+                            </div>
+                            <div className="flex items-center gap-3 font-mono text-[10px] text-muted-foreground">
+                              {enc.mapX !== null && enc.mapY !== null ? (
+                                <span><MapPin size={9} className="inline mr-0.5" />({enc.mapX.toFixed(1)}, {enc.mapY.toFixed(1)})</span>
+                              ) : (
+                                <span className="text-muted-foreground/50">위치 미기록</span>
+                              )}
+                              {enc.terminationReason && <span>{enc.terminationReason}</span>}
+                            </div>
+                          </div>
+                          <button
+                            onClick={e => { e.stopPropagation(); openEncounter(enc); }}
+                            className="flex-shrink-0 w-8 h-8 rounded-full border border-primary/30 bg-primary/10 hover:bg-primary/20 flex items-center justify-center text-primary transition-colors"
+                            title="이벤트 영상 재생"
+                          >
+                            <Play size={12} />
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                    <button
-                      onClick={e => { e.stopPropagation(); handlePlay(entry); }}
-                      className="flex-shrink-0 w-8 h-8 rounded-full border border-primary/30 bg-primary/10 hover:bg-primary/20 flex items-center justify-center text-primary transition-colors"
-                    >
-                      <Play size={12} />
-                    </button>
+                    ))}
                   </div>
                 </div>
-              ))}
-            </div>
+              </>
+            )}
           </div>
         </div>
       </div>

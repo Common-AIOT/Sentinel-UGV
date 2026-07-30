@@ -44,7 +44,8 @@ public class MediaController {
             description = "젯슨이 영상 파일을 올리기 전에 업로드 주소(url)를 받습니다. 그 주소로 파일을 PUT 하면 스토리지에 직접 올라갑니다. "
                     + "주의 둘: ① Content-Type 헤더는 응답에 온 값을 그대로 써야 합니다(다르면 403) "
                     + "② 사람 발견 이벤트(encounter)가 서버에 먼저 접수돼 있어야 합니다(없으면 404). "
-                    + "같은 mediaId 로 다시 불러도 안전합니다 — 같은 위치로 새 주소를 줍니다.")
+                    + "같은 mediaId 로 다시 불러도 안전합니다 — 같은 위치로 새 주소를 줍니다. "
+                    + "단, 같은 encounter 에 다른 mediaId 로 부르면 409 입니다 — 새 mediaId 를 만들지 말고 기존 것으로 재시도하세요.")
     @PostMapping("/uploads")
     public ApiResponse<UploadUrlResponse> createUploadUrl(@Valid @RequestBody UploadUrlRequest request) {
         return ApiResponse.success(mediaService.createUpload(request, UPLOAD_TTL));

@@ -24,6 +24,7 @@ public enum ErrorCode {
     ENCOUNTER_NOT_FOUND(HttpStatus.NOT_FOUND, "ENCOUNTER-001", "encounter 를 찾을 수 없습니다. encounter 적재가 선행되어야 합니다."),
     MEDIA_NOT_FOUND(HttpStatus.NOT_FOUND, "MEDIA-001", "미디어 자산을 찾을 수 없습니다."),
     MEDIA_UPLOAD_INCOMPLETE(HttpStatus.BAD_REQUEST, "MEDIA-002", "스토리지에서 업로드를 확인하지 못했습니다."),
+    MEDIA_KEY_CONFLICT(HttpStatus.CONFLICT, "MEDIA-003", "같은 저장 위치의 미디어가 이미 등록되어 있습니다. 기존 mediaId 를 사용해야 합니다."),
 
     // 로봇/임무
     ROBOT_NOT_FOUND(HttpStatus.NOT_FOUND, "ROBOT-001", "등록된 로봇을 찾을 수 없습니다."),

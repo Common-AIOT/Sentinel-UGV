@@ -5,11 +5,16 @@
 정보 구조화(LLM)는 **GMS API 호출**, 안내 음성은 **사전녹음 재생**으로 동작합니다.
 
 ```
-트리거(VISION) → 네트워크 확인 → VAD 게이트 → STT → 환각 가드 → LLM 정보추출(GMS)
-                              ↘ 오프라인: 안전 안내 + 관제 전송 대기
-                              ↘ STT 완료 후 GMS 실패: 33-8 폴백
-              → 규칙 triage → 관제 보고(시뮬) → 안내 음성(사전녹음)
+트리거(VISION) → 네트워크 확인 ─↘ 오프라인: 안전 안내 후 세션 미시작
+              → 다턴 대화 세션 (INTRO → COUNT → MOBILITY → URGENT → CLOSING)
+                  각 단계: 안내음성 재생 → 청취 → VAD → STT → 환각 가드 → GMS 추출
+                                                  ↘ GMS만 실패: 33-8 키워드 폴백
+              → 규칙 위험도 → 관제 보고 대기 → ACK 상태에 맞는 안내 음성
 ```
+
+무응답·STT 실패·해석 실패·정상 응답을 4분류로 구분하며, **STT 실패를 무응답으로 기록하지
+않습니다**(명세 33-3). 질문 순서와 실패 규칙은 `conversation.py`, 실물 입출력 연결은
+`session_runner.py`가 담당합니다.
 
 ## 확정된 스택 (측정·팀 결정 근거)
 
@@ -28,15 +33,16 @@
 |------|------|
 | `sentinel_voice/` | 실제 음성 서비스 패키지. 설정·오디오·안전 규칙·GMS·파이프라인 |
 | `sentinel_voice/config.py` | device/compute 자동 감지, GMS·모델·튜닝 파라미터, `.env` 로드 |
-| `sentinel_voice/audio.py` | 오디오 로더(16kHz mono float32 통일) |
+| `sentinel_voice/audio.py` | 오디오 로더·레벨 처리(16kHz mono float32 통일, 무음 판정용 원본 RMS) |
 | `sentinel_voice/safety.py` | STT 환각 가드, LLM 출력 보정, 규칙 기반 triage |
 | `sentinel_voice/llm.py` | GMS 호출 + 33-8 키워드 폴백 (`extract()` 단일 진입점) |
 | `sentinel_voice/gms_resilience.py` | GMS 장애 분류·제한 재시도·호스트 도달성 검사 |
 | `sentinel_voice/session_gate.py` | 신규 STT 세션 시작 전 GMS 가용성 게이트 |
 | `sentinel_voice/report_delivery.py` | 관제 전송 대기/대기열 인계 상태 계약 |
 | `sentinel_voice/report_lifecycle.py` | 관제 ACK·Mission Manager 재개 승인 상태머신 |
-| `sentinel_voice/pipeline.py` | 엔드투엔드 실행(마이크/파일) |
+| `sentinel_voice/pipeline.py` | 엔드투엔드 실행(다턴 대화 세션 조립·보고). 모델은 첫 사용 시 지연 로딩 |
 | `sentinel_voice/conversation.py` | 5단계 다턴 상태머신과 VAD·STT·구조화 결과 4분류 |
+| `sentinel_voice/session_runner.py` | 상태머신에 실제 마이크·STT·GMS·안내 음성을 연결하는 어댑터 |
 | `sentinel_voice/guide_audio.py` | 승인 문구 목록, WAV 형식 검사, 안전 재생 결과 |
 | `tools/` | 배포 전 환경·오디오·사전녹음 자산 점검 |
 | `bench/` | 측정용 다회차 벤치(지연·일관성) |

@@ -57,6 +57,9 @@
     buffer_directory: /var/lib/sentinel/media/buffer
     segment_seconds: 1
     ring_segments: 8
+    # 카메라 프레임은 계속 들어오는데 새 조각이 이 시간 이상 열리지 않으면
+    # splitmuxsink 교착으로 보고 파이프라인을 재구성한다(S15P11A301-161).
+    ring_stall_timeout_seconds: 3.0
 
     # 이벤트 영상 오디오 트랙 (S15P11A301-131, 32-5 「H.264/AAC 재다중화」).
     #

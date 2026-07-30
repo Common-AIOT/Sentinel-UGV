@@ -44,6 +44,20 @@ def test_audio_disabled_by_default(tmp_path):
     assert 'splitmuxsink name=ring' in description
 
 
+def test_ring_uses_synchronous_finalize_for_wrapped_file_ids(tmp_path):
+    """1초 순환 링은 muxer/sink를 조각마다 새로 만들지 않는다.
+
+    GStreamer 1.20.3에서 async-finalize + max-files=8은 fragment id가 되감길 때
+    아직 제거되지 않은 ``sink_8``과 이름이 충돌했다(S15P11A301-161). 실기기에서
+    sequence 247 직후 RTSP와 링 녹화가 함께 멎었다.
+    """
+    description = writer(tmp_path).sink_description(queue_buffers=16)
+    assert 'async-finalize=false' in description
+    assert 'muxer=mpegtsmux' in description
+    assert 'muxer-factory=' not in description
+    assert 'max-files=8' in description
+
+
 def test_audio_disabled_keeps_video_branch_intact(tmp_path):
     """오디오 유무가 비디오 브랜치를 바꾸지 않는다."""
     quiet = writer(tmp_path).sink_description(queue_buffers=16)
@@ -181,6 +195,40 @@ def test_index_written_atomically(tmp_path):
     index.write(segment_seconds=1)
     assert (tmp_path / 'index.json').exists()
     assert not list(tmp_path.glob('*.tmp'))
+
+
+def test_ring_liveness_detects_stalled_fragment_rotation(tmp_path):
+    """입력은 별도로 살아 있다고 확인된 상태에서 조각 정지만 판정한다."""
+    ring = writer(tmp_path)
+    assert ring.segment_age_seconds(now_monotonic=100.0) is None
+    assert not ring.is_stalled(3.0, now_monotonic=100.0)
+
+    ring.reset_liveness(now_monotonic=100.0)
+    assert not ring.is_stalled(3.0, now_monotonic=102.999)
+    assert ring.is_stalled(3.0, now_monotonic=103.0)
+
+
+def test_ring_liveness_moves_with_each_new_fragment(tmp_path):
+    """새 조각이 열리면 watchdog 기준도 앞으로 이동한다."""
+    ring = writer(tmp_path)
+    ring.reset_liveness(now_monotonic=100.0)
+    ring.note_segment_opened(now_monotonic=102.0)
+
+    assert ring.segment_age_seconds(now_monotonic=104.5) == pytest.approx(2.5)
+    assert not ring.is_stalled(3.0, now_monotonic=104.999)
+    assert ring.is_stalled(3.0, now_monotonic=105.0)
+
+
+def test_ring_liveness_resets_after_pipeline_restart(tmp_path):
+    """재구성 직후 이전 파이프라인의 오래된 시각으로 다시 재시작하지 않는다."""
+    ring = writer(tmp_path)
+    ring.reset_liveness(now_monotonic=100.0)
+    ring.note_segment_opened(now_monotonic=101.0)
+    assert ring.is_stalled(3.0, now_monotonic=104.0)
+
+    ring.reset_liveness(now_monotonic=200.0)
+    assert ring.segment_age_seconds(now_monotonic=200.5) == pytest.approx(0.5)
+    assert not ring.is_stalled(3.0, now_monotonic=202.9)
 
 
 @pytest.mark.parametrize(

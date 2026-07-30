@@ -219,6 +219,14 @@ class RingBufferWriter:
         self._logger = logger
         self.index = SegmentIndex(self.directory, self.ring_segments)
         self._sink = None
+        # 조각 writer 생존 감시 (S15P11A301-161).
+        #
+        # GStreamer 1.20.3의 splitmuxsink가 async-finalize + max-files 조합에서
+        # 오래된 sink를 아직 제거하지 못한 채 같은 이름의 sink를 다시 만들면
+        # 파이프라인은 살아 있는 것처럼 보이면서 조각 생성만 멎는다. ROS 입력
+        # 콜백은 계속 돌 수 있어 CAMERA_FAULT 감시로는 잡히지 않는다.
+        self._liveness_started_at: float | None = None
+        self._last_segment_opened_at: float | None = None
 
         # 마지막으로 appsrc에 밀어넣은 입력 PTS.
         #
@@ -255,13 +263,13 @@ class RingBufferWriter:
             f'queue name=record_queue max-size-buffers={int(queue_buffers)} '
             f'leaky=no '
             f'! splitmuxsink name=ring '
-            f'    muxer-factory=mpegtsmux '
+            f'    muxer=mpegtsmux '
             f'    location="{pattern}" '
             f'    max-size-time={self.segment_seconds * 1_000_000_000} '
             f'    max-size-bytes=0 '
             f'    max-files={self.ring_segments} '
             f'    send-keyframe-requests={str(self.send_keyframe_requests).lower()} '
-            f'    async-finalize=true'
+            f'    async-finalize=false'
         )
         if not self.audio_enabled:
             return video
@@ -325,6 +333,41 @@ class RingBufferWriter:
         """appsrc에 프레임을 밀 때마다 호출한다. 조각 메타데이터의 기준이 된다."""
         self._last_input_pts_ns = int(pts_ns)
 
+    def reset_liveness(self, now_monotonic: float | None = None) -> None:
+        """새 파이프라인의 조각 생존 감시 기준을 다시 잡는다.
+
+        카메라 첫 프레임 직전에 호출한다. 파이프라인을 세운 시각을 그대로 쓰면
+        카메라 준비가 3초 넘게 걸린 부팅에서 첫 프레임이 오자마자 링 stall로
+        오판한다.
+        """
+        now = time.monotonic() if now_monotonic is None else now_monotonic
+        self._liveness_started_at = float(now)
+        self._last_segment_opened_at = None
+
+    def note_segment_opened(self, now_monotonic: float | None = None) -> None:
+        """splitmuxsink가 새 조각을 열었다는 생존 증거를 기록한다."""
+        now = time.monotonic() if now_monotonic is None else now_monotonic
+        self._last_segment_opened_at = float(now)
+
+    def segment_age_seconds(self, now_monotonic: float | None = None) -> float | None:
+        """마지막 조각 시작(없으면 감시 시작) 이후 경과 시간을 돌려준다."""
+        baseline = self._last_segment_opened_at
+        if baseline is None:
+            baseline = self._liveness_started_at
+        if baseline is None:
+            return None
+        now = time.monotonic() if now_monotonic is None else now_monotonic
+        return max(0.0, float(now) - baseline)
+
+    def is_stalled(
+        self,
+        timeout_seconds: float,
+        now_monotonic: float | None = None,
+    ) -> bool:
+        """새 조각이 제한 시간 동안 열리지 않았는지 판정한다."""
+        age = self.segment_age_seconds(now_monotonic)
+        return age is not None and age >= max(0.0, float(timeout_seconds))
+
     def attach(self, pipeline) -> bool:
         """`format-location-full`을 연결한다.
 
@@ -334,6 +377,7 @@ class RingBufferWriter:
         self._sink = pipeline.get_by_name('ring')
         if self._sink is None:
             return False
+        self.reset_liveness()
         self._sink.connect('format-location-full', self._on_format_location)
         return True
 
@@ -359,6 +403,7 @@ class RingBufferWriter:
             fragment_id, self._last_input_pts_ns, first_frame_key, muxed_pts_ns
         )
         self.index.write(self.segment_seconds)
+        self.note_segment_opened()
 
         if self._logger is not None and not first_frame_key:
             # 조각 시작이 키프레임이 아니면 이벤트 첫 화면이 깨진다(32-5).

@@ -20,6 +20,7 @@
 실행:
   python -m sentinel_voice.pipeline
 """
+import sys
 import time
 
 import numpy as np
@@ -41,6 +42,29 @@ from .session_runner import SessionDependencies, VoiceSessionRunner
 ASSETS = config.STT_ROOT / "assets"
 guide_player = GuidePlayer(sd, ASSETS)
 
+
+def say(message: str) -> None:
+    """진행 로그. 콘솔 인코딩 때문에 세션이 죽으면 안 된다.
+
+    Windows 기본 콘솔(cp949)은 이모지를 인코딩할 수 없어 `print`가
+    `UnicodeEncodeError`를 던진다. 실제로 이 예외가 젯슨 드라이런 도중 대화를
+    중단시킨 적이 있어 `session_runner.on_event`는 이미 예외를 삼키고 있는데,
+    보고 출력 경로에는 같은 보호가 없었다(S15P11A301-179).
+
+    인코딩할 수 없는 문자는 대체 문자로 낮춰서라도 출력한다.
+    """
+    try:
+        print(message)
+    except UnicodeEncodeError:
+        encoding = getattr(sys.stdout, "encoding", None) or "ascii"
+        try:
+            print(message.encode(encoding, "replace").decode(encoding, "replace"))
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
 # 모델은 import 시점이 아니라 첫 사용 시 올린다. ROS 2 노드가 이 모듈을 import만
 # 해도 Whisper가 메모리에 올라가면 노드 기동 순서와 RAM 피크를 통제할 수 없다.
 _models: tuple = ()
@@ -50,7 +74,7 @@ def load_models() -> tuple:
     """(vad, stt)를 한 번만 로딩해 재사용한다."""
     global _models
     if not _models:
-        print(f"모델 로딩... ({config.summary()})")
+        say(f"모델 로딩... ({config.summary()})")
         _models = (
             load_silero_vad(),
             WhisperModel(
@@ -109,17 +133,17 @@ def build_dependencies() -> SessionDependencies:
 # ── 보고 ─────────────────────────────────────────────────────────
 def speak(text: str, *, report_succeeded: bool = False):
     """승인된 안내 음성을 재생하고 실패를 명시적으로 기록한다."""
-    print(f"🔊 로봇: {text}")
+    say(f"🔊 로봇: {text}")
     result = guide_player.play_text(text, report_succeeded=report_succeeded)
     if not result.ok:
-        print(f"   ⚠️ 안내 음성 재생 실패: {result.status.value} ({result.detail})")
+        say(f"   ⚠️ 안내 음성 재생 실패: {result.status.value} ({result.detail})")
     return result
 
 
 def queue_and_announce(info: dict):
     """보고서를 전송 경계에 인계하고 ACK 상태에 맞는 안내만 재생한다."""
     delivery = queue_report(info)
-    print(f"📨 관제 보고 상태: {delivery.state.value} ({delivery.detail})")
+    say(f"📨 관제 보고 상태: {delivery.state.value} ({delivery.detail})")
     speak(GUIDE_ASSETS[delivery.guide_code].text)
     return delivery
 
@@ -134,11 +158,11 @@ def report_session(result: SessionResult, *, used_fallback: bool = False) -> dic
     info["operatorReviewRequired"] = bool(
         info.get("operatorReviewRequired") or risk["operatorReviewRequired"]
     )
-    print(f"🩹 음성 세션 보고: {info}")
-    print(f"🚨 위험도 참고값: {risk}")
-    print(f"🧭 종료 상태: {result.state.value} / 사유: {result.termination_reason}")
+    say(f"🩹 음성 세션 보고: {info}")
+    say(f"🚨 위험도 참고값: {risk}")
+    say(f"🧭 종료 상태: {result.state.value} / 사유: {result.termination_reason}")
     if used_fallback:
-        print("ℹ️ 일부 응답은 33-8 키워드 폴백으로 구조화됨")
+        say("ℹ️ 일부 응답은 33-8 키워드 폴백으로 구조화됨")
     queue_and_announce(info)
     return info
 
@@ -151,30 +175,30 @@ def run(
     dependencies: SessionDependencies | None = None,
 ) -> SessionResult | None:
     """트리거 한 건에 대해 다턴 대화 세션을 1회 수행한다."""
-    print(f"\n▶ 트리거: {source}")
+    say(f"\n▶ 트리거: {source}")
     started = time.time()
 
     # 0) 일반 인터넷이 아니라 실제 GMS 호스트 도달성을 확인한다.
     #    실패하면 팀 결정에 따라 신규 녹음·STT 세션을 시작하지 않는다.
     gate = gate_result or check_session_gate()
     if not gate.proceed:
-        print(f"⚠️ 음성 세션 시작 차단: {gate.state.value}")
+        say(f"⚠️ 음성 세션 시작 차단: {gate.state.value}")
         speak(GUIDE_ASSETS[gate.guide_code].text)
-        print(f"⏱ E2E: {time.time() - started:.1f}s")
+        say(f"⏱ E2E: {time.time() - started:.1f}s")
         return None
 
     runner = VoiceSessionRunner(
         dependencies or build_dependencies(),
-        on_event=print,
+        on_event=say,
     )
     result = runner.run()
 
     if result.state == SessionState.FAILED_AUDIO:
         # 오디오 장치 오류는 요구조자 상태가 아니므로 관찰 실패로만 보고한다.
-        print("⚠️ 오디오 장치 오류로 세션 종료 — 관제 확인 필요")
+        say("⚠️ 오디오 장치 오류로 세션 종료 — 관제 확인 필요")
 
     report_session(result, used_fallback=runner.used_fallback)
-    print(f"⏱ E2E: {time.time() - started:.1f}s")
+    say(f"⏱ E2E: {time.time() - started:.1f}s")
     return result
 
 

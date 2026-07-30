@@ -29,7 +29,7 @@
       "riskReasons": [
         "긴급 상태가 있다고 발화함"
       ],
-      "ruleVersion": "voice-risk-v1.0",
+      "ruleVersion": "voice-risk-v1.1",
       "operatorReviewRequired": true
     },
     "usedFallback": false

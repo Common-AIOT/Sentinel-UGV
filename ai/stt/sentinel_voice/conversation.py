@@ -108,7 +108,9 @@ class ConversationMachine:
         listen: Callable[[QuestionCode, int], AudioObservation],
         interpret: Callable[[QuestionCode, str], Any | None],
         abort_requested: Callable[[], SessionState | None] = lambda: None,
-        timeout_seconds: float = 120,
+        # 실측 최대 세션이 111.2초여서 120초는 마진이 9초뿐이었다. 재질문 1회나
+        # CPU STT 지연이 겹치면 초과한다(S15P11A301-179).
+        timeout_seconds: float = 180,
         clock: Callable[[], float] = monotonic,
     ):
         self.prompt = prompt

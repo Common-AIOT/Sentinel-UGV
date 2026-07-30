@@ -27,6 +27,7 @@ from sentinel_voice.audio import load_mono
 from sentinel_voice.config import FS
 from sentinel_voice.llm import llm_extract as gms_extract
 from sentinel_voice.safety import (
+    RISK_RULE_VERSION,
     coerce_report,
     is_valid_stt,
     report_defaults,
@@ -112,7 +113,7 @@ def non_ok_outcome(source):
     return None, {
         "riskLevel": "UNKNOWN",
         "riskReasons": ["STT 결과가 없어 재질문 필요"],
-        "ruleVersion": "voice-risk-v1.0",
+        "ruleVersion": RISK_RULE_VERSION,
         "operatorReviewRequired": True,
     }
 

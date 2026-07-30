@@ -1,5 +1,12 @@
 # sentinel_perception
 
+> **[이관됨]** 이 패키지의 `person_detector_node`(S15P11A301-136)는 ai/detection
+> 완성 전에 Jetson 통합을 쉽게 하기 위한 임시 구현이었습니다.
+> `/perception/person_candidates` 발행 역할은 ai/detection의 ROS2 wrapper
+> (`ai/detection/src/ros_main.py`, S15P11A301-153)로 이관되었습니다. 메인 인식
+> 로직은 항상 ai/detection을 사용합니다. 같은 GPU에서 두 YOLO 노드를 동시에
+> 상시 구동하지 마세요. 이 패키지 정리는 mission_manager 연동 확인 후 진행합니다.
+
 카메라 입력, YOLO 사람 탐지와 LiDAR 기반 지도 좌표 추정을 담당합니다 (명세 25장). AI
 결과는 충돌 방지의 단일 근거로 사용하지 않습니다.
 

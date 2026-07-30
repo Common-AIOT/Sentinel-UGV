@@ -26,6 +26,7 @@
 |---|---|
 | `start_sentinel.sh` | 중복 검사 → 센서 → 토픽 확인 → 스트리밍·MediaMTX |
 | `stop_sentinel.sh` | launch 트리와 노드를 정리하고 남은 프로세스를 확인 |
+| `demo_up.sh` | 센서·SLAM·스트리밍·녹화·임무·브리지·탐지를 순차 기동 |
 
 이름이 `start_streaming`이 아닌 이유는 켜는 대상이 스트리밍만이 아니기
 때문이다. 지금은 센서와 스트리밍이고 여기에 녹화(S15P11A301-123)와 AI·임무
@@ -40,7 +41,35 @@
 ./scripts/start_sentinel.sh --no-tls         # 평문 HTTP
 ./scripts/start_sentinel.sh --sensors-only   # 센서만, 스트리밍 없이
 ./scripts/stop_sentinel.sh
+
+# 데모 전체 스택. 개별 기능은 launch 인자로 끌 수 있다.
+./scripts/demo_up.sh
+./scripts/demo_up.sh enable_detector:=false
 ```
+
+`start_sentinel.sh`는 센서·스트리밍 경로를 빠르게 확인하는 개발용 진입점이고,
+`demo_up.sh`는 실제 데모 구성을 한 번에 올리는 진입점이다. 둘을 동시에 실행하면
+카메라와 MediaMTX 발행자가 중복되므로 먼저 실행한 쪽을 종료하고 전환한다.
+
+### 부팅 자동 시작
+
+`scripts/systemd/sentinel-demo.service`는 `demo_up.sh`를 부팅 시 실행한다. 개발
+중에는 수동 launch와 이중 실행되지 않도록 비활성으로 두고, 재부팅 복구까지
+검증하거나 데모를 운영할 때만 켠다.
+
+```bash
+sudo cp scripts/systemd/sentinel-demo.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo loginctl enable-linger orin
+sudo systemctl enable --now sentinel-demo
+
+# 개발로 돌아갈 때
+sudo systemctl disable --now sentinel-demo
+```
+
+서비스 로그는 `journalctl -u sentinel-demo -f`로 확인한다. 유닛의 `ExecStart`는
+`/home/orin/projects/S15P11A301`을 기준으로 하므로 저장소 경로가 다르면 설치
+전에 해당 줄을 맞춰야 한다.
 
 ### 센서는 카메라만이 아니다
 
@@ -137,8 +166,3 @@ CI 컨테이너(`python:3.10-alpine`)에는 둘 다 없다. 위 스크립트가 
 - **`deploy_jetson.sh`**: `colcon build` + `colcon test`를 하던 스크립트다.
   테스트가 0개라 항상 통과하면서 "tests passed"를 출력하는 거짓 신호였다.
   E-Stop 확인은 빌드가 아니라 실제 주행 시작에 걸려야 한다.
-- **systemd 유닛**: **MVP 범위 외로 결정했다**(TBD-OPS-001). MVP가 자동 복구를
-  구현하지 않으므로 `Restart` 정책의 이점이 사라지고, 남는 것은 부팅 시 자동
-  시작 편의뿐이다. 개발 중에는 `journalctl`과 `Restart`가 오히려 디버깅을
-  방해한다. 젯슨이 재부팅되면 사람이 `start_sentinel.sh`를 다시 실행한다
-  (37-8 Runbook). 안전은 ESP32 watchdog이 담보하므로 영향이 없다.

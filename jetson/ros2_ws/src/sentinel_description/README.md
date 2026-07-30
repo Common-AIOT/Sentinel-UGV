@@ -12,9 +12,11 @@ ros2 launch sentinel_description description.launch.py
 |---|---|
 | 지상고, 후륜 축 위치 | TBD-HW-001 (RS540 구동계 실측) |
 | 전륜 위치·조향 구조 | TBD-HW-008 (전륜 조향 구조) |
-| LiDAR·카메라·IMU·짐벌 장착 오프셋 | 명세 **35-7** 「LiDAR·카메라·차체 외부 파라미터」. `base_link` 원점 기준 X/Y/Z·RPY를 측정해 입력하고 `sensor_extrinsics.yaml`과 일치시킨다. 상류 의존성은 TBD-HW-006 |
+| LiDAR·카메라 장착 오프셋 | 명세 **35-7** 「LiDAR·카메라·차체 외부 파라미터」. `base_link` 원점 기준 X/Y/Z·RPY를 측정해 입력하고 `sensor_extrinsics.yaml`과 일치시킨다. 상류 의존성은 TBD-HW-006 |
+| 차체 IMU 장착 오프셋 | 센서 ESP32에 연결하는 `imu_link` 1개만 사용한다. 모델·I2C/SPI 핀·X/Y/Z·RPY는 TBD-HW-012 |
 
 - 짐벌 roll/pitch 조인트는 CENTER_LOCK fallback(각도 0)과 동일한 fixed로 시작했다. 짐벌 구현 시 revolute + joint_states 발행으로 전환한다.
+- 짐벌용 `head_imu_link`는 사용하지 않으므로 S15P11A301-176에서 제거했다.
 - `camera_link → camera_optical_frame`은 REP-103 optical 관례를 따르며 S15P11A301-62 카메라 계약의 `frame_id`와 일치한다.
 
 ## 발행 범위와 검증
@@ -32,6 +34,7 @@ ros2 launch sentinel_description description.launch.py
 ros2 run tf2_tools view_frames
 ros2 run tf2_ros tf2_echo base_footprint camera_optical_frame
 ros2 run tf2_ros tf2_echo base_footprint lidar_link
+ros2 run tf2_ros tf2_echo base_link imu_link
 ```
 
 `base_footprint → camera_optical_frame`은 quaternion `(-0.5, 0.5, -0.5, 0.5)`, `base_footprint → lidar_link`는 translation `(0, 0, 0.02)`이 나와야 한다. 후자는 기존 `base_link → laser_frame` flat static TF의 net 변환을 유지한 값이다.
@@ -50,3 +53,7 @@ static_tf_pub_laser                   : 제거 확인
 /scan frame_id                        : lidar_link
 /scan 발행률                          : 약 11.55 Hz
 ```
+
+위 링크 수는 2026-07-27 당시 짐벌용 `head_imu_link`를 포함한 기록이다.
+S15P11A301-176에서 해당 링크를 제거한 현재 모델은 링크 12개, 정적 child frame
+11개가 정상이다.

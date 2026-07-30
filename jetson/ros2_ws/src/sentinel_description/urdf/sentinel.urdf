@@ -36,7 +36,6 @@
   <link name="gimbal_pitch_link"/>
   <link name="lidar_link"/>
   <link name="camera_link"/>
-  <link name="head_imu_link"/>
   <link name="camera_optical_frame"/>
 
   <!-- base_footprint(지면 투영) -> base_link(차체 기준). z = 지상고, TBD-HW-001 -->
@@ -102,13 +101,6 @@
   <joint name="gimbal_pitch_link_to_camera_link" type="fixed">
     <parent link="gimbal_pitch_link"/>
     <child link="camera_link"/>
-    <origin xyz="0 0 0" rpy="0 0 0"/>
-  </joint>
-
-  <!-- 짐벌 헤드 IMU 장착 위치, TBD(실측) -->
-  <joint name="gimbal_pitch_link_to_head_imu_link" type="fixed">
-    <parent link="gimbal_pitch_link"/>
-    <child link="head_imu_link"/>
     <origin xyz="0 0 0" rpy="0 0 0"/>
   </joint>
 

@@ -6,7 +6,12 @@
 # 브라우저가 혼합 콘텐츠로 차단한다. 그래서 Jetson의 WHEP 엔드포인트도
 # HTTPS여야 한다(명세 32-4).
 #
-# 공인 인증서를 받을 수 없는 LAN 환경이므로 자체 서명 인증서를 만들고
+# 기본 경로는 공인 인증서다(S15P11A301-145). jetson.sentinel-ugv.xyz 의
+# Let's Encrypt 인증서를 DNS-01로 발급해 같은 위치(server.crt/server.key)에
+# 두면 어느 기기에서도 신뢰 등록 없이 접속된다. 발급·갱신 절차는
+# jetson/ros2_ws/src/sentinel_streaming/README.md 의 「공인 인증서」 절.
+#
+# 이 스크립트는 인터넷이 없는 환경의 **폴백**이다. 자체 서명 인증서를 만들고
 # 관제 노트북이 이를 신뢰하도록 등록한다. 신뢰 등록은 사람이 해야 한다.
 #
 # 인증서와 키는 git에 커밋하지 않는다. .gitignore로 제외한다.

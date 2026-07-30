@@ -133,18 +133,69 @@ ros2 launch sentinel_streaming streaming.launch.py publish_mode:=udp_mpegts
 
 그래서 ROS 타이머(0.2초)에서 `bus.pop_filtered`로 직접 폴링하고, 재시작 타이머도 ROS 일회성 타이머를 씁니다. 이 구조를 바꿀 때는 MediaMTX를 `kill -9`한 뒤 스트림이 복구되는지 반드시 확인하세요.
 
-## HTTPS
+## HTTPS — 공인 인증서 (S15P11A301-145)
 
-EC2에서 HTTPS로 열린 관제 페이지가 Jetson의 평문 HTTP 신호 주소에 접근하면 브라우저가 혼합 콘텐츠로 차단합니다(32-4). LAN 환경이라 공인 인증서를 받을 수 없으므로 자체 서명 인증서를 씁니다.
+EC2에서 HTTPS로 열린 관제 페이지가 Jetson의 평문 HTTP 신호 주소에 접근하면 브라우저가 혼합 콘텐츠로 차단합니다(32-4). 그래서 WHEP 엔드포인트도 HTTPS여야 합니다.
+
+`jetson.sentinel-ugv.xyz`의 Let's Encrypt 인증서를 씁니다. 공인 인증서라 **어느 기기에서도 신뢰 등록 없이** 접속됩니다. 자체 서명(아래 폴백)은 보는 노트북마다 등록이 필요해 "그 노트북에서만 되는 데모"가 됩니다.
+
+```text
+DNS      jetson.sentinel-ugv.xyz  A  70.12.247.77  (가비아, TTL 600)
+인증서    /etc/letsencrypt/live/jetson.sentinel-ugv.xyz/   (root 전용)
+배치      ~/.config/sentinel/certs/server.crt / server.key (orin이 읽는 사본)
+만료      2026-10-27
+```
 
 ```bash
-./scripts/gen_stream_cert.sh
 ros2 launch sentinel_streaming streaming.launch.py webrtc_encryption:=true
 ```
 
-인증서 경로는 `mediamtx.yml`에 박지 않고 환경변수(`MTX_WEBRTCSERVERCERT` 등)로 주입합니다. 인증서는 커밋 대상이 아니고 배포마다 다릅니다. `.gitignore`가 `*.crt`·`*.key`를 제외합니다.
+인증서 경로는 `mediamtx.yml`에 박지 않고 환경변수(`MTX_WEBRTCSERVERCERT` 등)로 주입합니다. 인증서는 커밋 대상이 아닙니다. `.gitignore`가 `*.crt`·`*.key`를 제외합니다.
 
-**관제 노트북에 인증서를 신뢰 등록하는 것은 사람이 해야 합니다.** 등록하지 않으면 브라우저가 WHEP 요청을 차단합니다.
+관제 웹은 이 값 하나만 바꾸면 됩니다.
+
+```text
+NEXT_PUBLIC_LOCAL_STREAM_URL=https://jetson.sentinel-ugv.xyz:8889/sentinel/whep
+```
+
+### 왜 DNS-01인가
+
+젯슨이 NAT 뒤에 있습니다(로컬 70.12.247.77, 인터넷에서 본 IP는 다름). HTTP-01은 Let's Encrypt가 외부에서 접속해야 해서 안 되고, DNS-01은 TXT 레코드로 소유를 증명하므로 인바운드가 필요 없습니다.
+
+같은 이유로 이 주소는 **SSAFY 네트워크 안에서만** 통합니다. A 레코드가 내부 IP를 가리키므로 밖에서는 연결되지 않습니다. 명세 32-4가 시연 기본 경로를 LAN 직접 연결로 정했으므로 의도와 일치합니다. 원격 시청(EC2 중계)은 선택 기능이며 기능 축소 1순위입니다.
+
+### 갱신 (90일마다, 수동)
+
+`--manual` 발급이라 **자동 갱신이 없습니다.** 만료 30일 전에 janjonghwa@gmail.com으로 알림이 옵니다. 절차:
+
+```bash
+# 1. certbot을 실행하고 TXT 값이 출력되면 멈춘 상태로 둔다.
+#    ★ Enter를 먼저 누르지 않는다. 토큰은 실행마다 새로 나온다.
+sudo certbot certonly --manual --preferred-challenges dns \
+  -d jetson.sentinel-ugv.xyz -m janjonghwa@gmail.com --agree-tos
+
+# 2. 가비아 콘솔 → DNS 관리툴에서 TXT 수정
+#    호스트: _acme-challenge.jetson   값: <출력된 토큰>
+#    (호스트 칸에 도메인을 붙이지 않는다. 가비아가 자동으로 붙인다)
+
+# 3. 다른 터미널에서 반영 확인 후 Enter
+host -t TXT _acme-challenge.jetson.sentinel-ugv.xyz
+#    권한 서버 직접 확인: host -t TXT _acme-challenge.jetson.sentinel-ugv.xyz ns.gabia.net
+
+# 4. 발급되면 orin이 읽을 수 있게 다시 배치
+sudo cp /etc/letsencrypt/live/jetson.sentinel-ugv.xyz/fullchain.pem ~/.config/sentinel/certs/server.crt
+sudo cp /etc/letsencrypt/live/jetson.sentinel-ugv.xyz/privkey.pem  ~/.config/sentinel/certs/server.key
+sudo chown orin:orin ~/.config/sentinel/certs/server.{crt,key}
+chmod 600 ~/.config/sentinel/certs/server.key
+
+# 5. MediaMTX 재시작
+```
+
+**순서가 중요합니다.** 첫 발급 때 TXT를 넣기 전에 Enter를 눌러 실패했고, 그 옛 값이 캐시(TTL 600초)에 박혀 다음 시도까지 막았습니다. certbot을 멈춰 둔 채 레코드를 넣으면 이 문제가 없습니다.
+
+### 폴백 — 자체 서명
+
+인터넷이 없는 환경에서는 `./scripts/gen_stream_cert.sh`로 자체 서명 인증서를 만듭니다. 그 경우 **보는 노트북마다 인증서를 신뢰 등록해야 하고, 그것은 사람이 해야 합니다.** 기존 자체 서명은 `~/.config/sentinel/certs/selfsigned.{crt,key}`로 남겨 두었습니다.
 
 ## 주의: `gi`는 시스템 파이썬에만 있습니다
 
@@ -302,10 +353,23 @@ PoC-B 기준선 30.020 fps보다 0.9% 낮습니다. 이 측정 중 22초 동안 
 트랙 유실     media.audio=null                 audioDropped=true    ← 결함
 ```
 
+## 2026-07-29 검증 — 공인 인증서 WHEP (S15P11A301-145)
+
+| 검증 항목 | 결과 |
+|---|---|
+| 도메인 TLS 핸드셰이크 | 합격. `curl` 인증서 검증 켠 상태(-k 없음)로 OPTIONS 204 |
+| 체인 검증 | 합격. 시스템 CA 번들로 `Verify return code: 0 (ok)` |
+| 제공 인증서 | `CN=jetson.sentinel-ugv.xyz`, issuer Let's Encrypt, 만료 2026-10-27 |
+| 평문 거부 | 합격. `http://` 시도 400 |
+| 스트림 재발행 | 합격. TLS 재기동 후 rtspclientsink가 자동 재연결, 1 track (H264) |
+| MoQ 비활성 | `moq: no` 적용. 8892가 더는 열리지 않음 |
+
+브라우저 확인 주소: `https://jetson.sentinel-ugv.xyz:8889/sentinel/` (인증서 경고 없이 열려야 정상)
+
 ## 아직 검증되지 않은 것
 
 - **오디오 내용 자체.** 두 스트림이 있고 길이가 맞는 것은 확인했지만, 실제로 무슨 소리가 담겼는지는 듣지 않았습니다. 음성 상호작용 티켓에서 STT가 이 오디오를 쓰게 되면 그때 인식률로 판정됩니다(TBD-AUD-001).
-- **VID-01** 브라우저 WebRTC 지연 30회 측정. 엔드포인트는 동작하지만 측정 주체가 브라우저 클라이언트이므로 S15P11A301-107과 함께 봅니다.
+- **VID-01** 브라우저 WebRTC 지연 30회 측정. HTTPS가 열려 이제 관제 웹에서 측정할 수 있게 됐습니다(S15P11A301-107의 `useWhepStream`이 지연 추정을 내장). 관제 웹에 `NEXT_PUBLIC_LOCAL_STREAM_URL`이 반영된 뒤 측정합니다.
 - 관제 노트북의 인증서 신뢰 등록. 사람이 해야 합니다.
 - USB 케이블을 실제로 분리했을 때의 동작. 위 대체 검증으로 코드 경로는 확인했지만 USB 재연결 시 장치 번호가 바뀌는 경우는 다릅니다.
 

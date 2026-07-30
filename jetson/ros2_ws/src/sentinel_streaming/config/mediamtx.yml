@@ -33,6 +33,10 @@ webrtcIPsFromInterfaces: yes
 
 # --- 사용하지 않는 프로토콜은 끈다 ---
 hls: no
+# MoQ(Media over QUIC)는 v1.19부터 기본 활성이라 명시적으로 꺼야 한다.
+# 쓰지 않는 8892(TCP/UDP)가 LAN에 열려 있었고, 두 번째 인스턴스를 띄울 때
+# 이 포트 충돌로 죽는 것을 실측했다(S15P11A301-145).
+moq: no
 rtmp: no
 srt: no
 

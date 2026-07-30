@@ -4,9 +4,10 @@
 구독해 추론 파이프라인을 돌린다. 카메라 장치는 usb_cam이 단독 점유하므로
 스트리밍과 AI를 같은 카메라로 동시에 구동할 수 있다(카메라 단일 오픈 원칙).
 
-encounter 권한은 Mission Manager에 있으므로(명세 26.1) 이 모듈은 토픽을
-발행하지 않는다. 결과는 src.main과 동일하게 events.jsonl과 이벤트 이미지로
-기록한다.
+확정된 사람 후보는 `/perception/person_candidates`로 발행한다
+(S15P11A301-133 계약, `common/schemas/person-candidates.schema.json`).
+encounter 권한은 Mission Manager에 있으므로(명세 26.1) encounter는 발행하지
+않는다. 결과는 src.main과 동일하게 events.jsonl과 이벤트 이미지로도 기록한다.
 
 사용 예 (ai/detection에서, ROS2 환경 source 후):
     source /opt/ros/humble/setup.bash
@@ -21,7 +22,7 @@ import argparse
 import json
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import cv2
@@ -38,12 +39,14 @@ try:
         QoSReliabilityPolicy,
     )
     from sensor_msgs.msg import CompressedImage
+    from std_msgs.msg import String
 except ImportError as exc:  # pragma: no cover - ROS 미설치 환경
     raise SystemExit(
         "rclpy를 가져올 수 없습니다. ROS2 환경을 먼저 source 하세요: "
         "source /opt/ros/humble/setup.bash"
     ) from exc
 
+from .candidates import candidates_body, confirmed_candidates, format_utc
 from .main import DEFAULT_CONFIG, load_config
 from .pipeline import InferencePipeline
 
@@ -63,19 +66,30 @@ class DetectionTopicRunner(Node):
         *,
         topic: str,
         max_frames: int | None,
+        candidates_topic: str | None = None,
+        candidates_period: float = 0.2,
+        confirm_seconds: float = 1.0,
+        stale_seconds: float = 1.0,
     ) -> None:
         super().__init__("ai_detection_wrapper")
         self.pipeline = pipeline
         self.topic = topic
         self.max_frames = max_frames
+        self.confirm_seconds = confirm_seconds
+        self.stale_seconds = stale_seconds
 
         self.done = False
         self.frame_index = 0
         self.decode_failures = 0
         self.first_frame_monotonic: float | None = None
+        self.last_frame_monotonic: float | None = None
         # 최근 프레임 처리 시간. run_video와 동일하게 실측 FPS로
         # 트래커 기억 길이를 맞추는 데 쓴다.
         self._recent: list[float] = []
+        # 마지막으로 처리한 프레임에서 확정된 후보 스냅샷.
+        self._candidates: list[dict] = []
+        self._observed_at: str | None = None
+        self._frame_id: str | None = None
 
         # usb_cam은 RELIABLE로 발행하므로 BEST_EFFORT 구독이 호환된다.
         # depth=1: 추론이 프레임보다 느릴 때 항상 최신 프레임만 처리한다.
@@ -87,6 +101,26 @@ class DetectionTopicRunner(Node):
         )
         self.create_subscription(CompressedImage, topic, self._on_frame, qos)
         self.get_logger().info(f"{topic} 구독 시작 (depth=1, BEST_EFFORT)")
+
+        # 후보 발행. 후보가 없어도 빈 배열을 계속 보내야 mission_manager가
+        # "사람 없음"과 "탐지 노드 죽음"을 구별한다(133 계약).
+        # mission_manager가 BEST_EFFORT로 구독하므로 맞춘다.
+        self.candidates_pub = None
+        if candidates_topic:
+            self.candidates_pub = self.create_publisher(
+                String,
+                candidates_topic,
+                QoSProfile(
+                    reliability=QoSReliabilityPolicy.BEST_EFFORT,
+                    history=QoSHistoryPolicy.KEEP_LAST,
+                    depth=5,
+                ),
+            )
+            self.create_timer(candidates_period, self._on_publish_tick)
+            self.get_logger().info(
+                f"{candidates_topic} 발행 시작 "
+                f"(주기 {candidates_period}s, 확정 기준 {confirm_seconds}s)"
+            )
 
     def _on_frame(self, message: CompressedImage) -> None:
         if self.done:
@@ -109,7 +143,16 @@ class DetectionTopicRunner(Node):
         # 경과 시간을 쓴다. 토픽은 프레임 드롭이 있어 frame_index/fps가
         # 실제 경과 시간과 어긋난다.
         timestamp_sec = loop_start - self.first_frame_monotonic
-        self.pipeline.process_frame(frame, self.frame_index, timestamp_sec, self.topic)
+        result = self.pipeline.process_frame(
+            frame, self.frame_index, timestamp_sec, self.topic
+        )
+        # 후보 스냅샷을 갱신한다. observedAt은 발행 시각이 아니라 이 프레임의
+        # 관측 시각이다 — mission_manager가 확정 시각으로 쓰고 녹화 노드가
+        # 사전 3초 조각을 찾는 기준이다(133 계약).
+        self._candidates = confirmed_candidates(result.persons, self.confirm_seconds)
+        self._observed_at = format_utc(datetime.now(timezone.utc))
+        self._frame_id = str(self.frame_index)
+        self.last_frame_monotonic = loop_start
         self.frame_index += 1
 
         self._recent.append(time.monotonic() - loop_start)
@@ -123,6 +166,28 @@ class DetectionTopicRunner(Node):
         if self.max_frames is not None and self.frame_index >= self.max_frames:
             self.done = True
 
+    def _on_publish_tick(self) -> None:
+        """후보가 없어도 발행한다. 추론이 멈추면 오래된 후보를 보내지 않는다.
+
+        마지막 프레임이 stale_seconds보다 오래됐으면 빈 배열로 바꾼다.
+        추론이 멈췄는데 마지막 후보를 계속 재발행하면 mission_manager가
+        사라진 사람을 계속 있는 것으로 판단한다.
+        """
+        now = time.monotonic()
+        stale = (
+            self.last_frame_monotonic is None
+            or now - self.last_frame_monotonic > self.stale_seconds
+        )
+        if stale:
+            body = candidates_body([], format_utc(datetime.now(timezone.utc)))
+        else:
+            body = candidates_body(
+                self._candidates, self._observed_at, frame_id=self._frame_id
+            )
+        message = String()
+        message.data = json.dumps(body, ensure_ascii=False)
+        self.candidates_pub.publish(message)
+
     def log_progress(self) -> None:
         if self.first_frame_monotonic is None:
             self.get_logger().warn(
@@ -135,6 +200,7 @@ class DetectionTopicRunner(Node):
         self.get_logger().info(
             f"처리 {self.frame_index}프레임 {fps:.1f}FPS "
             f"사람프레임 {stats.frames_with_person} "
+            f"확정후보 {len(self._candidates)}명 "
             f"이벤트 {stats.events} 디코딩실패 {self.decode_failures}"
         )
 
@@ -193,6 +259,28 @@ def build_parser() -> argparse.ArgumentParser:
         help="최대 실행 시간(초). 프레임 수신 여부와 무관하게 시작 시점부터 잰다.",
     )
     parser.add_argument(
+        "--candidates-topic",
+        default="/perception/person_candidates",
+        help="확정 후보를 발행할 토픽 (기본: /perception/person_candidates)",
+    )
+    parser.add_argument(
+        "--no-candidates",
+        action="store_true",
+        help="후보 발행을 끈다 (단독 벤치 검증용)",
+    )
+    parser.add_argument(
+        "--candidates-period",
+        type=float,
+        default=0.2,
+        help="후보 발행 주기(초). 후보가 없어도 이 주기로 빈 배열을 발행한다 (기본: 0.2)",
+    )
+    parser.add_argument(
+        "--confirm-seconds",
+        type=float,
+        default=1.0,
+        help="후보 확정에 필요한 안정 관측 시간(초, 명세 25.2) (기본: 1.0)",
+    )
+    parser.add_argument(
         "--frame-log",
         action="store_true",
         help="프레임 단위 JSONL 로그를 함께 기록한다 (용량 주의)",
@@ -240,7 +328,12 @@ def main(argv: list[str] | None = None) -> int:
             device=args.device,
         ) as pipeline:
             node = DetectionTopicRunner(
-                pipeline, topic=args.topic, max_frames=args.max_frames
+                pipeline,
+                topic=args.topic,
+                max_frames=args.max_frames,
+                candidates_topic=None if args.no_candidates else args.candidates_topic,
+                candidates_period=args.candidates_period,
+                confirm_seconds=args.confirm_seconds,
             )
             loop_start = time.monotonic()
             last_log = loop_start

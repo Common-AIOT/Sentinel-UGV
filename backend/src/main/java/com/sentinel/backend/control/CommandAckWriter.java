@@ -27,6 +27,30 @@ public class CommandAckWriter {
 
     private static final Logger log = LoggerFactory.getLogger(CommandAckWriter.class);
 
+    /**
+     * 임무 종료 시점의 결과 집계 (S15P11A301-166). 임무 목록·상세의
+     * durationSec·distanceM·detectionCount 가 이 행에서 나온다.
+     *
+     * <p>distance_m 은 robot_pose 인접 좌표 거리의 합, coverage 는 산출 근거가 없어 null.
+     * QoS 1 중복 ACK 에도 PK(mission_id) DO NOTHING 으로 행은 1개고, ended_at 이
+     * 첫 ACK 에서 고정되므로 값도 결정적이다.
+     */
+    private static final String INSERT_RESULTS = """
+            INSERT INTO mission_results (mission_id, duration_sec, distance_m, coverage, detection_count)
+            SELECT m.id,
+                   CAST(EXTRACT(EPOCH FROM (m.ended_at - m.started_at)) AS INTEGER),
+                   (SELECT sum(step) FROM (
+                        SELECT sqrt(power(x - lag(x) OVER (ORDER BY time), 2)
+                                  + power(y - lag(y) OVER (ORDER BY time), 2)) AS step
+                        FROM robot_pose WHERE mission_id = ?
+                    ) steps),
+                   NULL,
+                   (SELECT count(*) FROM encounters WHERE mission_id = ?)
+            FROM missions m
+            WHERE m.id = ?
+            ON CONFLICT (mission_id) DO NOTHING
+            """;
+
     private final JdbcTemplate jdbc;
 
     public CommandAckWriter(JdbcTemplate jdbc) {
@@ -71,12 +95,16 @@ public class CommandAckWriter {
                     "UPDATE missions SET status = 'EXPLORING' WHERE id = ?", command.missionId());
             case MissionCommandData.TYPE_RETURN -> jdbc.update(
                     "UPDATE missions SET status = 'RETURNING' WHERE id = ?", command.missionId());
-            case MissionCommandData.TYPE_STOP -> jdbc.update(
-                    """
-                    UPDATE missions SET status = 'COMPLETED', ended_at = COALESCE(ended_at, ?),
-                           end_reason = COALESCE(end_reason, 'OPERATOR_STOP') WHERE id = ?
-                    """,
-                    at, command.missionId());
+            case MissionCommandData.TYPE_STOP -> {
+                jdbc.update(
+                        """
+                        UPDATE missions SET status = 'COMPLETED', ended_at = COALESCE(ended_at, ?),
+                               end_reason = COALESCE(end_reason, 'OPERATOR_STOP') WHERE id = ?
+                        """,
+                        at, command.missionId());
+                jdbc.update(INSERT_RESULTS,
+                        command.missionId(), command.missionId(), command.missionId());
+            }
             default -> log.warn("알 수 없는 명령 type 의 ACK: {}", command.type());
         }
     }

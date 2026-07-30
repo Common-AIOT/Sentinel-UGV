@@ -76,6 +76,33 @@ def dialogue_ended_signal(
     }
 
 
+# 임무가 진행 중이어서 보고 발신 후 탐사 재개를 기대할 수 있는 상태(26.2).
+# 세션 종료 안내는 DIALOGUE_ENDED보다 먼저 재생하므로, 이 시점에는 아직 재개가
+# 일어나지 않았다. 그래서 "관측"이 아니라 "재개 가능 상태 확인"으로 판단한다.
+MISSION_ACTIVE_STATES = frozenset(
+    {
+        "EXPLORING",
+        "PERSON_APPROACHING",
+        "INTERACTING",
+        "POST_RECORDING",
+        "REPORTING",
+    }
+)
+
+
+def mission_resume_expected(state: Any) -> bool:
+    """보고 발신 후 다음 지역 탐사를 기대할 수 있는 임무 상태인지.
+
+    즉시 재개 정책(관제 전달 완료 = 다음 지역 탐사) 아래에서 "다른 지역 탐사를
+    시작합니다"를 말해도 되는지 판단한다.
+
+    중단·정지·종료 상태(ESTOP·ERROR·PAUSED·MANUAL·SAFE_IDLE·COMPLETED·RETURNING)에서는
+    재개를 약속하지 않는다. 상태를 한 번도 받지 못한 경우도 약속하지 않는다.
+    """
+
+    return isinstance(state, str) and state in MISSION_ACTIVE_STATES
+
+
 def mission_abort_state(payload: Any) -> str | None:
     """Mission status에서 음성 세션 중단 종류를 결정한다."""
 

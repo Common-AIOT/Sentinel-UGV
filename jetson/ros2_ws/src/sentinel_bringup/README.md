@@ -219,6 +219,7 @@ ros2 launch sentinel_bringup demo.launch.py
  8s  recorder(recording_manager + media_uploader) · mission
 10s  bridge (MQTT wss://api.sentinel-ugv.xyz:443/mqtt)
 14s  detector (ai/detection wrapper — S15P11A301-155)
+16s  viz (Foxglove, 기본 꺼짐 — S15P11A301-176)
 ```
 
 단계별 지연을 두는 이유는 부팅 직후 전부 동시에 뜨면 CPU·메모리 경합으로 NVMM
@@ -279,6 +280,47 @@ LaunchConfiguration은 launch context **전역**이라, lidar.launch가 설정�
 겉보기에는 정상이었습니다 — recorder의 `no_response_timeout` 300초
 (S15P11A301-142 완화)가 조용히 30초로 퇴행한 상태였습니다. `demo.launch.py`의
 `_include()`가 그 격리를 담당합니다.
+
+### 실시간 시각화 (S15P11A301-176)
+
+개발 중에 지도·스캔·상태를 눈으로 보려면 켭니다. **기본은 꺼져 있습니다.**
+
+```bash
+./scripts/demo_up.sh enable_viz:=true
+```
+
+노트북에서 **Foxglove Studio 데스크톱 앱**으로 접속합니다.
+
+```text
+ws://jetson.sentinel-ugv.xyz:8765
+연결 유형: "Foxglove WebSocket"   ← Rosbridge를 고르면 핸드셰이크가 깨집니다
+```
+
+3D 패널에서 볼 것:
+
+| 토픽 | 설정 | 의미 |
+|---|---|---|
+| `/map` | 그대로 | 검정=벽, 흰색=자유, 회색=미지 |
+| `/scan` | Color mode `Flat`, 빨강, Point size 5 | 지금 라이다가 보는 것 |
+| `/mission/status` | Raw Messages 패널 | 상태 머신 위치 |
+
+**3D 패널 우측의 `3D` 버튼을 눌러 2D 탑다운으로 보세요.** 점유격자는 위에서 봐야
+도면처럼 읽힙니다. 비스듬히 보면 5~10cm 두께 벽이 점선처럼 흩어져 보입니다.
+
+읽는 법 하나: 빨강(현재 스캔)과 검정(누적 지도)이 **나란히 갈라져 보이면** 위치
+추정 오차가 누적된 것입니다. 오도메트리 없이 스캔 매칭만 쓰는 구성의 한계이며
+(각도 오차가 거리에 비례해 커집니다) 엔코더가 붙으면 줄어듭니다.
+
+기본이 꺼져 있는 이유는 데모 구성이 아니라 개발 도구이기 때문입니다. WebSocket
+서버가 토픽을 직렬화하느라 CPU를 쓰고, Orin Nano에서는 `x264enc`와 YOLO가 이미
+코어를 다 씁니다(S15P11A301-131에서 오디오 손실로 겪었습니다). 인증이 없으므로
+공개망에 노출하지 않습니다 — LAN 개발용입니다.
+
+설치가 안 된 기기에서는 시각화만 건너뛰고 나머지 스택은 정상 기동합니다.
+
+```bash
+sudo apt install ros-humble-foxglove-bridge
+```
 
 ### 없는 launch 파일은 건너뜁니다
 

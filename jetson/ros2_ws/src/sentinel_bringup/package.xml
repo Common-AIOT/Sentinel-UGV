@@ -10,5 +10,9 @@
   <exec_depend>usb_cam</exec_depend>
   <exec_depend>ydlidar_ros2_driver</exec_depend>
   <exec_depend>sentinel_description</exec_depend>
+  <!-- 개발용 시각화(S15P11A301-176). 없어도 demo.launch가 죽지 않는다 —
+       viz.launch.py를 건너뛰고 로그를 남긴다. 설치는
+       sudo apt install ros-humble-foxglove-bridge -->
+  <exec_depend>foxglove_bridge</exec_depend>
   <export><build_type>ament_cmake</build_type></export>
 </package>

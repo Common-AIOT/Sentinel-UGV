@@ -63,7 +63,7 @@ function TopBar() {
         </NavLink>
         <NavLink to="/blackbox">
           <Archive size={11} />
-          블랙박스
+          임무 이력
         </NavLink>
       </div>
 

@@ -16,23 +16,23 @@ import {
   type MissionState,
 } from "./mockData";
 
-// ── API endpoints ──────────────────────────────────────────────────────────
-// 배포 환경마다 백엔드 주소가 다르므로 환경 변수로 주입한다. 값이 없으면 로컬 개발 기준으로
-// 동작한다. Vercel 에서는 프로젝트 환경 변수에 NEXT_PUBLIC_API_BASE_URL 을 설정한다.
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
-const WS_BASE = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:8080/ws";
+import { api, ApiError, type CommandType } from "@/lib/api";
 
-export const API = {
-  WS_CONTROL: `${WS_BASE}/control`,
-  WS_SENSORS: `${WS_BASE}/sensors`,
-  WS_DETECTIONS: `${WS_BASE}/detections`,
-  WS_SIGNALING: `${WS_BASE}/signaling`,
-  STOMP_BROKER: WS_BASE,
-  CMD: (type: string) => `${API_BASE}/api/command/${type}`,
-  BLACKBOX: `${API_BASE}/api/blackbox`,
+// 명령·조회는 실 API(@/lib/api)를 쓴다. 지도 격자와 환경 센서는 서버 계약이 아직
+// 없으므로(S15P11A301-169 결정) 목 시뮬레이션을 유지한다.
+export const USE_MOCK = true;
+
+/** 확정 로봇 이름 (mqtt-setup·mvp-week-plan). */
+const ROBOT_ID = "SENTINEL-01";
+
+/** 서버 missions.status → 관제 화면 MissionState. 서버는 5개 상태만 가진다. */
+const SERVER_MISSION_STATE: Record<string, MissionState> = {
+  CREATED: "SAFE_IDLE",
+  EXPLORING: "EXPLORING",
+  PAUSED: "PAUSED",
+  RETURNING: "RETURNING",
+  COMPLETED: "COMPLETED",
 };
-
-export const USE_MOCK = true; // flip to false when backend is ready
 
 // ── Types ──────────────────────────────────────────────────────────────────
 export interface RobotPos { r: number; c: number; heading: number; }
@@ -54,6 +54,8 @@ interface RobotContextValue {
   sendControl: (x: number, y: number) => void;
   sendCommand: (type: string) => Promise<void>;
   tagEvent: () => void;
+  // Mission
+  missionId: string | null;
   // Video
   videoConnected: boolean;
   videoQuality: "1080p" | "720p";
@@ -96,6 +98,13 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
   const mockMission = useRef<MissionState>("SAFE_IDLE");
   const startTime = useRef(Date.now());
   const exploreStart = useRef<number | null>(null);
+
+  // 실 임무 상태. missionId 가 있으면 임무 상태는 서버 폴링이 결정하고,
+  // 목 시뮬레이션의 가짜 탐지·자동 전이는 멈춘다(지도 주행 애니메이션만 유지).
+  const [missionId, setMissionId] = useState<string | null>(null);
+  const missionIdRef = useRef<string | null>(null);
+  const robotPosRef = useRef(robotPos);
+  useEffect(() => { robotPosRef.current = robotPos; }, [robotPos]);
 
   // ── Mock simulation ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -173,7 +182,8 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
         const driving =
           mockMission.current === "EXPLORING" ||
           mockMission.current === "PERSON_APPROACHING";
-        if (driving && elapsed >= s.explorationLimitSec) {
+        if (driving && elapsed >= s.explorationLimitSec && !missionIdRef.current) {
+          // 실 임무 중에는 종료 조건도 서버·로봇의 판단을 따른다.
           mockMission.current = "RETURNING";
           return { ...s, explorationElapsedSec: elapsed, missionState: "RETURNING" };
         }
@@ -202,8 +212,8 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
           co2: Math.round(s.co2 + (Math.random() - 0.5) * 5),
           timestamp: Date.now(),
         };
-        // 명세 23.4: 배터리 20% 이하는 탐사 종료 조건이다.
-        if (next.battery <= BATTERY_ABORT_PCT && mockMission.current === "EXPLORING") {
+        // 명세 23.4: 배터리 20% 이하는 탐사 종료 조건이다. (목 전용 — 실 임무는 로봇 판단)
+        if (next.battery <= BATTERY_ABORT_PCT && mockMission.current === "EXPLORING" && !missionIdRef.current) {
           mockMission.current = "RETURNING";
           setStatus(st => ({ ...st, missionState: "RETURNING" }));
         }
@@ -242,6 +252,8 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
     };
 
     const detectionTimer = setInterval(() => {
+      // 실 임무 중에는 가짜 탐지를 만들지 않는다 — 진짜 encounter 폴링이 대신한다.
+      if (missionIdRef.current) return;
       if (Math.random() > 0.15) return;
       const event: DetectionEvent = {
         id: `det-${Date.now()}`,
@@ -276,12 +288,48 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
     console.log("control", { x, y });
   }, []);
 
+  /**
+   * UI 명령 어휘 → 서버 명령(27.4) 매핑 후 발행. manual/auto 는 서버 명령이 없어
+   * (제어 세션 범위, S15P11A301-39) 로컬 전이만 한다.
+   *
+   * explore 는 첫 호출에서 임무를 만들고 START, PAUSED 상태면 RESUME 을 보낸다.
+   * 이미 활성 임무가 있어 생성이 409 면 그 임무를 이어받는다.
+   * RETURN 은 젯슨이 NOT_IMPLEMENTED 로 거부하므로 데모에선 STOP 으로 대체한다(계획 결정).
+   */
   const sendCommand = useCallback(async (type: string) => {
-    if (!USE_MOCK) {
-      await fetch(API.CMD(type), { method: "POST" });
-      return;
+    if (type === "explore" || type === "return" || type === "pause") {
+      let mid = missionIdRef.current;
+      const resuming = type === "explore" && mockMission.current === "PAUSED";
+
+      if (!mid && type === "explore") {
+        try {
+          const created = await api.createMission(ROBOT_ID);
+          mid = created.id;
+        } catch (e) {
+          if (e instanceof ApiError && e.httpStatus === 409) {
+            const active = (await api.missions()).find(m => m.endedAt === null);
+            if (!active) throw e;
+            mid = active.id;
+          } else {
+            throw e;
+          }
+        }
+        missionIdRef.current = mid;
+        setMissionId(mid);
+      }
+
+      if (mid) {
+        const cmd: CommandType =
+          type === "return" ? "STOP"
+          : type === "pause" ? "PAUSE"
+          : resuming ? "RESUME"
+          : "START";
+        await api.issueCommand(mid, cmd);
+      }
     }
 
+    // 이하 낙관적 로컬 전이 — 202 접수 직후 화면이 즉시 반응하게 한다.
+    // 실제 상태는 3초 폴링(아래 useEffect)이 서버 값으로 덮는다.
     // 명세 26.3의 전이 규칙을 모의한다. 임의 전이를 허용하면 관제 화면이
     // 실제 로봇에서는 불가능한 상태 조합을 보여주게 된다.
     setStatus(s => {
@@ -341,6 +389,67 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
+  // ── 실 임무 폴링 ─────────────────────────────────────────────────────────
+  // STOMP 가 프론트·백 모두 없어(S15P11A301-169) REST 폴링으로 대체한다.
+
+  // 임무 상태 3초 폴링 — 서버 상태가 로봇 ACK 의 결과이므로 이것이 진실이다.
+  useEffect(() => {
+    if (!missionId) return;
+    const timer = setInterval(async () => {
+      try {
+        const m = await api.missionDetail(missionId);
+        const mapped = SERVER_MISSION_STATE[m.status];
+        if (!mapped) return;
+        mockMission.current = mapped;
+        setStatus(s => ({ ...s, missionState: mapped }));
+        if (m.status === "COMPLETED") {
+          // 다음 explore 가 새 임무를 만들 수 있게 활성 임무를 비운다.
+          missionIdRef.current = null;
+          setMissionId(null);
+        }
+      } catch {
+        // 일시적 네트워크 오류는 다음 폴링에 맡긴다.
+      }
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [missionId]);
+
+  // encounter 5초 폴링 — 새 발견을 팝업·목록에 반영한다.
+  // 좌표 계약(occupancy grid)이 없어 지도는 목이므로, 마커는 현재 로봇 위치에 찍는다.
+  useEffect(() => {
+    if (!missionId) return;
+    const seen = new Set<string>();
+    let first = true;
+    const timer = setInterval(async () => {
+      try {
+        const list = await api.missionEncounters(missionId);
+        const fresh = list.filter(e => !seen.has(e.id));
+        fresh.forEach(e => seen.add(e.id));
+        // 첫 폴링은 기존 발견을 조용히 채우고, 이후 새 발견만 팝업을 띄운다.
+        const isFirst = first;
+        first = false;
+        if (fresh.length === 0) return;
+        const events: DetectionEvent[] = fresh.map(e => ({
+          id: e.id,
+          timestamp: Date.parse(e.startedAt),
+          confidence: 1,
+          gridR: Math.round(robotPosRef.current.r),
+          gridC: Math.round(robotPosRef.current.c),
+          thumbnailColor: "hsl(20, 60%, 30%)",
+          location:
+            e.mapX !== null && e.mapY !== null
+              ? `(${e.mapX.toFixed(1)}, ${e.mapY.toFixed(1)})`
+              : "위치 미기록",
+        }));
+        setDetections(d => [...events, ...d].slice(0, 20));
+        if (!isFirst) setActiveDetection(events[0]);
+      } catch {
+        // 다음 폴링에 맡긴다.
+      }
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [missionId]);
+
   const tagEvent = useCallback(() => {
     const evt: DetectionEvent = {
       id: `tag-${Date.now()}`,
@@ -361,6 +470,7 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
       status, sensors,
       detections, activeDetection, dismissDetection,
       sendControl, sendCommand, tagEvent,
+      missionId,
       videoConnected, videoQuality, setVideoQuality,
       wsConnected,
     }}>

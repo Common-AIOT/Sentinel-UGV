@@ -26,6 +26,7 @@ public record MessageEnvelope(
     public static final String TYPE_TELEMETRY = "ROBOT_TELEMETRY";
     public static final String TYPE_PRESENCE = "ROBOT_PRESENCE";
     public static final String TYPE_ENCOUNTER = "ENCOUNTER_CONFIRMED";
+    public static final String TYPE_INTERACTION_REPORT = "INTERACTION_REPORT";
     public static final String TYPE_MISSION_COMMAND = "MISSION_COMMAND";
     public static final String TYPE_COMMAND_ACK = "COMMAND_ACK";
 

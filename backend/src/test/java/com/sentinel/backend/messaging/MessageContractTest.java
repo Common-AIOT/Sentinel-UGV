@@ -15,6 +15,7 @@ import org.junit.jupiter.api.Test;
 
 import com.sentinel.backend.messaging.dto.CommandAckData;
 import com.sentinel.backend.messaging.dto.EncounterData;
+import com.sentinel.backend.messaging.dto.InteractionReportData;
 import com.sentinel.backend.messaging.dto.MessageEnvelope;
 import com.sentinel.backend.messaging.dto.MissionCommandData;
 import com.sentinel.backend.messaging.dto.PresenceData;
@@ -164,6 +165,20 @@ class MessageContractTest {
                 envelope("command-ack-rejected.json").data(), CommandAckData.class);
         assertEquals("REJECTED", rejected.status());
         assertEquals("ESTOP_ACTIVE", rejected.reasonCode());
+    }
+
+    @Test
+    void interactionReportSampleParsesIntoInteractionReportData() throws Exception {
+        MessageEnvelope envelope = envelope("interaction-report.json");
+        InteractionReportData data =
+                mapper.treeToValue(envelope.data(), InteractionReportData.class);
+
+        assertEquals(MessageEnvelope.TYPE_INTERACTION_REPORT, envelope.messageType());
+        assertEquals(envelope.missionId(), data.missionId());
+        assertEquals(3, data.visionPersonCount());
+        assertEquals(2, data.sessionReport().reportedResponsiveCount());
+        assertEquals("IMMEDIATE", data.riskAssessment().riskLevel());
+        assertTrue(data.sessionReport().operatorReviewRequired());
     }
 
     private List<Path> sampleFiles() throws Exception {

@@ -8,7 +8,7 @@ ROS 2 DDS를 인터넷 구간까지 확장하지 않는다. 관제에 필요한 
     presence   QoS 1  Retain O   접속·종료·LWT
     state      QoS 1  Retain O   변경 시 + 1초 heartbeat
     telemetry  QoS 0  Retain X   2Hz
-    events     QoS 1  Retain X   encounter (S15P11A301-140)
+    events     QoS 1  Retain X   encounter·음성 보고 (S15P11A301-140·159)
     acks       QoS 1  Retain X   명령 처리 결과 (S15P11A301-143)
 
 구독 채널 (31-4).
@@ -101,6 +101,9 @@ class CloudBridgeNode(Node):
         # 사람 발견 이벤트를 관제로 중계한다(S15P11A301-140). mission_manager가
         # 발행하는 것을 그대로 31-5 봉투에 담아 MQTT events 채널로 보낸다.
         self.declare_parameter('encounter_topic', '/perception/encounter')
+        # 음성 세션이 구조화한 보고. encounter와 마찬가지로 중요한 이벤트라
+        # MQTT가 끊기면 Outbox에 보관한다(S15P11A301-159).
+        self.declare_parameter('interaction_report_topic', '/interaction/report')
         # 한 번에 재전송할 Outbox 항목 수. 재연결 직후 수백 건을 몰아 보내면
         # Wi-Fi를 점유해 관제 영상이 밀린다(32장 우선순위).
         self.declare_parameter('outbox_batch_size', 20)
@@ -216,6 +219,19 @@ class CloudBridgeNode(Node):
             self._on_encounter,
             QoSProfile(
                 reliability=QoSReliabilityPolicy.RELIABLE,
+                history=QoSHistoryPolicy.KEEP_LAST,
+                depth=10,
+            ),
+        )
+        # 음성 노드가 bridge보다 먼저 보고를 발행해도 마지막 보고를 받도록
+        # TRANSIENT_LOCAL을 맞춘다. interactionId/messageId가 중복 저장을 막는다.
+        self.create_subscription(
+            String,
+            self._param('interaction_report_topic'),
+            self._on_interaction_report,
+            QoSProfile(
+                reliability=QoSReliabilityPolicy.RELIABLE,
+                durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
                 history=QoSHistoryPolicy.KEEP_LAST,
                 depth=10,
             ),
@@ -537,6 +553,48 @@ class CloudBridgeNode(Node):
             return
         self.get_logger().warn(
             f'브로커 없음. {phase}를 Outbox에 보관했다 (대기 {self.outbox.count()}건)'
+        )
+
+    def _on_interaction_report(self, message: String) -> None:
+        """음성 보고를 events 채널로 발행하고 단절 중에는 Outbox에 보관한다."""
+
+        try:
+            payload = json.loads(message.data)
+        except json.JSONDecodeError as error:
+            self.get_logger().warn(f'음성 보고 JSON 해석 실패: {error}')
+            return
+        required = {'interactionId', 'encounterId', 'missionId', 'sessionReport'}
+        if not isinstance(payload, dict) or not required.issubset(payload):
+            self.get_logger().warn(
+                '음성 보고 필수 필드가 없다. interaction-report.schema.json을 확인한다.'
+            )
+            return
+        if not payload.get('missionId'):
+            self.get_logger().warn(
+                'missionId 없는 음성 보고를 관제로 보내지 않는다.'
+            )
+            return
+
+        envelope = self.mapper.interaction_report(payload)
+        if self.mqtt.publish('events', envelope):
+            self.get_logger().info(
+                '음성 보고 events 발행 '
+                f'{str(payload.get("interactionId"))[:8]}'
+            )
+            return
+        if self.outbox is None:
+            self.get_logger().error(
+                '음성 보고를 보낼 수도 보관할 수도 없다. Outbox가 열리지 않았다.'
+            )
+            return
+        try:
+            self.outbox.enqueue(envelope, 'events')
+        except Exception as error:  # noqa: BLE001
+            self.get_logger().error(f'음성 보고 Outbox 보관 실패: {error}')
+            return
+        self.get_logger().warn(
+            '브로커 없음. 음성 보고를 Outbox에 보관했다 '
+            f'(대기 {self.outbox.count()}건)'
         )
 
     def _flush_outbox(self) -> int:

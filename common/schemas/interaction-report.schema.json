@@ -1,0 +1,141 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sentinel-ugv.xyz/schemas/interaction-report.schema.json",
+  "title": "음성 상호작용 보고",
+  "description": "비전 encounter에서 시작한 음성 세션의 구조화 결과와 규칙 기반 위험 참고값이다(S15P11A301-159).",
+  "type": "object",
+  "required": [
+    "interactionId",
+    "encounterId",
+    "missionId",
+    "visionPersonCount",
+    "startedAt",
+    "endedAt",
+    "sessionReport",
+    "riskAssessment",
+    "usedFallback"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "interactionId": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "encounterId": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "missionId": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "visionPersonCount": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "startedAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?Z$"
+    },
+    "endedAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?Z$"
+    },
+    "sessionReport": {
+      "type": "object",
+      "required": [
+        "responseScope",
+        "anyResponseDetected",
+        "reportedResponsiveCount",
+        "reportedCountStatus",
+        "countConfidence",
+        "mobilityStatus",
+        "urgentConditionReported",
+        "operatorReviewRequired",
+        "terminationReason"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "responseScope": {
+          "const": "GROUP"
+        },
+        "anyResponseDetected": {
+          "type": ["boolean", "null"]
+        },
+        "reportedResponsiveCount": {
+          "type": ["integer", "null"],
+          "minimum": 1
+        },
+        "reportedCountStatus": {
+          "enum": [
+            "SELF_REPORTED_GROUP_COUNT",
+            "CONFIRMED_BY_OPERATOR",
+            "UNKNOWN"
+          ]
+        },
+        "countConfidence": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "mobilityStatus": {
+          "enum": ["YES", "NO", "UNKNOWN"]
+        },
+        "urgentConditionReported": {
+          "enum": ["YES", "NO", "UNKNOWN"]
+        },
+        "operatorReviewRequired": {
+          "type": "boolean"
+        },
+        "terminationReason": {
+          "enum": [
+            "NORMAL",
+            "TIMEOUT",
+            "ABORTED_MANUAL",
+            "ABORTED_SAFETY",
+            "AUDIO_DEVICE_ERROR",
+            "GMS_UNAVAILABLE",
+            "UNKNOWN"
+          ]
+        }
+      }
+    },
+    "riskAssessment": {
+      "type": "object",
+      "required": [
+        "riskLevel",
+        "riskReasons",
+        "ruleVersion",
+        "operatorReviewRequired"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "riskLevel": {
+          "enum": ["IMMEDIATE", "URGENT", "DELAYED", "UNKNOWN"]
+        },
+        "riskReasons": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "ruleVersion": {
+          "const": "voice-risk-v1.0"
+        },
+        "operatorReviewRequired": {
+          "type": "boolean"
+        }
+      }
+    },
+    "usedFallback": {
+      "type": "boolean"
+    }
+  }
+}

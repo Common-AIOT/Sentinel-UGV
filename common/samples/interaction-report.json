@@ -1,0 +1,37 @@
+{
+  "schemaVersion": "1.0",
+  "messageId": "68e37706-2744-45fc-a3d9-4b671f39c2a1",
+  "messageType": "INTERACTION_REPORT",
+  "robotId": "SENTINEL-01",
+  "missionId": "1cb5350f-187f-4478-b95e-bb513c47e706",
+  "sequence": 42,
+  "sentAt": "2026-07-30T09:17:31.125Z",
+  "data": {
+    "interactionId": "74ebbf7d-5726-4c4a-95b2-b899afe8543a",
+    "encounterId": "32f6f147-dacc-4979-a9a2-7aab8fed689c",
+    "missionId": "1cb5350f-187f-4478-b95e-bb513c47e706",
+    "visionPersonCount": 3,
+    "startedAt": "2026-07-30T09:16:12.003Z",
+    "endedAt": "2026-07-30T09:17:30.994Z",
+    "sessionReport": {
+      "responseScope": "GROUP",
+      "anyResponseDetected": true,
+      "reportedResponsiveCount": 2,
+      "reportedCountStatus": "SELF_REPORTED_GROUP_COUNT",
+      "countConfidence": null,
+      "mobilityStatus": "NO",
+      "urgentConditionReported": "YES",
+      "operatorReviewRequired": true,
+      "terminationReason": "NORMAL"
+    },
+    "riskAssessment": {
+      "riskLevel": "IMMEDIATE",
+      "riskReasons": [
+        "긴급 상태가 있다고 발화함"
+      ],
+      "ruleVersion": "voice-risk-v1.0",
+      "operatorReviewRequired": true
+    },
+    "usedFallback": false
+  }
+}

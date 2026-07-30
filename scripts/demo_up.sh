@@ -12,6 +12,7 @@
 set -Eeuo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export SENTINEL_REPO_ROOT="${REPO_ROOT}"
 
 # set -u 와 ROS setup.bash 는 함께 못 쓴다. 소싱 동안만 푼다.
 set +u

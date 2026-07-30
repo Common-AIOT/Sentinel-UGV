@@ -18,6 +18,7 @@ CPU·메모리 경합으로 NVMM 버퍼 할당이 실패하는 것을 실측했�
      8s  recorder   링 버퍼(index.json)를 읽는다. streaming보다 뒤
      8s  mission    토픽 구독뿐이라 순서 무관하지만 경합을 피해 늦춘다
     10s  bridge     MQTT 접속. 네트워크가 늦어도 자체 재시도가 있다
+    12s  voice      encounter 대기. 모델은 실제 세션 시작 때 지연 로딩한다
     14s  detector   ai/detection wrapper. YOLO 모델 로딩이 가장 무겁다. 마지막
 
 각 구성 요소는 `enable_*` 인자로 끌 수 있다. 개발 중 일부만 띄울 때 쓴다.
@@ -119,6 +120,7 @@ def generate_launch_description():
         DeclareLaunchArgument('enable_recorder', default_value='true'),
         DeclareLaunchArgument('enable_mission', default_value='true'),
         DeclareLaunchArgument('enable_bridge', default_value='true'),
+        DeclareLaunchArgument('enable_voice', default_value='true'),
         DeclareLaunchArgument('enable_detector', default_value='true'),
         # 데모 기본은 TLS다. 관제 웹(HTTPS)이 평문 WHEP를 혼합 콘텐츠로
         # 차단한다(32-4, S15P11A301-145). 인증서가 없는 개발 기기에서만 끈다.
@@ -153,6 +155,8 @@ def generate_launch_description():
         _include('sentinel_bridge', 'cloud_bridge.launch.py',
                  'enable_bridge', 10.0,
                  {'broker_password': broker_password}),
+        _include('sentinel_bringup', 'voice.launch.py',
+                 'enable_voice', 12.0),
         # ai/detection wrapper (S15P11A301-155, 도영훈의 실제 탐지).
         # 임시 통합용 person_detector(S15P11A301-136)를 쓰던 자리다 — 155가
         # sentinel_perception 패키지를 제거하고 wrapper launch로 대체했다.

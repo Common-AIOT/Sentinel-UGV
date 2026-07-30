@@ -27,6 +27,7 @@ MESSAGE_TYPE_PRESENCE = "ROBOT_PRESENCE"
 MESSAGE_TYPE_STATE = "ROBOT_STATE"
 MESSAGE_TYPE_TELEMETRY = "ROBOT_TELEMETRY"
 MESSAGE_TYPE_ENCOUNTER = "ENCOUNTER_CONFIRMED"
+MESSAGE_TYPE_INTERACTION_REPORT = "INTERACTION_REPORT"
 MESSAGE_TYPE_COMMAND_ACK = "COMMAND_ACK"
 
 # 백엔드가 cmd/mission 으로 보내는 봉투의 messageType (S15P11A301-141).
@@ -216,6 +217,22 @@ class MessageMapper:
             data,
             mission_id=data.get("missionId"),
         )
+
+    def interaction_report(self, data: dict[str, Any]) -> dict[str, Any]:
+        """음성 노드의 구조화 보고를 events 채널 봉투에 담는다.
+
+        interactionId는 이 보고 사건 자체의 식별자이므로 messageId로 재사용한다.
+        TRANSIENT_LOCAL 재전달이나 bridge 재시작이 같은 보고를 새 MQTT 메시지로
+        만들더라도 백엔드의 message_id UNIQUE가 중복 저장을 막는다.
+        """
+
+        message = self.envelope(
+            MESSAGE_TYPE_INTERACTION_REPORT,
+            data,
+            mission_id=data.get("missionId"),
+        )
+        message["messageId"] = data["interactionId"]
+        return message
 
     # ------------------------------------------------------------------
     # acks (S15P11A301-143)

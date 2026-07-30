@@ -32,6 +32,7 @@ DATA_SCHEMA_BY_TYPE = {
     "ROBOT_PRESENCE": "presence.schema.json",
     "ROBOT_STATE": "state.schema.json",
     "ROBOT_TELEMETRY": "telemetry.schema.json",
+    "INTERACTION_REPORT": "interaction-report.schema.json",
 }
 
 
@@ -282,6 +283,40 @@ def test_sent_at_is_utc_with_z_suffix():
     stamp = MessageMapper("SENTINEL-01").presence_online()["sentAt"]
     assert stamp.endswith("Z")
     assert "+" not in stamp
+
+
+def test_interaction_report_passes_schema_and_keeps_mission_id():
+    data = {
+        "interactionId": "74ebbf7d-5726-4c4a-95b2-b899afe8543a",
+        "encounterId": "32f6f147-dacc-4979-a9a2-7aab8fed689c",
+        "missionId": "1cb5350f-187f-4478-b95e-bb513c47e706",
+        "visionPersonCount": 3,
+        "startedAt": "2026-07-30T09:16:12.003Z",
+        "endedAt": "2026-07-30T09:17:30.994Z",
+        "sessionReport": {
+            "responseScope": "GROUP",
+            "anyResponseDetected": True,
+            "reportedResponsiveCount": 2,
+            "reportedCountStatus": "SELF_REPORTED_GROUP_COUNT",
+            "countConfidence": None,
+            "mobilityStatus": "NO",
+            "urgentConditionReported": "YES",
+            "operatorReviewRequired": True,
+            "terminationReason": "NORMAL",
+        },
+        "riskAssessment": {
+            "riskLevel": "IMMEDIATE",
+            "riskReasons": ["긴급 상태가 있다고 발화함"],
+            "ruleVersion": "voice-risk-v1.0",
+            "operatorReviewRequired": True,
+        },
+        "usedFallback": False,
+    }
+    message = MessageMapper("SENTINEL-01").interaction_report(data)
+
+    _validate(message)
+    assert message["missionId"] == data["missionId"]
+    assert message["messageId"] == data["interactionId"]
 
 
 def test_tls_stays_on_when_ca_path_is_empty():

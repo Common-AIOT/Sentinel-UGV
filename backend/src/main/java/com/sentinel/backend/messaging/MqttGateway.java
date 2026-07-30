@@ -22,8 +22,10 @@ import com.sentinel.backend.common.exception.BusinessException;
 import com.sentinel.backend.common.exception.ErrorCode;
 import com.sentinel.backend.control.CommandAckWriter;
 import com.sentinel.backend.encounter.EncounterWriter;
+import com.sentinel.backend.encounter.InteractionReportWriter;
 import com.sentinel.backend.messaging.dto.CommandAckData;
 import com.sentinel.backend.messaging.dto.EncounterData;
+import com.sentinel.backend.messaging.dto.InteractionReportData;
 import com.sentinel.backend.messaging.dto.MessageEnvelope;
 import com.sentinel.backend.messaging.dto.PresenceData;
 import com.sentinel.backend.messaging.dto.TelemetryData;
@@ -65,6 +67,7 @@ public class MqttGateway implements MqttCallback {
     private final TelemetryWriter telemetryWriter;
     private final RobotPresenceWriter presenceWriter;
     private final EncounterWriter encounterWriter;
+    private final InteractionReportWriter interactionReportWriter;
     private final CommandAckWriter commandAckWriter;
 
     private final ScheduledExecutorService retryScheduler =
@@ -77,12 +80,14 @@ public class MqttGateway implements MqttCallback {
                        TelemetryWriter telemetryWriter,
                        RobotPresenceWriter presenceWriter,
                        EncounterWriter encounterWriter,
+                       InteractionReportWriter interactionReportWriter,
                        CommandAckWriter commandAckWriter) {
         this.props = props;
         this.objectMapper = objectMapper;
         this.telemetryWriter = telemetryWriter;
         this.presenceWriter = presenceWriter;
         this.encounterWriter = encounterWriter;
+        this.interactionReportWriter = interactionReportWriter;
         this.commandAckWriter = commandAckWriter;
     }
 
@@ -196,6 +201,9 @@ public class MqttGateway implements MqttCallback {
                         envelope, objectMapper.treeToValue(envelope.data(), PresenceData.class));
                 case MessageEnvelope.TYPE_ENCOUNTER -> encounterWriter.write(
                         envelope, objectMapper.treeToValue(envelope.data(), EncounterData.class));
+                case MessageEnvelope.TYPE_INTERACTION_REPORT -> interactionReportWriter.write(
+                        envelope,
+                        objectMapper.treeToValue(envelope.data(), InteractionReportData.class));
                 case MessageEnvelope.TYPE_COMMAND_ACK -> commandAckWriter.write(
                         envelope, objectMapper.treeToValue(envelope.data(), CommandAckData.class));
                 default -> log.debug("처리 대상이 아닌 messageType: {}", envelope.messageType());

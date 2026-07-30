@@ -35,6 +35,7 @@
         "ROBOT_STATE",
         "ROBOT_TELEMETRY",
         "ENCOUNTER_CONFIRMED",
+        "INTERACTION_REPORT",
         "MISSION_COMMAND",
         "MANUAL_DRIVE_COMMAND",
         "COMMAND_ACK"

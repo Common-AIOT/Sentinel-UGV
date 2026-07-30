@@ -60,6 +60,7 @@
     # 같은 이름 설정과 맞춰야 합니다.
     mission_signal_topic: /mission/signal
     command_result_topic: /mission/command_result
+    interaction_report_topic: /interaction/report
 
     # 단절 중 이벤트 보관. 링 버퍼·pending과 같은 볼륨에 둔다(32-5).
     outbox_path: /var/lib/sentinel/bridge/outbox.sqlite3

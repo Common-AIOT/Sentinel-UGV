@@ -39,6 +39,7 @@ DATA_SCHEMA_BY_TYPE = {
     "ROBOT_STATE": "state.schema.json",
     "ROBOT_TELEMETRY": "telemetry.schema.json",
     "ENCOUNTER_CONFIRMED": "encounter.schema.json",
+    "INTERACTION_REPORT": "interaction-report.schema.json",
     "MISSION_COMMAND": "mission-command.schema.json",
     "COMMAND_ACK": "command-ack.schema.json",
 }

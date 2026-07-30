@@ -46,10 +46,14 @@ pose_trigger:
   min_bbox_height: 80
   # 이 프레임 수만큼 연속 감지되어야 Pose를 활성화한다.
   activate_after_frames: 3
-  # 트랙당 Pose 최대 실행 빈도(Hz). 사이 프레임은 직전 판정을 재사용한다.
+  # Pose 최대 실행 빈도(Hz). 사이 프레임은 직전 판정을 재사용한다.
   max_fps: 2.0
   # 이 시간(초) 이상 미감지되면 연속성과 캐시를 초기화한다.
   deactivate_after_seconds: 3.0
+  # true면 max_fps가 파이프라인 전체 예산이 된다(명세 431행 "약 2FPS").
+  # false면 트랙당 예산이라 사람 N명일 때 초당 2N회가 된다. 자세한 설명은
+  # configs/pipeline.jetson.yaml 참고.
+  global_budget: true
 
 pose:
   model: models/yolo26n-pose.pt

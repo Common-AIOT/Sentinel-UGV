@@ -1,6 +1,6 @@
 # AGENTS.md — Sentinel UGV 객체탐지(Detection) 서브프로젝트
 
-## 0. 프로젝트 명세와의 정합성 (2026-07-29 감사)
+## 0. 프로젝트 명세와의 정합성 (2026-07-29 감사, 2026-07-30 갱신)
 
 **규범은 저장소 루트의 `docs/`다.** 이 문서와 `docs/`가 충돌하면 `docs/`를 따른다
 (`docs/05-통신-서버-영상.md:77` "본 장과 31장이 다르면 31장을 따른다").
@@ -16,7 +16,7 @@
 | 공통 JSON 봉투 / ENCOUNTER_CONFIRMED | 31-5, 31-6 | ✅ |
 | POSSIBLE_FALLEN을 의료 판정에 쓰지 않음 | 457행 | ✅ |
 
-### ⚠️ 명세 이탈 2건 — 팀 확인 필요
+### ⚠️ 명세 이탈 3건 — 팀 확인 필요
 
 **이탈 1. 추적기: ByteTrack → BoT-SORT**
 
@@ -43,8 +43,30 @@
 - **되돌리는 법**(명세 준수 상태로 복귀): `with_reid: False`, `proximity_thresh: 0.5`.
   되돌리면 시야 이탈 후 ID 유지는 포기하고, 중복 판정은 명세 방식인
   지도 좌표 기반(1m/15초, 25.4)에 맡긴다.
+- **2026-07-30 현재 로봇 프로파일(`configs/tracker_jetson.yaml`)은 이미 명세 준수 상태다**
+  (`with_reid: False`). 이탈 상태로 남아 있는 것은 개발 PC 프로파일뿐이다(§7.1).
+  단, 이 경우 시야 이탈 후 ID 유지가 안 되므로 팀 결정 자체는 여전히 필요하다.
 
-**이 두 건은 AI 담당자 임의로 결정할 사안이 아니다.** 팀 논의로 명세를 개정하거나
+**이탈 3. Pose를 전체 화면이 아니라 person crop으로 실행한다 (2026-07-30)**
+
+명세 `docs/04-자율주행-AI.md:431`은 "YOLO26n Pose 조건부 실행 (약 2 FPS, **전체 화면 분석**)"이다.
+현재 구현은 person bbox를 crop해서 사람별로 Pose를 돌린다.
+
+- 사유: 전체 화면 Pose는 멀리 있는 작은 사람의 keypoint 품질이 떨어진다.
+  person false negative를 최우선 리스크로 두는 원칙(§23)과 충돌한다.
+- **"약 2 FPS"는 지킨다.** 2026-07-30에 `PoseScheduler`에 전역 예산을 넣어
+  사람이 몇 명이든 파이프라인 전체 Pose 실행이 `max_fps`로 묶이도록 고쳤다.
+  그 전에는 track별 예산만 있어 사람 N명일 때 초당 2N회였다(아래 참고).
+- 영향: 출력 `pose_status` 값과 DB 스키마는 동일하다. 경미.
+- **되돌리는 법**: `configs/*.yaml`의 `pose_trigger.global_budget: false`로 두면
+  예전(사람 수 비례) 동작으로 돌아간다. A/B 비교용이며 기본값으로 쓰지 않는다.
+
+> **고쳐진 성능 버그** — Jetson 실측(S15P11A301-150, 사람 4명)에서 63.5초 구간에
+> 명세 기대 약 127회 대비 **Pose 300회**가 기록됐다. track별 예산이 사람 수만큼
+> 곱해진 결과였다. 전역 예산 적용 후 개발 PC 검증에서 동일 영상 기준
+> **Pose 30회 → 10회, detections는 571로 동일**(탐지력 손실 없음)을 확인했다.
+
+**이 세 건은 AI 담당자 임의로 결정할 사안이 아니다.** 팀 논의로 명세를 개정하거나
 구현을 되돌려야 하며, 결론이 날 때까지 이 절을 지우지 않는다.
 
 ### 아직 구현하지 않은 항목 (이탈이 아님)
@@ -110,8 +132,8 @@ Optional small LLM
 ## 3. 현재 개발 단계
 
 ```text
-YOLO 기반 객체탐지 추론 파이프라인 구축 단계
-(사전학습 모델로 end-to-end 연결을 먼저 완성하고, 검증 게이트 통과 후 데이터 학습으로 진행)
+사전학습 모델 기반 end-to-end 추론 파이프라인 구현 완료 단계
+(§28.1 연결 검증 게이트 통과. 남은 것은 데이터 학습과 로봇/백엔드 실연동)
 ```
 
 **실행 순서가 2026-07-28에 변경되었다.** 기존 "데이터 → 학습 → 파이프라인" 순서에서
@@ -126,22 +148,43 @@ YOLO 기반 객체탐지 추론 파이프라인 구축 단계
 - 객체탐지 MVP 범위 정의(`../../docs/ai/detection/requirements.md` 초안 존재 — 단, 클래스 범위는 §6 확인 필요 참고)
 - Detect-first 파이프라인 설계 초안
 
-### 현재 진행 중
-- **AI-Hub 데이터셋 선정 및 확보 (최우선 차단 요인 — `data/raw`가 현재 비어 있음, §11.1·§26)**
-- 객체탐지 데이터셋 선정
-- 원본 데이터 품질 검사
-- YOLO 형식 변환
-- 학습/검증/테스트 split
-- Detect baseline 학습
-- pretrained Pose 검증
+### 완료된 구현 (2026-07-29 ~ 07-30)
 
-### 이후 단계
-- Detect → Crop → Pose 연결
-- rule-based posture classifier
-- persistence
-- JSONL 및 이벤트 이미지 저장
-- 통합 테스트
-- README 및 Jira 마감
+| 항목 | 산출물 | 근거 절 |
+|---|---|---|
+| 추론 파이프라인 전체 연결 | `src/` 10개 모듈 | §10 |
+| 명세 정렬(상태값 3종·1.5초·조건부 Pose) | `schemas.py`, `pose_estimator.py` | §0, §15 |
+| encounter 트리거를 명세(사람 약 1초 안정 관측)로 교정 | `persistence.py` | §16 |
+| 자세 흔들림 완충(PostureSmoother) | `posture_classifier.py` | §15 |
+| ID 유지(BoT-SORT + GMC + ReID) | `configs/tracker_sentinel.yaml` | §0 이탈 2 |
+| 명세 31-5 봉투 / 31-6 ENCOUNTER_CONFIRMED 페이로드 | `schemas.py` | §17 |
+| 실행별 출력 디렉터리 분리 | `main.py` | §18 |
+| 단위 테스트 31건 + 연결 검증 게이트 10건 | `tests/` | §22, §28.1 |
+| Jetson Orin Nano 8GB + USB 카메라 프로파일 | `configs/pipeline.jetson.yaml`, `configs/tracker_jetson.yaml` | §7.1 |
+| cwd 비의존 경로 해석(`_resolve_path`) | `pipeline.py` | §7.1 |
+| 문서 위치를 루트 `docs/` 기준으로 정리 | `../../docs/ai/detection/`, `04-자율주행-AI.md` 25.7 | §9 |
+
+**커밋**: `4d08b51`(구현), `629f43b`(문서 정리). 브랜치 `feat/ai/object-detection` → `develop` MR 생성 완료.
+
+### 완료된 구현 (2026-07-30, 타 담당자 작업)
+
+| 항목 | 산출물 | Jira |
+|---|---|---|
+| ROS2 토픽 구독 진입점 | `src/ros_main.py` | S15P11A301-153 |
+| person_candidates 계약 변환 | `src/candidates.py`, `tests/test_candidates.py` | S15P11A301-133 |
+| Jetson 실기기 검증 | Runbook 15장 | S15P11A301-150 |
+| mission_manager 엔드투엔드 검증 | 상태 전이 확인 | S15P11A301-155 |
+
+`person_detector_node`(임시 통합 구현)는 역할이 `ros_main.py`로 이관되고 제거되었다.
+**메인 인식 로직은 항상 `ai/detection`이다.**
+
+### 현재 진행 중 / 남은 것
+- **AI-Hub 데이터셋 선정 및 확보 (ISSUE-03/04/05 차단 요인 — `data/raw`가 비어 있음, §11.1·§26)**
+- Detect 파인튜닝 및 threshold 실측 조정 (ISSUE-05/06)
+- **성능 미달**: Jetson 실측 9.45FPS로 목표 약 15FPS에 못 미친다.
+  imgsz 축소 → TensorRT 변환 순서로 조정한다(§7.1, §35 11번).
+- **MQTT 발행 미구현** — detection은 후보까지만 만들고, MQTT는 `cloud_bridge_node`가 담당한다(§17).
+- `schemas.py`의 encounter 생성 코드가 Mission Manager 권한과 겹친다(§35 18번).
 
 ---
 
@@ -364,6 +407,113 @@ Git Bash / PowerShell에서는 `conda activate`가 초기화되어 있지 않아
 
 ---
 
+## 7.1 실행 프로파일 — 개발 PC / Jetson (2026-07-30)
+
+설정 파일이 두 벌이다. **둘을 섞지 않는다.**
+
+| 프로파일 | 설정 | 추적기 설정 | 용도 |
+|---|---|---|---|
+| 개발 PC | `configs/pipeline.yaml` | `configs/tracker_sentinel.yaml` | 노트북 웹캠 동작 확인용. ReID 켬 |
+| Jetson | `configs/pipeline.jetson.yaml` | `configs/tracker_jetson.yaml` | 로봇 탑재용. USB 카메라, ReID 끔(명세 준수) |
+
+```bash
+python -m src.main --source 0 --config configs/pipeline.jetson.yaml --output runs/jetson
+```
+
+**Jetson 프로파일에서 개발 PC와 다른 점**
+- 카메라: 1280x720 MJPG, backend `v4l2` (개발 PC는 `auto`)
+- `imgsz: 640`, Pose `imgsz: 320`, `quantize: 16`
+- `with_reid: False`, `proximity_thresh: 0.5` → **§0 이탈 2가 Jetson에서는 발생하지 않는다.**
+  ReID를 켜려면 `yolo26n-reid.onnx` 배치 + `onnxruntime` 설치가 필요하고, SLAM·Nav2와
+  자원을 나눠 쓰는 상황에서 여유가 있는지 실측 후 결정한다.
+
+**규칙**
+- 설정 파일 안의 상대 경로는 `_resolve_path()`가 `ai/detection`을 기준으로 해석한다.
+  systemd·ROS2 launch로 띄우면 cwd가 프로젝트 루트가 아니므로 이 동작에 의존한다.
+  **경로를 cwd 기준으로 되돌리지 않는다.**
+- 실행은 반드시 `python -m src.main`이다. `python src/main.py`는 상대 임포트 때문에 실패한다.
+- `--show`는 헤드리스 Jetson에서 쓰지 않는다(미검증).
+- **모델 가중치는 Git에 없다**(`.gitignore`가 `*.pt`/`*.onnx`를 막는다). Jetson에서는
+  `models/`에 직접 내려받아 배치한다. 절차는 `../../docs/04-자율주행-AI.md` 25.7.
+
+### Jetson 실기기 검증 결과 (2026-07-30, S15P11A301-150)
+
+전문은 `../../docs/04-자율주행-AI.md` 25.7 "실기기 검증 결과". 요약만 옮긴다.
+
+| 항목 | 실측값 |
+|---|---|
+| 보드 / 전원 | Jetson Orin Nano 8GB, 15W |
+| JetPack / L4T | 6.x / R36.4.7 |
+| Python / torch | 3.10.12 / 2.8.0 (`cuda.is_available()` True) |
+| ultralytics / opencv / lap | 8.4.107 / 4.11.0 / 0.5.13 |
+| **처리량 (직접 오픈)** | **9.45 FPS** — 사람 4명 상시, Pose 활성 잦음, 스트리밍 동시 구동 |
+| 처리량 (토픽 구독) | 11.15~11.31 FPS, 디코딩 실패 0 |
+| 후보 발행 | 5.02Hz, 133 스키마 위반 0건 |
+
+**성능이 목표 미달이다.** 명세 목표는 Detect 상시 약 15FPS인데 9.45FPS다.
+숨기지 말고 ISSUE-06(imgsz 축소 → TensorRT 변환)으로 다룬다(§35 11번).
+
+**실기기에서 드러난 제약 3가지**
+- 표준 JetPack에 `lap`이 없다 → `pip install lap` (aarch64 wheel 있음)
+- 가용 RAM 700MB 이하에서 `CUBLAS_STATUS_ALLOC_FAILED`. Jetson은 GPU가 시스템 RAM을 공유한다
+- 스트리밍 스택 구동 중에는 `usb_cam`이 `/dev/video0`을 점유해 `src.main`이 카메라를 못 연다
+  → 이때는 `src.ros_main`(토픽 구독)을 쓴다. 이것이 최종 통합 구조다
+
+**여전히 미검증 — 값을 지어내지 않는다(§31).**
+- `quantize: 16`(FP16)은 개발 PC에서 오히려 4배 느렸다. **Jetson에서의 효과는 아직 미측정이다.**
+- `requirements-jetson.txt`는 만들지 않았다. JetPack의 torch는 NVIDIA 배포판을 써야 하므로
+  pip 핀으로 고정할 대상이 아니다. 설치 절차는 Runbook 1장을 따른다.
+
+### 7.2 성능 최적화 절차 (ISSUE-06)
+
+**추측으로 설정을 바꾸지 않는다.** 반드시 계측 → A/B → 판정 순서를 따른다.
+
+**계측**: `PipelineStats`가 단계별 소요 시간을 낸다(`stage_ms_per_frame`, `stage_share`,
+`pose_ms_per_run`). 어떤 실행에서든 종료 시 출력되므로 병목을 바로 읽을 수 있다.
+
+**A/B**: `scripts/bench_jetson.py`가 설정 조합을 순차 실행하고 표로 비교한다.
+
+```bash
+python scripts/bench_jetson.py --source <기준영상> \
+    --config configs/pipeline.jetson.yaml --fp16 --warmup 30
+```
+
+- **반드시 고정 영상 파일로 돌린다.** 카메라는 매번 조건이 달라 A/B가 성립하지 않는다
+  (스크립트가 카메라 입력을 거부한다)
+- `--warmup`으로 모델 워밍업 프레임을 제외한 `steady_fps`를 본다. `avg_fps`로 비교하면 안 된다
+- 주요 축: `--fp16`, `--models`(TensorRT 엔진 비교), `--imgsz`, `--pose-budget`
+
+**판정 기준 — FPS만 보지 않는다.**
+
+| 조건 | 판정 |
+|---|---|
+| `detections` 1% 이상 감소 | **기각.** FPS 이득과 상쇄되지 않는다(§23) |
+| `detections` 유지 + FPS 상승 | 채택 후보 |
+
+해상도 축소(`imgsz` 640 → 512 → 416)는 명세 25.5가 허용한 범위지만
+**정확도를 깎지 않는 수단(TensorRT, FP16)을 모두 소진한 뒤에 손댄다.**
+
+**TensorRT 엔진**은 Jetson에서 직접 구워야 한다(크로스 빌드 불가, 장치·드라이버 버전 종속).
+```bash
+yolo export model=models/yolo26n.pt format=engine half=True device=0
+```
+`ObjectDetector`가 `YOLO(model_path)`를 그대로 쓰므로 **설정에서 경로만 바꾸면 된다.**
+엔진 파일은 `.gitignore`의 `*.engine`이 이미 막고 있다. 커밋하지 않는다.
+
+**개발 PC 계측 예시 (2026-07-30, 사람 약 4명, ReID 켬)**
+
+| 단계 | 프레임당 | 비중 |
+|---|---|---|
+| Detect | 296.6 ms | **81%** |
+| Pose | 15.1 ms | 18% |
+| post(판정·로깅·저장) | 0.9 ms | 0.4% |
+
+**Detect가 지배적이다.** 이 비율이 Jetson에서도 유지된다면 Pose 쪽 조정보다
+Detect의 TensorRT 변환이 압도적으로 큰 지렛대다. 다만 이 수치는 개발 PC 값이므로
+Jetson에서 같은 계측을 다시 해서 확인한다.
+
+---
+
 ## 8. 저장소 분석 절차
 
 작업을 시작하기 전 매번 다음을 순서대로 수행한다.
@@ -377,26 +527,41 @@ conda activate sentinel-yolo && python --version   # 또는 §7의 절대경로 
 ```
 
 이어서 `ai/detection` 구조를 최대 깊이 3 수준으로 분석하고, 아래 항목의 실제 존재 여부를 확인한다
-(2026-07-28 확인 결과 병기).
+(**2026-07-30 확인 결과** 병기).
 
 | 경로 | 상태 |
 |---|---|
-| `src/` | 존재(내용 없음, `.gitkeep.txt`만 존재) |
+| `src/` | 존재, 모듈 12개 구현 완료(§10) |
+| `configs/` | 존재 — `pipeline.yaml`, `pipeline.jetson.yaml`, `tracker_sentinel.yaml`, `tracker_jetson.yaml`(§7.1) |
+| `tests/` | 존재 — `test_posture_persistence.py`(31건), `test_candidates.py`. `__init__.py` 없음 |
+| `models/` | 존재 — `yolo26n.pt`, `yolo26n-pose.pt`, `yolo26n-reid.onnx`. **Git 추적 안 됨**(§7.1) |
+| `runs/` | 로컬 산출물. `.gitignore`에 `ai/detection/runs/` 등록됨 |
 | `scripts/` | **미존재** — 필요 시 새로 생성 |
-| `configs/` | **미존재** — 필요 시 새로 생성 |
 | `docs/` | 존재(`.gitkeep.txt`만 유지). detection 문서 원본은 루트 `../../docs/ai/detection/`로 이동 |
-| `data/` | 존재 (`raw/`, `processed/`, `pose_test/`만 존재, 각 `.gitkeep.txt`) |
-| `models/` | 존재(내용 없음) |
-| `runs/` | 존재(내용 없음) |
-| `notebooks/` | 존재(내용 없음) — 예시 구조의 `tests/` 대신 존재하는 디렉터리, 용도 확인 필요 |
-| `tests/` | **미존재** |
-| `README.md`(detection 전용) | **미존재** (상위 `ai/README.md`만 존재) |
-| `requirements.txt` | 존재, §7 내용과 일치 |
-| `pyproject.toml` | **미존재** |
-| `setup.cfg` | **미존재** |
+| `data/` | 존재 (`raw/`, `processed/`, `pose_test/`만 존재, 각 `.gitkeep.txt`). **`raw/`는 여전히 비어 있음** |
+| `notebooks/` | 존재(내용 없음) — 용도 확인 필요 |
+| `README.md`(detection 전용) | **미존재** (상위 `ai/README.md`, `../../docs/ai/README.md`만 존재) |
+| `requirements.txt` | 존재. **`lap`·`onnxruntime` 미반영**(§35 9번) |
+| `requirements-jetson.txt` | **미존재 — 의도적**(JetPack 버전 미확인, §7.1) |
+| `pyproject.toml` / `setup.cfg` | **미존재** |
 | `.gitignore`(detection 전용) | **미존재** (Git 루트 `.gitignore`가 적용됨) |
-| `AGENTS.md` | 이 문서로 신규 생성 |
+| `AGENTS.md` | 이 문서 |
 | `CLAUDE.md` | **미존재** |
+
+**문서 위치 규칙(2026-07-29 변경).** detection 문서의 원본은 저장소 루트 `docs/` 아래에 둔다.
+
+| 문서 | 위치 |
+|---|---|
+| Jetson 실행·검증·성능·오류 대처 | `../../docs/04-자율주행-AI.md` 25.7 [구현 기준] — **단일 출처** |
+| 객체탐지 요구사항 초안 | `../../docs/ai/detection/requirements.md` |
+| 에이전트 운영 규칙 | 이 문서 (`ai/detection/AGENTS.md`) |
+
+`ai/detection/docs/`에 새 문서를 만들지 않는다. 코드 옆에 두면 루트 `docs/`와 이중화된다.
+
+**2026-07-30: `docs/ai/detection/jetson_runbook.md`를 삭제하고 내용을 04 25.7로 통합했다.**
+같은 절차가 두 문서에 있어 한쪽만 갱신되는 문제가 실제로 발생했기 때문이다
+(런북 12장은 갱신됐는데 04의 성능 조정 순서는 옛 내용으로 남아 있었다).
+**Jetson 관련 내용은 04 25.7에만 쓴다.**
 
 기존 `AGENTS.md`는 없었으므로 병합 없이 신규 생성했다. 이후 이 문서를 수정할 때는 삭제 후 재작성하지 말고
 기존 유효 규칙을 확인한 뒤 병합한다.
@@ -414,12 +579,13 @@ ai/detection/
 │   ├── samples/       # 시각화 샘플 (미존재, 필요 시 생성)
 │   └── pose_test/     # Pose 테스트 영상 (존재)
 ├── docs/               # 로컬 placeholder만 유지. 문서는 루트 ../../docs/ai/detection/ 기준
-├── models/            # 모델 가중치 (Git 추가 금지)
+├── models/            # 모델 가중치 (Git 추가 금지, .gitignore가 *.pt/*.onnx 차단)
 ├── notebooks/          # 탐색용 노트북(용도 확인 필요)
-├── runs/               # 학습/추론 산출물 (Git 추가 금지)
-├── scripts/            # CLI 스크립트 (신규 생성 필요)
-├── configs/            # dataset.yaml 등 설정 (신규 생성 필요)
-├── src/                # 파이프라인 모듈 (현재 비어 있음)
+├── runs/               # 추론 산출물 (Git 추가 금지, 실행별 타임스탬프 하위 폴더)
+├── scripts/            # CLI 스크립트 (미존재, 필요 시 생성)
+├── configs/            # 실행 프로파일 4종 (§7.1)
+├── src/                # 파이프라인 모듈 10개 (§10)
+├── tests/              # test_posture_persistence.py (31건)
 ├── requirements.txt
 └── AGENTS.md
 ```
@@ -431,8 +597,7 @@ ai/detection/
 
 ## 10. 모듈 아키텍처
 
-실제 저장소에는 아직 아래 모듈이 존재하지 않는다(`src/`는 비어 있음). ISSUE-07 착수 시점부터
-필요한 시점에 맞춰 생성한다. 이미 존재하는 유사 파일이 생기면 새로 만들지 말고 확장한다.
+**아래 모듈은 2026-07-29 기준 모두 구현 완료 상태다.** 새로 만들지 말고 기존 파일을 확장한다.
 
 ```text
 src/schemas.py            # 데이터 구조 + 명세 31-5 봉투 생성
@@ -444,11 +609,23 @@ src/pipeline.py           # 전체 연결
 src/logger.py             # JSONL
 src/storage.py            # 이벤트 이미지
 src/visualize.py          # overlay
-src/main.py               # CLI entry point
+src/main.py               # CLI entry point (카메라 직접 오픈, 단독 검증용)
+src/ros_main.py           # ROS2 진입점 (토픽 구독, 로봇 통합용) — 2026-07-30 추가
+src/candidates.py         # person_candidates 계약 변환 — 2026-07-30 추가
 ```
 
-**2026-07-29 기준 위 파일은 모두 구현 완료 상태다.** 새로 만들지 말고 기존 파일을 확장한다(§10).
-임계값은 `configs/pipeline.yaml`에서 관리하며 코드에 하드코딩하지 않는다.
+**진입점이 두 개다.** 둘 다 같은 `InferencePipeline`을 호출하며, 추론 로직은 하나뿐이다.
+
+| 진입점 | 입력 | 용도 |
+|---|---|---|
+| `src.main` | `cv2.VideoCapture`로 카메라·영상 직접 오픈 | 단독 검증 |
+| `src.ros_main` | `/camera/image_raw/compressed` 구독 | **로봇 통합(최종 구조)** |
+
+로봇에서는 `usb_cam` 노드가 `/dev/video0`을 단독 점유하므로(명세 9.6 카메라 단일 오픈 원칙)
+`src.main`으로 카메라를 열 수 없다. 실기기에서 실제로 재현되었다(runbook 13장).
+
+임계값은 `configs/pipeline.yaml`(개발 PC) / `configs/pipeline.jetson.yaml`(로봇)에서 관리하며
+코드에 하드코딩하지 않는다(§7.1).
 
 ### object_detector.py
 - Ultralytics Detect 모델 로딩 — **모델 경로를 인자로 받는다(하드코딩 금지).**
@@ -474,10 +651,42 @@ src/main.py               # CLI entry point
 - 조건부 Pose 실행 판단(명세 25.6): 3프레임 연속 감지 → 활성, 약 2FPS, 3초 미감지 → 중단
 - 실행하지 않는 프레임에서는 직전 판정을 재사용해 자세 깜빡임을 막는다
 - 매 프레임 Pose를 돌리면 Detect FPS를 유지할 수 없다(실측: 적용 후 5.8 → 11.5 FPS)
+- **예산이 두 겹이다(2026-07-30).** track별 간격 + **전역 간격**.
+  명세의 "약 2FPS"는 파이프라인 전체 예산이므로(§0 이탈 3), 사람이 몇 명이든
+  총 실행 횟수가 `max_fps`로 묶인다. 자격을 갖춘 track들에 **라운드로빈**으로 배분해
+  특정 한 명만 갱신되고 나머지가 굶는 일을 막는다
+- **파이프라인은 `select(detections, t)`를 쓴다.** 프레임 전체를 봐야 전역 예산을
+  나눌 수 있기 때문이다. `should_run(det, t)`는 단일 탐지용으로 남겨두며
+  전역 예산을 선착순으로 적용한다
 
-### inference_pipeline.py
-- Detect → Filter → Crop → Pose → Rule → Persistence → Log → Save 연결
+### persistence.py
+- `PersistenceTracker` — trackId별 연속 관측 시간과 `POSSIBLE_FALLEN` 지속 시간 누적
+- encounter 확정(사람 1.5초 안정 관측)과 쿨다운 판정
+- `memory.forget_seconds` 안이면 ID가 바뀌어도 시간·위치로 상태를 승계한다(§16)
+
+### pipeline.py
+- Detect → Filter → Crop → Pose → Rule → Smoother → Persistence → Log → Save 연결
 - 각 모듈을 호출하되 모델 구현을 중복 포함하지 않음
+- `_sync_track_buffer()` — 실측 FPS로 매 프레임 `track_buffer`를 재계산해
+  기억 시간을 프레임이 아닌 **초** 기준으로 고정한다(§16)
+- `_resolve_path()` — 설정의 상대 경로를 `ai/detection` 기준으로 해석한다(§7.1)
+- `_open_camera()` — backend 선택(`auto`/`v4l2`/`gstreamer` 등). Jetson USB 카메라 대응
+
+### visualize.py
+- overlay 렌더링. **원본 프레임을 수정하지 않고 항상 복사본에 그린다.**
+
+### ros_main.py (2026-07-30 추가, S15P11A301-153)
+- `/camera/image_raw/compressed` 구독 → `imdecode` → `InferencePipeline.process_frame()`
+- QoS: `BEST_EFFORT` / `KEEP_LAST` / `depth=1` — 추론이 프레임보다 느리면 항상 최신 프레임만 처리한다
+- 확정 후보를 `/perception/person_candidates`로 5Hz 발행
+- **encounter를 발행하지 않는다.** encounter 발급 권한은 Mission Manager 단독이다(명세 26.1)
+- 추론이 멈추면 오래된 후보를 재발행하지 않고 빈 배열로 바꾼다(`stale_seconds`)
+
+### candidates.py (2026-07-30 추가)
+- `PersonObservation` → `common/schemas/person-candidates.schema.json` 계약 변환
+- `trackId`가 없는 탐지는 후보에서 제외한다(스키마가 int ≥ 0을 요구)
+- 후보가 없어도 **빈 배열을 계속 발행**한다. mission_manager가 "사람 없음"과 "노드 죽음"을 구별해야 한다
+- `position`(지도 좌표)은 `human_localizer` 연동 전까지 `None`
 
 ### logger.py
 - JSONL 이벤트/프레임 로그 작성
@@ -826,6 +1035,19 @@ POSE_UNKNOWN      사람은 있지만 관절 정보가 부족함
 출력은 실행마다 타임스탬프 하위 폴더에 쓴다(`runs/<name>/20260729_121929/`).
 이미지는 누적되는데 JSONL만 덮어써지면 증빙이 어긋나기 때문이다.
 
+> ### ⚠️ encounter 발급 권한 (2026-07-30 확인)
+>
+> **encounter 발급은 Mission Manager 단독 권한이다(명세 26.1).** detection이 만드는 것은
+> `/perception/person_candidates`의 **후보**까지이며, `encounterId`를 생성하지 않는다.
+> `src/candidates.py`와 `src/ros_main.py`는 이 원칙을 지킨다.
+>
+> 반면 `schemas.py`의 `build_encounter_data()`는 `events.jsonl`에 `ENCOUNTER_CONFIRMED`를
+> 계속 기록한다. 이는 **로컬 검증 로그이지 관제로 나가는 메시지가 아니다** — MQTT 발행은
+> `cloud_bridge_node`가 담당하고 detection은 발행하지 않는다.
+>
+> 다만 같은 이름의 메시지 타입이 두 곳에서 생성되는 모양이라 오해 소지가 있다.
+> 아래 절의 스키마를 **로봇 통합 경로의 계약으로 착각하지 않는다.** 정리 여부는 §35 18번.
+
 ### events.jsonl — 명세 31-5 봉투 + 31-6 ENCOUNTER_CONFIRMED
 
 ```json
@@ -921,8 +1143,19 @@ entry point 역할을 한다.
 
 ### 기본 검증
 ```bash
-python -m compileall src scripts
+python -m compileall src
+python tests/test_posture_persistence.py
+python tests/test_candidates.py
 ```
+
+`tests/`에 `__init__.py`가 없어 `python -m unittest tests.xxx`는 실패한다.
+**파일을 직접 실행하거나 `python -m pytest tests -q`를 쓴다**(pytest는 선택 의존성이며
+개발 PC 환경에 설치되어 있지 않을 수 있다). 각 테스트 파일은 pytest 없이도 단독 실행된다.
+
+`ros_main.py`는 `rclpy` 임포트가 필요해 개발 PC에서 실행·컴파일 검증만 가능하고
+동작 검증은 Jetson에서 한다. 계약 로직은 ROS 의존이 없는 `candidates.py`로 분리되어
+`test_candidates.py`가 개발 PC에서 검증한다.
+
 모든 CLI는 `--help`로 확인한다.
 
 ### 데이터 검증
@@ -1033,6 +1266,24 @@ ISSUE-01, 02 (문서)
 
 ISSUE-03/04/05는 AI-Hub 데이터에 의존하므로 확보 여부에 따라 `BLOCKED` 처리될 수 있다.
 나머지 Issue는 데이터 없이 완료 가능하다.
+
+### Jira 실제 진행 상태 (2026-07-30 기준)
+
+| Jira | 대응 | 상태 |
+|---|---|---|
+| S15P11A301-93 | ISSUE-01 요구사항·완료 기준 정의 | 완료 |
+| S15P11A301-94 | ISSUE-02 데이터셋 선정 | 진행 중 (AI-Hub 대기) |
+| S15P11A301-95 | ISSUE-03 데이터 확보·품질 검사 | 진행 중 (AI-Hub 대기) |
+| S15P11A301-96 | ISSUE-04 전처리·YOLO 변환 | 진행 중 (AI-Hub 대기) |
+| S15P11A301-97 | 베이스라인 모델 구축 | 완료 (사전학습 기준) |
+| S15P11A301-98 | ISSUE-05/06 학습·threshold | 진행 중 — **학습·정량 성능 검증까지 해야 완료로 본다** |
+| S15P11A301-99 | ISSUE-07 추론 모듈 구현 | 완료 |
+| S15P11A301-100 | ISSUE-08 로그 구조 설계 | 완료 |
+| S15P11A301-101 | ISSUE-09 결과 저장 파이프라인 | 완료 |
+| S15P11A301-102 | ISSUE-10 통합 테스트·문서화 | 완료 |
+
+**주의: 완료 처리한 Issue는 모두 사전학습 모델 기준이다.** 파인튜닝·정량 성능(mAP 등) 검증은
+S15P11A301-98에 남아 있으며, 데이터 확보 전에는 이 항목을 완료로 바꾸지 않는다(§22 BLOCKED 규칙).
 
 ---
 
@@ -1523,7 +1774,7 @@ AI-Hub 데이터가 끝내 확보되지 않아도 아래는 반드시 충족한�
 - 이 문서(`AGENTS.md`)와 실제 저장소 구조가 어긋나면, 다음 작업 시작 시 §8 저장소 분석 절차를
   다시 수행하여 이 문서를 갱신한다. 삭제 후 재작성하지 말고 기존 유효 규칙을 병합한다.
 
-### 현재 미해결 항목 (2026-07-28 기준)
+### 현재 미해결 항목 (2026-07-30 기준)
 
 | # | 항목 | 성격 | 해결 주체 | 관련 |
 |---|---|---|---|---|
@@ -1536,11 +1787,23 @@ AI-Hub 데이터가 끝내 확보되지 않아도 아래는 반드시 충족한�
 | 4 | ~~가중치 미다운로드~~ → **해결: yolo26n.pt / yolo26n-pose.pt / yolo26n-reid.onnx 확보** | 해결됨 | — | §13, §14 |
 | 5 | `aihubshell`의 Windows 동작 여부 미확인 | 경미(대안 있음) | 사용자 | §11.1 |
 | 6 | `notebooks/` 디렉터리 용도 불명 | 경미 | 팀 | §8 |
-| 7 | **명세 이탈 2건(BoT-SORT, ReID) 미승인** | **팀 결정 필요** | 팀 | §0 |
+| 7 | **명세 이탈 2건(BoT-SORT, ReID) 미승인** | **팀 결정 필요** | 팀 | §0, §7.1 |
 | 8 | `../../docs/ai/detection/requirements.md`가 최초 초안 상태(클래스 4종) | 문서 정합 | ISSUE-01 | §6 |
 | 9 | `requirements.txt`에 `lap`·`onnxruntime` 미반영 | 재현성 | 사용자 승인 후 | §7 |
 | 10 | 자세 임계값 4개가 실측 근거 없는 임의값 | 신뢰도 | 테스트 영상 확보 후 | §15 |
-| 11 | Detect 상시 15FPS 미달 (현재 11.5, 데스크톱 GPU·4명) | 성능 | ISSUE-06 | §0 |
+| 11 | **Detect 상시 15FPS 미달** — Jetson 실측 9.45FPS(사람 4명, 스트리밍 동시 구동). 계측·벤치 도구는 준비 완료, **Jetson 실측 대기** | **성능 미달 확정** | ISSUE-06 | §7.2 |
+| 12 | ~~Linux/aarch64 실행 이력 없음~~ → **2026-07-30 해결: Jetson 실기기 검증 완료** | 해결됨 | — | §7.1 |
+| 13 | ~~JetPack 버전 미확인~~ → **해결: JetPack 6.x / L4T R36.4.7, torch 2.8.0 확인** | 해결됨 | — | §7.1 |
+| 14 | ~~ROS2 노드 래핑 미착수~~ → **해결: `src/ros_main.py`(S15P11A301-153)** | 해결됨 | — | §10 |
+| 15 | `ai/detection/README.md` 부재 — 외부 개발자 진입점이 AGENTS.md뿐 | 인수인계 | 에이전트 | §8 |
+| 16 | 모델 가중치가 Git에 없어 clone만으로는 실행 불가 | 배포 | Runbook 3장으로 완화됨 | §7.1 |
+| 17 | `dataset_selection.md` 미작성 — 조사 내용이 §26에만 있다 | 문서 정합 | ISSUE-02 | §11.1 |
+| 18 | `schemas.py`의 `build_encounter_data()`가 여전히 encounter를 만든다. **encounter 발급 권한은 Mission Manager 단독**(명세 26.1) | **중복 소지** | 에이전트 + Mission 담당 | §10, §17 |
+| 19 | `src.main` 경로는 로봇에서 카메라를 열 수 없다(`usb_cam` 점유). 단독 검증 전용임을 코드가 강제하지 않는다 | 오용 위험 | 에이전트 | §10 |
+| 20 | Jetson 가용 RAM 700MB 이하에서 `CUBLAS_STATUS_ALLOC_FAILED` 재현 | 운영 제약 | Jetson 담당 | Runbook 13장 |
+| 21 | **기준 벤치 영상이 저장소에 없다.** Jetson 검증에 쓴 "보행자 4명 600프레임" 영상 소재 불명 | **A/B 재현 차단** | Jetson 담당 | §7.2 |
+| 22 | 전원 모드 15W 상향 여부 미결. SLAM·Nav2·스트리밍 공유 자원이라 AI 단독 결정 불가 | 팀 결정 | 팀 | §7.2 |
+| 23 | 파인튜닝(ISSUE-05)과 TensorRT 변환(ISSUE-06)의 순서 미정. 가중치가 바뀌면 엔진을 다시 구워야 한다 | 재작업 방지 | 사용자 | §26 |
 
 **1번과 2번은 ISSUE-03·04·05만 막는다.** §26의 순서 변경에 따라 ISSUE-01·02·07·08·09·10은
 데이터 없이 진행 가능하며, 이것이 이번 스프린트의 Must 산출물이다(§30).

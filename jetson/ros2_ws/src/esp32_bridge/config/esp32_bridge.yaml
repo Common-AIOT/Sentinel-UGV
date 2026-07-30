@@ -1,0 +1,22 @@
+# esp32_bridge 기본 설정 (S15P11A301-84)
+#
+# udev 별칭(/dev/sentinel_mcu_motor, /dev/sentinel_mcu_sensor)이 아직 이
+# 저장소에 없다(계획 §8, 열린 리스크 1·4·5). 별칭을 만들기 전까지는 launch
+# 인자(motor_port/sensor_port)로 실제 /dev/ttyUSB* 경로를 넘긴다.
+#
+# CP2102 클론 보드는 idVendor/idProduct/serial이 겹칠 수 있어 udev 별칭만으로는
+# 어느 포트가 모터/센서인지 보장할 수 없다 - HELLO_ACK.board_role로 실제
+# 역할을 확인하는 쪽(esp32_hello_check, 노드 로그의 핸드셰이크 오류)을 우선
+# 신뢰할 것.
+esp32_motor_bridge:
+  ros__parameters:
+    port: /dev/sentinel_mcu_motor
+    baudrate: 921600
+    handshake_retry_period_s: 1.0
+
+esp32_sensor_bridge:
+  ros__parameters:
+    port: /dev/sentinel_mcu_sensor
+    baudrate: 921600
+    # 300ms 통신 워치독의 절반 이하 - §34-7 gap-fill(계획 §8, 열린 리스크 2).
+    keepalive_period_s: 0.15

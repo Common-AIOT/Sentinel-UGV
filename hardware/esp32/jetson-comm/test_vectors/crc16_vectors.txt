@@ -1,0 +1,8 @@
+# CRC-16/CCITT-FALSE 검증 벡터 (poly 0x1021, init 0xFFFF, 반전 없음)
+# 형식: input_hex,expected_crc16_hex (input_hex가 비어 있으면 길이 0 입력)
+#
+# 표준 check value: ASCII "123456789" -> 0x29B1
+# (다른 CRC-16 알고리즘과 헷갈리지 않도록 구현 후 반드시 이 값부터 확인할 것)
+
+,FFFF
+313233343536373839,29B1

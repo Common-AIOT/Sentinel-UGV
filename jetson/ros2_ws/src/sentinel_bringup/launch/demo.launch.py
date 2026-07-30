@@ -19,7 +19,8 @@ CPU·메모리 경합으로 NVMM 버퍼 할당이 실패하는 것을 실측했�
      8s  mission    토픽 구독뿐이라 순서 무관하지만 경합을 피해 늦춘다
     10s  bridge     MQTT 접속. 네트워크가 늦어도 자체 재시도가 있다
     12s  voice      encounter 대기. 모델은 실제 세션 시작 때 지연 로딩한다
-    14s  detector   ai/detection wrapper. YOLO 모델 로딩이 가장 무겁다. 마지막
+    14s  detector   ai/detection wrapper. YOLO 모델 로딩이 가장 무겁다
+    16s  viz        Foxglove 시각화. 기본 꺼짐(enable_viz). 토픽이 다 생긴 뒤
 
 각 구성 요소는 `enable_*` 인자로 끌 수 있다. 개발 중 일부만 띄울 때 쓴다.
 
@@ -122,6 +123,12 @@ def generate_launch_description():
         DeclareLaunchArgument('enable_bridge', default_value='true'),
         DeclareLaunchArgument('enable_voice', default_value='true'),
         DeclareLaunchArgument('enable_detector', default_value='true'),
+        # 개발용 실시간 시각화 (S15P11A301-176). 기본 꺼짐 — 데모 구성이 아니라
+        # 개발 도구다. WebSocket 서버가 토픽을 직렬화하느라 CPU를 쓰고, Orin
+        # Nano에서 x264enc·YOLO가 이미 코어를 다 쓴다(S15P11A301-131에서 오디오
+        # 손실로 겪었다). 필요할 때만 켠다:
+        #   ./scripts/demo_up.sh enable_viz:=true
+        DeclareLaunchArgument('enable_viz', default_value='false'),
         # 데모 기본은 TLS다. 관제 웹(HTTPS)이 평문 WHEP를 혼합 콘텐츠로
         # 차단한다(32-4, S15P11A301-145). 인증서가 없는 개발 기기에서만 끈다.
         DeclareLaunchArgument('webrtc_encryption', default_value='true'),
@@ -163,4 +170,8 @@ def generate_launch_description():
         # S15P11A301-158이 이 wrapper로 전체 체인(탐지→임무→녹화)을 검증했다.
         _include('sentinel_bringup', 'detection.launch.py',
                  'enable_detector', 14.0),
+        # 시각화는 가장 마지막이다. 다른 노드가 다 떠서 토픽이 존재해야 Foxglove
+        # 첫 연결에 목록이 채워진다. 먼저 뜨면 빈 목록을 보고 새로 고쳐야 한다.
+        _include('sentinel_bringup', 'viz.launch.py',
+                 'enable_viz', 16.0),
     ])

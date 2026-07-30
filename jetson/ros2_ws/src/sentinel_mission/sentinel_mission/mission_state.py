@@ -238,6 +238,11 @@ class MissionStateMachine:
         self.mission_id: str | None = None
         # 26.4 명령 멱등성. 이미 처리한 commandId는 다시 실행하지 않는다.
         self._handled_commands: set[str] = set()
+        # REPORT_COMMITTED가 REPORTING 진입 전에 도착한 encounterId
+        # (S15P11A301-160). recorder와 이 머신의 마감 판정 기준이 독립이라
+        # recorder가 먼저 끝나는 경합이 있고, 그 신호는 일회성이라 버리면
+        # 다시 오지 않는다 — REPORTING에 영구 고착된다. 실기기에서 관측했다.
+        self._early_report_committed: set[str] = set()
 
     # ------------------------------------------------------------------
     # 조회
@@ -300,6 +305,14 @@ class MissionStateMachine:
             ignored_reason=reason,
             reason_code=code,
         )
+
+    def _clear_encounter(self) -> None:
+        """현재 encounter와 그 encounter에 종속된 일회성 표시를 정리한다."""
+        if self.encounter is not None:
+            self._early_report_committed.discard(
+                self.encounter.encounter_id
+            )
+        self.encounter = None
 
     # ------------------------------------------------------------------
     # 사람 후보 (25.2·25.4)
@@ -575,7 +588,7 @@ class MissionStateMachine:
         """
         if self.state is MissionState.COMPLETED:
             return self._ignore('이미 COMPLETED 상태다')
-        self.encounter = None
+        self._clear_encounter()
         self.mission_id = None
         return self._to(MissionState.COMPLETED, f'MISSION_COMPLETED {detail}'.strip())
 
@@ -623,13 +636,32 @@ class MissionStateMachine:
         )
 
     def _report_committed(self, now: datetime, detail: str) -> Transition:
+        """recorder의 보고 저장 완료. REPORTING이면 즉시 탐사로 복귀한다.
+
+        **이르게 도착하면 버리지 않고 기억한다** (S15P11A301-160). recorder와 이
+        머신의 마감 판정 기준이 독립이라(각자의 타임아웃·소실 판정) recorder가
+        먼저 마감하고 이 머신은 아직 INTERACTING인 경합이 있다. 신호는 일회성이고
+        recorder는 마감한 encounter를 다시 다루지 않으므로(S15P11A301-142),
+        여기서 버리면 REPORTING 진입 후 기다릴 것이 영영 오지 않는다. 실기기에서
+        66초 만에 고착으로 관측했다.
+        """
         if self.state is not MissionState.REPORTING:
+            early_states = {
+                MissionState.INTERACTING,
+                MissionState.POST_RECORDING,
+            }
+            if self.encounter is not None and self.state in early_states:
+                self._early_report_committed.add(self.encounter.encounter_id)
+                return self._ignore(
+                    f'{self.state.value}에 이르게 도착했다. 기억해 두고 '
+                    'REPORTING 진입 시 적용한다 (S15P11A301-160)'
+                )
             return self._ignore(
                 f'REPORT_COMMITTED는 REPORTING에서만 유효하다'
                 f'(현재 {self.state.value})'
             )
         # 26.3: REPORTING → EXPLORING: report committed
-        self.encounter = None
+        self._clear_encounter()
         return self._to(MissionState.EXPLORING, 'report committed')
 
     def _resume_requested(self, now: datetime, detail: str) -> Transition:
@@ -644,7 +676,7 @@ class MissionStateMachine:
                 'PAUSED는 자동 재개하지 않는다(30.5). 운영자 재개가 필요하다'
             )
         if self.state is MissionState.REPORTING:
-            self.encounter = None
+            self._clear_encounter()
             return self._to(MissionState.EXPLORING, 'RESUME_REQUESTED')
         return self._ignore(
             f'RESUME_REQUESTED는 REPORTING에서만 유효하다(현재 {self.state.value})'
@@ -664,7 +696,7 @@ class MissionStateMachine:
         # 26.3: PAUSED → EXPLORING: explicit resume.
         # 진행 중이던 encounter는 버린다. 일시정지 사이에 상황이 바뀌었을 수 있고,
         # 옛 encounter로 상호작용을 이어가면 잘못된 보고가 된다.
-        self.encounter = None
+        self._clear_encounter()
         return self._to(MissionState.EXPLORING, 'RESUME_APPROVED')
 
     # ------------------------------------------------------------------
@@ -684,6 +716,15 @@ class MissionStateMachine:
             if started is not None:
                 elapsed = (now - started).total_seconds()
                 if elapsed >= self.post_recording_seconds:
+                    # 보고가 이미 저장됐으면 REPORTING에서 기다릴 것이 없다.
+                    # 기다리면 그 신호는 다시 오지 않아 영구 고착이다
+                    # (S15P11A301-160).
+                    if encounter.encounter_id in self._early_report_committed:
+                        self._clear_encounter()
+                        return self._to(
+                            MissionState.EXPLORING,
+                            'report committed (REPORTING 진입 전 수신)',
+                        )
                     # 26.3: POST_RECORDING → REPORTING: 3s captured
                     return self._to(MissionState.REPORTING, '3s captured')
             return self._ignore('사후 녹화 진행 중')

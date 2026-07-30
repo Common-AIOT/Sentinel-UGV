@@ -810,3 +810,118 @@ def test_reason_codes_fit_the_contract_length_limit():
     ]
     for code in codes:
         assert 0 < len(code) <= limit, code
+
+
+# ----------------------------------------------------------------------
+# REPORT_COMMITTED 선도착 (S15P11A301-160)
+# ----------------------------------------------------------------------
+
+
+def test_early_report_committed_skips_reporting():
+    """REPORTING 진입 전에 도착한 REPORT_COMMITTED를 잃으면 안 된다.
+
+    실기기 타임라인 재현이다. recorder가 자기 기준으로 먼저 마감해
+    REPORT_COMMITTED를 보냈는데 이 머신은 아직 INTERACTING이었다. 신호는
+    일회성이고 recorder는 마감한 encounter를 다시 다루지 않으므로
+    (S15P11A301-142), 버리면 REPORTING에서 기다릴 것이 영영 오지 않는다 —
+    임무가 영구 고착되고 관제 STOP 외에는 복구 수단이 없다.
+    """
+    machine = _interacting()
+
+    # recorder가 먼저 마감했다. 이 머신은 아직 INTERACTING이다.
+    early = machine.handle_signal(
+        Signal.REPORT_COMMITTED, now=at(40), encounter_id=EID
+    )
+    assert not early.changed, '이르게 도착한 신호가 상태를 바꾸면 안 된다'
+    assert machine.state is MissionState.INTERACTING
+
+    # 그 뒤에야 사람 소실을 판정한다. 빈 후보가 유예 시간을 넘겨 이어지면
+    # observe_candidates가 직접 POST_RECORDING으로 보낸다.
+    machine.observe_candidates(now=at(50), track_ids=set(), confidence=None)
+    machine.observe_candidates(now=at(54), track_ids=set(), confidence=None)
+    assert machine.state is MissionState.POST_RECORDING
+
+    # 3초 뒤: REPORTING에 들어가 기다리는 대신 바로 탐사로 복귀해야 한다.
+    result = machine.tick(at(58))
+    assert result.changed
+    assert machine.state is MissionState.EXPLORING, (
+        'REPORTING에서 기다리면 그 신호는 다시 오지 않는다'
+    )
+    assert machine.encounter is None
+
+
+def test_early_report_committed_during_post_recording_skips_reporting():
+    """POST_RECORDING 중 선도착해도 같은 경합으로 처리한다."""
+    machine = _interacting()
+    machine.observe_candidates(now=at(50), track_ids=set(), confidence=None)
+    machine.observe_candidates(now=at(54), track_ids=set(), confidence=None)
+    assert machine.state is MissionState.POST_RECORDING
+
+    early = machine.handle_signal(
+        Signal.REPORT_COMMITTED, now=at(55), encounter_id=EID
+    )
+    assert not early.changed
+
+    result = machine.tick(at(58))
+    assert result.changed
+    assert machine.state is MissionState.EXPLORING
+    assert machine.encounter is None
+
+
+def test_normal_order_still_waits_in_reporting():
+    """정상 순서(REPORTING 진입 후 신호 도착)는 그대로여야 한다."""
+    machine = _interacting()
+    machine.observe_candidates(now=at(50), track_ids=set(), confidence=None)
+    machine.observe_candidates(now=at(54), track_ids=set(), confidence=None)
+    assert machine.state is MissionState.POST_RECORDING
+    machine.tick(at(58))
+    assert machine.state is MissionState.REPORTING, '선도착이 없으면 기다린다'
+
+    result = machine.handle_signal(
+        Signal.REPORT_COMMITTED, now=at(60), encounter_id=EID
+    )
+    assert result.changed
+    assert machine.state is MissionState.EXPLORING
+
+
+def test_discarded_encounter_does_not_leave_an_early_commit_marker():
+    """수동 재개로 버린 encounter의 표시가 다음 이벤트로 새면 안 된다."""
+    machine = _interacting()
+    machine.handle_signal(
+        Signal.REPORT_COMMITTED, now=at(40), encounter_id=EID
+    )
+    machine.handle_signal(Signal.PAUSE_REQUESTED, now=at(41))
+    machine.handle_signal(Signal.RESUME_APPROVED, now=at(42))
+    assert machine.state is MissionState.EXPLORING
+    assert machine.encounter is None
+
+    # UUID 재사용은 정상 운영에서는 없지만, 같은 ID를 강제로 재사용하면 표시의
+    # 수명주기가 encounter에 묶였는지 외부 동작으로 확인할 수 있다.
+    confirm(machine, seconds=50)
+    machine.handle_signal(Signal.SAFE_POSE_REACHED, now=at(51))
+    machine.handle_signal(Signal.DIALOGUE_ENDED, now=at(52))
+    result = machine.tick(at(56))
+
+    assert result.changed
+    assert machine.state is MissionState.REPORTING, (
+        '폐기된 encounter의 선도착 표시가 다음 이벤트로 유출됐다'
+    )
+
+
+def test_early_signal_for_a_different_encounter_is_not_remembered():
+    """다른 encounter의 지연된 신호가 새 이벤트의 REPORTING을 건너뛰게 하면
+    안 된다. encounterId 불일치는 기존 가드가 걸러낸다."""
+    machine = _interacting()
+    stale = machine.handle_signal(
+        Signal.REPORT_COMMITTED, now=at(40), encounter_id=OTHER
+    )
+    assert not stale.changed
+    assert stale.ignored_reason, '불일치 사유가 남아야 한다'
+
+    machine.observe_candidates(now=at(50), track_ids=set(), confidence=None)
+    machine.observe_candidates(now=at(54), track_ids=set(), confidence=None)
+    result = machine.tick(at(58))
+    assert machine.state is MissionState.REPORTING, (
+        '남의 encounter 신호로 REPORTING을 건너뛰면 보고 완료 전에 탐사를 재개한다'
+    )
+    assert result.changed

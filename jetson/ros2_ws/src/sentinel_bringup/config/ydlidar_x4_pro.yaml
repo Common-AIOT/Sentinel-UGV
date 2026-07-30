@@ -1,6 +1,22 @@
 ydlidar_ros2_driver_node:
   ros__parameters:
-    port: /dev/ttyUSB0
+    # udev 심링크를 쓴다 (S15P11A301-173). 세 단계를 거쳐 이렇게 정했다.
+    #
+    # 1. 고정 번호(/dev/ttyUSB0)는 케이블 순단 한 번에 깨진다. 재열거로 장치가
+    #    밀리면 재시작해도 없는 장치를 연다 — 실측으로 겪었다.
+    # 2. by-id도 부족하다. ESP32 보드 두 개가 CH340(1a86:7523)이고 이 칩은
+    #    시리얼 번호가 없어 by-id 이름이 서로 충돌한다.
+    # 3. by-path(물리 포트)는 동작하지만 "라이다를 특정 포트에만 꽂아야 한다"는
+    #    운영 제약이 생긴다. 데모 현장에서 케이블을 다시 꽂을 때 포트를 틀리면
+    #    같은 장애가 재발한다.
+    #
+    # 라이다 어댑터는 CP2102(10c4:ea60, serial 0001)로 ESP32와 칩이 다르고
+    # 시리얼도 있어 유일하게 특정된다. udev 심링크는 어느 포트에 꽂아도 같은
+    # 이름이므로 운영 제약이 없다.
+    #
+    # 규칙 설치가 선행이다: scripts/udev/99-sentinel-lidar.rules 참고.
+    # 설치 전에는 이 경로가 없어 라이다가 뜨지 않는다.
+    port: /dev/sentinel-lidar
     frame_id: lidar_link
     baudrate: 128000
     lidar_type: 1

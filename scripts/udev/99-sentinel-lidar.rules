@@ -1,0 +1,18 @@
+# YDLIDAR X4 PRO에 고정 이름을 준다 (S15P11A301-173)
+#
+# 설치 (기기당 한 번, sudo):
+#   sudo cp scripts/udev/99-sentinel-lidar.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+#   ls -la /dev/sentinel-lidar     # 심링크 확인
+#
+# 왜 필요한가. 젯슨에 시리얼 장치가 여러 개 붙는다 — 라이다와 ESP32 보드들이다.
+# /dev/ttyUSB* 번호는 열거 순서에 따라 매번 달라지므로 설정에 박을 수 없다.
+# 케이블 순단 한 번으로 번호가 밀리면 재시작해도 없는 장치를 연다(실측).
+#
+# by-id도 부족했다. ESP32 보드 두 개가 CH340(1a86:7523)이고 이 칩은 시리얼
+# 번호가 없어 by-id 이름이 서로 충돌한다. 라이다 어댑터는 CP2102(10c4:ea60)로
+# 칩이 다르고 시리얼도 있어서, 그 세 값을 함께 보면 유일하게 특정된다.
+#
+# by-path(물리 포트)는 동작하지만 "라이다를 특정 USB 포트에만 꽂아야 한다"는
+# 운영 제약이 생긴다. udev 심링크는 어느 포트에 꽂아도 같은 이름이다.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", ATTRS{serial}=="0001", SYMLINK+="sentinel-lidar", MODE="0660", GROUP="dialout"

@@ -5,6 +5,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
 
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
@@ -68,14 +69,23 @@ public class MediaService {
      *
      * <p>같은 mediaId 재시도는 기존 행을 갱신하고 같은 key 로 새 URL 을 발급한다(31-10).
      * encounter 행이 먼저 있어야 mission_id 를 알 수 있으므로 encounter 적재가 선행이다.
+     *
+     * <p>같은 encounter·kind 에 다른 mediaId 로 발급을 요청하면 s3_key UNIQUE 충돌이므로
+     * 409 로 거절한다(S15P11A301-154). 기존 행을 멱등 반환하지 않는 이유: 젯슨 업로더가
+     * 응답의 mediaId 를 읽지 않아, 다른 id 의 행을 돌려주면 이후 complete 가 404 에 갇힌다.
      */
     public UploadUrlResponse createUpload(UploadUrlRequest request, Duration ttl) {
         UUID missionId = findMissionId(request.encounterId());
         String objectKey = objectKey(missionId, request.encounterId(), request.kind());
         String contentType = contentType(request.kind());
 
-        jdbc.update(UPSERT_ASSET, request.mediaId(), missionId, request.encounterId(),
-                request.kind(), objectKey, request.sha256(), request.sizeBytes());
+        try {
+            jdbc.update(UPSERT_ASSET, request.mediaId(), missionId, request.encounterId(),
+                    request.kind(), objectKey, request.sha256(), request.sizeBytes());
+        } catch (DuplicateKeyException e) {
+            throw new BusinessException(ErrorCode.MEDIA_KEY_CONFLICT,
+                    "이미 다른 mediaId 로 등록된 저장 위치입니다: " + objectKey);
+        }
 
         String url = presignPut(objectKey, contentType, ttl);
         return new UploadUrlResponse(request.mediaId(), objectKey, url, contentType, ttl.toSeconds());

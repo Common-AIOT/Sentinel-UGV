@@ -4,6 +4,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
 
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
@@ -52,10 +53,14 @@ public class MapUploadService {
 
     /**
      * maps 행을 확보하고 pgm·yaml 각각의 Presigned PUT URL 을 발급한다.
-     * key 가 mapId 에서 파생돼 결정적이므로 발급 시점에 행을 통째로 만든다 —
-     * 젯슨이 임무 초반에 호출해 임무 내내 mapId 를 쓸 수 있다.
+     * key 가 mapId 에서 파생돼 결정적이므로 발급 시점에 행을 통째로 만든다.
+     *
+     * <p>clientMapId 는 젯슨이 SLAM 세션 시작 때 만든 식별자다(S15P11A301-189).
+     * 망 단절 중에도 젯슨이 임무 내내 같은 mapId 를 telemetry·encounter 에 실을 수
+     * 있어야 하므로, 식별자 생성을 서버에 의존시키지 않는다. 임무에 기존 행이
+     * 있으면 기존 행이 이긴다 — 응답의 mapId 가 권위라는 계약은 그대로다.
      */
-    public MapUploadResponse createUpload(UUID missionId, Duration ttl) {
+    public MapUploadResponse createUpload(UUID missionId, UUID clientMapId, Duration ttl) {
         Boolean missionExists = jdbc.queryForObject(
                 "SELECT EXISTS(SELECT 1 FROM missions WHERE id = ?)", Boolean.class, missionId);
         if (!Boolean.TRUE.equals(missionExists)) {
@@ -68,9 +73,16 @@ public class MapUploadService {
 
         UUID mapId;
         if (existing.isEmpty()) {
-            mapId = UUID.randomUUID();
-            jdbc.update("INSERT INTO maps (id, mission_id, s3_key_pgm, s3_key_yaml) VALUES (?, ?, ?, ?)",
-                    mapId, missionId, pgmKey(missionId, mapId), yamlKey(missionId, mapId));
+            mapId = clientMapId != null ? clientMapId : UUID.randomUUID();
+            try {
+                jdbc.update("INSERT INTO maps (id, mission_id, s3_key_pgm, s3_key_yaml) VALUES (?, ?, ?, ?)",
+                        mapId, missionId, pgmKey(missionId, mapId), yamlKey(missionId, mapId));
+            } catch (DuplicateKeyException e) {
+                // 다른 임무가 이미 쓰는 mapId(PK 충돌) — 젯슨의 재사용 버그를 500 무한
+                // 재시도 대신 409 영구 실패로 굳힌다(#154 원칙).
+                throw new BusinessException(ErrorCode.MAP_ID_CONFLICT,
+                        "이미 다른 임무에 등록된 mapId 입니다: " + mapId);
+            }
         } else {
             mapId = existing.getFirst();
         }

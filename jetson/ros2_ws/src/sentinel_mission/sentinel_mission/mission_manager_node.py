@@ -47,6 +47,7 @@ import uuid
 from datetime import datetime, timezone
 
 import rclpy
+import tf2_ros
 from rclpy.node import Node
 from rclpy.qos import (
     QoSDurabilityPolicy,
@@ -56,6 +57,7 @@ from rclpy.qos import (
 )
 from std_msgs.msg import String
 
+from .geometry import encounter_pose
 from .mission_state import (
     ACK_EXECUTED,
     ACK_REJECTED,
@@ -90,6 +92,11 @@ class MissionManagerNode(Node):
         # 임무를 자동 주행으로 복구하지 않는다"고 정했다. 개발 중 편의를 위한
         # 파라미터이며 운영에서는 false로 둔다.
         self.declare_parameter('auto_start', False)
+        # encounter 위치 스탬프용 TF 프레임 (S15P11A301-170). cloud_bridge와
+        # 같은 기본값이다 — 두 노드가 같은 좌표를 봐야 telemetry의 로봇 위치와
+        # encounter 위치가 한 지도에서 맞는다.
+        self.declare_parameter('map_frame', 'map')
+        self.declare_parameter('base_frame', 'base_footprint')
 
         self.machine = MissionStateMachine(
             post_recording_seconds=int(self._param('post_recording_seconds')),
@@ -157,6 +164,20 @@ class MissionManagerNode(Node):
         self.create_subscription(
             String, self._param('signal_topic'), self._on_signal, reliable
         )
+
+        # TF는 encounter 위치 스탬프에만 쓴다 (S15P11A301-170). SLAM이 없으면
+        # 조회가 실패하고 pose는 null이 된다 — 값을 지어내지 않는다. 관제가
+        # "위치 모름"과 "원점"을 구별해야 한다(cloud_bridge와 같은 원칙).
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
+        # 확정 시점의 위치. 스키마가 pose를 "확정 시점의 로봇 위치"로 정의하므로
+        # CONFIRMED에서 한 번 조회해 같은 encounter의 이후 phase에 재사용한다.
+        # phase마다 새로 조회하면 LOST의 pose가 확정 시점과 달라진다.
+        self._confirmed_pose: dict | None = None
+        self._confirmed_pose_encounter: str | None = None
+        # 조회 실패 로그는 상태가 바뀔 때만 남긴다. 후보가 계속 오면 발행도
+        # 잦아서, 매번 경고하면 로그가 그 소리로 가득 찬다.
+        self._pose_available = False
 
         self.create_timer(float(self._param('tick_period_seconds')), self._on_tick)
 
@@ -397,13 +418,59 @@ class MissionManagerNode(Node):
             'personCount': encounter.person_count,
             'trackIds': sorted(encounter.track_ids) or None,
             'confidence': encounter.confidence,
-            # SLAM과 위치 추정이 붙기 전에는 null이다(25.3). 스키마가 허용한다.
-            'pose': None,
+            # 확정 시점의 로봇 위치 (S15P11A301-170). SLAM이 없으면 null이고
+            # 스키마가 그것을 "SLAM이 없으면 null"로 정의한다(25.3).
+            'pose': self._pose_for(encounter.encounter_id, phase),
             'missionId': self.machine.mission_id,
         }
         message = String()
         message.data = json.dumps(body, ensure_ascii=False)
         self.encounter_pub.publish(message)
+
+    def _pose_for(self, encounter_id: str, phase: Phase) -> dict | None:
+        """이 encounter에 실을 위치를 돌려준다.
+
+        CONFIRMED에서 조회해 캐시하고, 같은 encounter의 이후 phase는 캐시를
+        재사용한다. 스키마의 pose가 "확정 시점의 로봇 위치"이기 때문이다 —
+        발행 시점마다 새로 읽으면 LOST의 pose가 확정 시점과 달라지고, 백엔드는
+        INSERT(CONFIRMED) 값만 저장하므로 두 값이 어긋나면 조사할 때 헷갈린다.
+        """
+        if encounter_id != self._confirmed_pose_encounter:
+            self._confirmed_pose = self._lookup_pose()
+            self._confirmed_pose_encounter = encounter_id
+            if self._confirmed_pose is None and phase is Phase.CONFIRMED:
+                self.get_logger().info(
+                    f'{encounter_id[:8]} 확정 시점에 TF(map→base) 조회 실패. '
+                    'pose 없이 발행한다. SLAM이 떠 있는지 확인한다.'
+                )
+        return self._confirmed_pose
+
+    def _lookup_pose(self) -> dict | None:
+        """map → base_footprint 를 encounter pose로 바꾼다. 실패하면 None."""
+        try:
+            transform = self.tf_buffer.lookup_transform(
+                str(self._param('map_frame')),
+                str(self._param('base_frame')),
+                rclpy.time.Time(),
+            )
+        except (
+            tf2_ros.LookupException,
+            tf2_ros.ConnectivityException,
+            tf2_ros.ExtrapolationException,
+        ):
+            self._pose_available = False
+            return None
+
+        if not self._pose_available:
+            self.get_logger().info('TF(map→base) 조회 성공. encounter에 위치를 싣는다.')
+        self._pose_available = True
+        translation = transform.transform.translation
+        rotation = transform.transform.rotation
+        return encounter_pose(
+            translation.x,
+            translation.y,
+            (rotation.x, rotation.y, rotation.z, rotation.w),
+        )
 
     def _publish_status(
         self,

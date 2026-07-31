@@ -40,14 +40,23 @@ class ResponseClass(str, Enum):
     ANSWER_STRUCTURED = "ANSWER_STRUCTURED"
 
 
+# 상태머신이 재생하는 문구. CLOSING은 여기 없다.
+#
+# 종료 안내는 보고 발신 상태에 따라 문구가 달라지는데, 상태머신이 도는 시점에는
+# 아직 발신하지 않았으므로 그 상태를 알 수 없다. 이전에는 여기에 진행형 문구를
+# 박아 두고 발신 후에 실제 상태로 한 번 더 안내해서, 두 문구가 같아지는 경로에서
+# 같은 말이 두 번 나왔다. 종료 안내는 상태를 아는 전송 단계가 한 번만 한다.
 PROMPTS = {
     QuestionCode.INTRO: GUIDE_ASSETS[GuideCode.INTRO].text,
     QuestionCode.COUNT: GUIDE_ASSETS[GuideCode.ASK_COUNT].text,
     QuestionCode.MOBILITY: GUIDE_ASSETS[GuideCode.ASK_MOBILITY].text,
     QuestionCode.URGENT: GUIDE_ASSETS[GuideCode.ASK_URGENT].text,
-    # ACK 연결(182) 전이므로 진행형 문구를 쓴다. 완료 표현은 발신 후에만 쓴다.
-    QuestionCode.CLOSING: GUIDE_ASSETS[GuideCode.REPORT_PENDING].text,
 }
+
+# 청취가 있는 질문. CLOSING은 안내만 하고 답을 받지 않는다.
+ASKED_QUESTIONS = tuple(
+    question for question in QuestionCode if question != QuestionCode.CLOSING
+)
 
 # 세션 전체 예산(초). 기본값은 여기 한 곳에만 둔다 — 두 곳에 복제했더니
 # 실기 경로에 반영되지 않은 사고가 있었다. 산정 근거는 docs/README.md 11-2.
@@ -58,6 +67,32 @@ FIELD_BY_QUESTION = {
     QuestionCode.COUNT: "reportedResponsiveCount",
     QuestionCode.MOBILITY: "mobilityStatus",
     QuestionCode.URGENT: "urgentConditionReported",
+}
+
+# 들었으나 값을 확정하지 못한 응답. 한 번 더 물어볼 값어치가 있다.
+UNCLEAR_RESPONSES = frozenset(
+    {
+        ResponseClass.VOICE_DETECTED_STT_FAILED,
+        ResponseClass.RESPONSE_UNRECOGNIZED,
+    }
+)
+
+# 질문별 재질문 정책: (다시 물을 응답 분류, 재질문에 쓸 안내).
+#
+# INTRO는 발화 존재 자체가 답이므로 이해 실패는 재질문 대상이 아니다. 이미 응답이
+# 있다고 판정된다. 나머지 질문은 필드값을 확정해야 하므로, 들었으나 알아듣지 못한
+# 경우에 한 번 더 묻는다(S15P11A301-165).
+#
+# 재질문은 질문당 1회다. 세 질문이 모두 재질문해도 실측 최대 111초 + 약 30초로
+# 예산 180초 안에 있다.
+RETRY_POLICY = {
+    QuestionCode.INTRO: (
+        frozenset({ResponseClass.NO_VOICE_DETECTED}),
+        GuideCode.RETRY_NO_RESPONSE,
+    ),
+    QuestionCode.COUNT: (UNCLEAR_RESPONSES, GuideCode.RETRY_UNCLEAR),
+    QuestionCode.MOBILITY: (UNCLEAR_RESPONSES, GuideCode.RETRY_UNCLEAR),
+    QuestionCode.URGENT: (UNCLEAR_RESPONSES, GuideCode.RETRY_UNCLEAR),
 }
 
 
@@ -150,7 +185,10 @@ class ConversationMachine:
         result = SessionResult()
         started_at = self.clock()
 
-        for question in QuestionCode:
+        # 질문 순서를 목록으로 들고 간다. 무응답이 확정되면 남은 질문을 버린다(§11-4).
+        remaining = list(ASKED_QUESTIONS)
+        while remaining:
+            question = remaining.pop(0)
             if self._stop_if_needed(result, started_at):
                 return result
 
@@ -158,13 +196,8 @@ class ConversationMachine:
             self.prompt(question, PROMPTS[question])
             self._transition(result, SessionState.TTS_RESPONDING)
 
-            if question == QuestionCode.CLOSING:
-                result.termination_reason = result.termination_reason or "NORMAL"
-                result.fields["terminationReason"] = result.termination_reason
-                self._transition(result, SessionState.COMPLETED)
-                return result
-
-            max_attempts = 2 if question == QuestionCode.INTRO else 1
+            retry_classes, retry_guide = RETRY_POLICY[question]
+            max_attempts = 2
             for attempt in range(1, max_attempts + 1):
                 if self._stop_if_needed(result, started_at):
                     return result
@@ -207,23 +240,28 @@ class ConversationMachine:
                     result.operator_review_required
                 )
 
-                if (
-                    question == QuestionCode.INTRO
-                    and response_class == ResponseClass.NO_VOICE_DETECTED
-                    and attempt < max_attempts
-                ):
+                if response_class in retry_classes and attempt < max_attempts:
+                    # 재질문 문구는 질문을 반복하지 않는다. 요구조자는 무엇을
+                    # 물었는지 알고 있고, 승인된 문구가 그렇게 되어 있다.
                     self._transition(result, SessionState.RETRYING)
-                    self.prompt(
-                        question,
-                        GUIDE_ASSETS[GuideCode.RETRY_NO_RESPONSE].text,
-                    )
+                    self.prompt(question, GUIDE_ASSETS[retry_guide].text)
                     continue
 
                 field_name = FIELD_BY_QUESTION[question]
                 if question == QuestionCode.INTRO:
-                    result.fields[field_name] = (
+                    answered = (
                         response_class != ResponseClass.NO_VOICE_DETECTED
                     )
+                    result.fields[field_name] = answered
+                    if not answered:
+                        # 재질문까지 반응이 없으면 남은 질문을 하지 않는다. 반응 없는
+                        # 요구조자 앞에서 30초를 더 쓰는 대신 관제에 즉시 알린다.
+                        # 종료 안내는 전송 단계가 하므로 여기서 끊어도 요구조자는
+                        # 마지막 안내를 듣는다.
+                        #
+                        # `VOICE_DETECTED_STT_FAILED`는 여기 해당하지 않는다. 사람을
+                        # 들었으므로 남은 질문을 계속한다(명세 33-3).
+                        remaining = []
                 else:
                     result.fields[field_name] = turn.value
                     if (
@@ -236,4 +274,8 @@ class ConversationMachine:
                         ] = "SELF_REPORTED_GROUP_COUNT"
                 break
 
+        # 질문이 끝났다. 종료 안내는 발신 상태를 아는 호출자가 재생한다.
+        result.termination_reason = result.termination_reason or "NORMAL"
+        result.fields["terminationReason"] = result.termination_reason
+        self._transition(result, SessionState.COMPLETED)
         return result

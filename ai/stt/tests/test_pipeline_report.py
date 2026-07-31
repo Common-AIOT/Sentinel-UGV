@@ -8,6 +8,7 @@ pipeline 모듈은 sounddevice·torch·faster_whisper를 import하므로, 해당
 import unittest
 
 from sentinel_voice.conversation import SessionResult, SessionState
+from sentinel_voice.guide_audio import GuideCode
 from sentinel_voice.safety import report_defaults, risk_assessment
 
 pipeline = None
@@ -30,7 +31,7 @@ class ReportSessionTest(unittest.TestCase):
         class Delivery:
             state = type("S", (), {"value": "PENDING"})()
             detail = "테스트"
-            guide_code = pipeline.GuideCode.REPORT_PENDING
+            guide_code = GuideCode.REPORT_PENDING
 
         pipeline.queue_report = lambda info: (
             self.queued.append(info) or Delivery()

@@ -93,7 +93,9 @@ def build_runner(
         extract=extract,
         player=player,
     )
-    return VoiceSessionRunner(deps), player
+    # 대역 재생기는 스피커 꼬리가 없다. 실제 대기를 넣으면 테스트만 느려진다
+    # (기본 300ms × 청취 횟수). 대기 동작 자체는 test_echo_guard가 검증한다.
+    return VoiceSessionRunner(deps, listen_delay=0), player
 
 
 class SessionRunnerTest(unittest.TestCase):
@@ -209,7 +211,9 @@ class SessionRunnerTest(unittest.TestCase):
             player=player,
         )
         runner = VoiceSessionRunner(
-            deps, abort_requested=lambda: SessionState.ABORTED_SAFETY
+            deps,
+            abort_requested=lambda: SessionState.ABORTED_SAFETY,
+            listen_delay=0,
         )
         result = runner.run()
 

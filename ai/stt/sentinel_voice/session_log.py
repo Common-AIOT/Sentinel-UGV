@@ -97,6 +97,22 @@ class SessionLog:
             }
         )
 
+    def announcement(self, guide: str, status: str, detail: str = "") -> None:
+        """세션 종료 안내의 재생 결과. 상태머신 밖에서 일어나므로 따로 남긴다.
+
+        어떤 문구를 말했는지가 시연·현장 검증의 근거다. 발신 상태에 따라 문구가
+        달라지므로 실제로 무엇이 나갔는지 기록해야 대조할 수 있다.
+        """
+        self._append(
+            {
+                "type": "announcement",
+                "at": _utc_now().isoformat(timespec="milliseconds"),
+                "guide": guide,
+                "status": status,
+                "detail": detail,
+            }
+        )
+
     def report(self, payload: dict[str, Any]) -> None:
         """33-6 보고값을 별도 파일로 남긴다. 관제로 나간 것과 같은 내용이다."""
         if not self.enabled:

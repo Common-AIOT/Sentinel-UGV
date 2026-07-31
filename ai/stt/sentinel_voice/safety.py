@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any
+import re
+from typing import Any, Iterable
 
 
 REPORT_FIELDS = (
@@ -42,6 +43,58 @@ ENUMS = {
         "UNKNOWN",
     },
 }
+
+
+_WORD_CHARS = re.compile(r"[^0-9A-Za-z가-힣]")
+
+
+def _squashed(text: str) -> str:
+    """공백·문장부호를 없앤 비교용 문자열. STT의 띄어쓰기 차이를 무시한다."""
+    return _WORD_CHARS.sub("", text or "")
+
+
+def _bigrams(text: str) -> set[str]:
+    return {text[index : index + 2] for index in range(len(text) - 1)}
+
+
+def guide_echo_match(
+    text: str,
+    guide_texts: Iterable[str],
+    *,
+    min_chars: int = 8,
+    ratio: float = 0.9,
+) -> tuple[bool, str]:
+    """들린 말이 로봇 안내 문구 자체인지 판정한다 (S15P11A301-165).
+
+    AEC가 없어 스피커 출력이 마이크로 유입되고, 재생 종료 판정이 실제 가청 종료보다
+    이르다. 그래서 안내 음성의 꼬리가 녹음되어 STT를 통과할 수 있다.
+
+    들린 문자열의 바이그램 중 몇 %가 어떤 안내 문구에 포함되는지로 본다. 에코는 온전한
+    문장이 아니라 조각으로 들어오므로 정확히 일치하는지 보면 놓친다. 반대로 요구조자의
+    짧은 응답("네", "두 명이요")을 삼키지 않도록 최소 길이를 둔다.
+
+    비교 방향이 중요하다. **들린 쪽의 바이그램을 분모로 둔다.** 안내 문구를 분모로 두면
+    긴 안내 문구의 일부만 들렸을 때 비율이 낮아 놓친다.
+    """
+    heard = _squashed(text)
+    if len(heard) < min_chars:
+        return False, ""
+    heard_grams = _bigrams(heard)
+    if not heard_grams:
+        return False, ""
+
+    best_ratio = 0.0
+    best_text = ""
+    for guide in guide_texts:
+        guide_grams = _bigrams(_squashed(guide))
+        if not guide_grams:
+            continue
+        overlap = len(heard_grams & guide_grams) / len(heard_grams)
+        if overlap > best_ratio:
+            best_ratio, best_text = overlap, guide
+    if best_ratio >= ratio:
+        return True, best_text
+    return False, ""
 
 
 def is_valid_stt(text, no_speech_prob, prompt_text=""):

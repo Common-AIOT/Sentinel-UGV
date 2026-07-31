@@ -1,6 +1,7 @@
 import unittest
 
 from sentinel_voice.conversation import (
+    ASKED_QUESTIONS,
     AudioObservation,
     ConversationMachine,
     QuestionCode,
@@ -50,8 +51,9 @@ class ConversationMachineTest(unittest.TestCase):
         result = machine.run()
 
         self.assertEqual(result.state, SessionState.COMPLETED)
-        self.assertEqual([code for code, _ in prompts], list(QuestionCode))
-        self.assertEqual(
+        self.assertEqual([code for code, _ in prompts], list(ASKED_QUESTIONS))
+        # 종료 안내는 발신 상태를 아는 전송 단계가 한다. 상태머신은 하지 않는다.
+        self.assertNotEqual(
             prompts[-1][1], GUIDE_ASSETS[GuideCode.REPORT_PENDING].text
         )
         self.assertEqual(result.fields["reportedResponsiveCount"], 2)

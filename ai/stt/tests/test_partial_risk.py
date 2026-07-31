@@ -200,7 +200,7 @@ class SessionTimeoutBudgetTest(unittest.TestCase):
             def run(self):
                 return SessionResult()
 
-        runner = VoiceSessionRunner(_silent_dependencies())
+        runner = VoiceSessionRunner(_silent_dependencies(), listen_delay=0)
         with patch("sentinel_voice.session_runner.ConversationMachine", Spy):
             runner.run()
 

@@ -19,6 +19,7 @@ S15P11A301-112는 대화 순서와 실패 규칙만 담당하는 `ConversationMa
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -34,8 +35,8 @@ from .conversation import (
     SessionResult,
     SessionState,
 )
-from .guide_audio import GuidePlayer, PlaybackResult
-from .safety import is_valid_stt
+from .guide_audio import GUIDE_BY_TEXT, GuidePlayer, PlaybackResult
+from .safety import guide_echo_match, is_valid_stt
 from .session_log import SessionLog, open_session_log
 
 # 질문이 채우는 33-6 추출 필드. INTRO는 발화 존재 자체가 답이므로 제외한다.
@@ -98,6 +99,8 @@ class TurnDiagnostics:
     extraction: dict[str, Any] | None = None
     playback: PlaybackResult | None = None
     audio_file: str | None = None
+    # 안내 음성 재유입으로 판정된 경우 일치한 문구. 판정 근거를 사후에 대조한다.
+    echo_of: str | None = None
 
 
 class VoiceSessionRunner:
@@ -112,11 +115,18 @@ class VoiceSessionRunner:
         listen_seconds: dict[QuestionCode, float] | None = None,
         on_event: Callable[[str], None] = lambda message: None,
         session_log: SessionLog | None = None,
+        listen_delay: float | None = None,
+        sleep: Callable[[float], None] = time.sleep,
     ):
         self.deps = deps
         self.abort_requested = abort_requested
         self.timeout_seconds = timeout_seconds
         self.listen_seconds = listen_seconds or LISTEN_SECONDS
+        # 재생 종료 판정과 실제 가청 종료의 차이를 덮는 대기. 테스트는 sleep을 대체한다.
+        self.listen_delay = (
+            config.LISTEN_DELAY if listen_delay is None else listen_delay
+        )
+        self.sleep = sleep
         self._on_event = on_event
         # 저장 위치가 지정되지 않으면 비활성 로그가 온다. 호출부는 분기하지 않는다.
         self.session_log = session_log or open_session_log(on_event=self.on_event)
@@ -169,9 +179,13 @@ class VoiceSessionRunner:
             )
 
     def listen(self, question: QuestionCode, attempt: int) -> AudioObservation:
-        """녹음→무음판정→정규화→VAD→STT→환각가드를 한 관찰값으로 만든다."""
+        """녹음→무음판정→정규화→VAD→STT→환각·에코가드를 한 관찰값으로 만든다."""
         diagnostic = self._diagnostic(question, attempt)
         seconds = self.listen_seconds.get(question, 6.0)
+        # 안내 꼬리가 스피커에서 아직 나오는 동안 녹음하면 그 소리를 요구조자 응답으로
+        # 오인한다. 재생 종료 판정은 실제 가청 종료보다 이르다(S15P11A301-165).
+        if self.listen_delay > 0:
+            self.sleep(self.listen_delay)
         try:
             wav = self.deps.record(seconds)
         except Exception as exc:  # 마이크 분리·점유 등 장치 오류
@@ -199,6 +213,21 @@ class VoiceSessionRunner:
         text, no_speech_prob = self.deps.transcribe(normalized)
         diagnostic.stt_text = text
         diagnostic.no_speech_prob = no_speech_prob
+
+        # 들린 것이 우리 안내 음성 자체면 요구조자 발화가 아니다. STT 실패가 아니라
+        # **관찰된 사람 음성이 없는 것**이므로 NO_VOICE_DETECTED로 돌려보낸다.
+        # VOICE_DETECTED_STT_FAILED로 두면 anyResponseDetected가 true가 되어,
+        # 의식 없는 요구조자를 "응답 있음"으로 보고한다(S15P11A301-165).
+        is_echo, matched = guide_echo_match(
+            text,
+            GUIDE_BY_TEXT,
+            min_chars=config.ECHO_MIN_CHARS,
+            ratio=config.ECHO_MATCH_RATIO,
+        )
+        if is_echo:
+            diagnostic.echo_of = matched
+            self.on_event(f"[ECHO] {question.value}: 안내 음성 재유입으로 판정 — {text}")
+            return AudioObservation(False)
 
         valid, reason = is_valid_stt(text, no_speech_prob, config.STT_PROMPT)
         if not valid:
@@ -272,6 +301,7 @@ class VoiceSessionRunner:
                     "sttText": diagnostic.stt_text,
                     "noSpeechProb": diagnostic.no_speech_prob,
                     "sttInvalidReason": diagnostic.stt_invalid_reason,
+                    "echoOf": diagnostic.echo_of,
                     "extractionSource": diagnostic.extraction_source,
                     "extraction": diagnostic.extraction,
                     "playback": (

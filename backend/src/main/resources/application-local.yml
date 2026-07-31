@@ -1,7 +1,16 @@
 spring:
   docker:
     compose:
-      file: backend/compose.local.yaml
+      # 실행 위치(레포 루트 vs backend)에 따라 상대경로가 깨져 기동 실패의 원인이 됐다.
+      # 로컬 컨테이너는 compose 로 직접 관리한다: docker compose -f compose.local.yaml up -d
+      enabled: false
+  config:
+    # 로컬 전용 비밀값. backend/.env.local 은 gitignore 대상이며, 없어도 기동한다(optional).
+    # S3_SECRET_KEY 등 ${...} 플레이스홀더가 이 파일에서 풀린다.
+    # 실행 위치가 레포 루트(IntelliJ)든 backend(gradlew)든 찾도록 두 경로를 모두 시도한다.
+    import:
+      - optional:file:.env.local[.properties]
+      - optional:file:backend/.env.local[.properties]
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/sentinel_ugv}
     username: ${SPRING_DATASOURCE_USERNAME:myuser}

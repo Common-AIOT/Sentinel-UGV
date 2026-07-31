@@ -29,6 +29,7 @@ public enum ErrorCode {
     // 지도 (S15P11A301-185 업로드 계약)
     MAP_NOT_FOUND(HttpStatus.NOT_FOUND, "MAP-001", "지도를 찾을 수 없습니다. 업로드 URL 발급이 선행되어야 합니다."),
     MAP_UPLOAD_INCOMPLETE(HttpStatus.BAD_REQUEST, "MAP-002", "스토리지에서 지도 업로드를 확인하지 못했습니다."),
+    MAP_ID_CONFLICT(HttpStatus.CONFLICT, "MAP-003", "이미 다른 임무에 등록된 mapId 입니다. 새 mapId 를 생성해야 합니다."),
 
     // 로봇/임무
     ROBOT_NOT_FOUND(HttpStatus.NOT_FOUND, "ROBOT-001", "등록된 로봇을 찾을 수 없습니다."),

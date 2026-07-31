@@ -40,11 +40,14 @@ public class MapUploadController {
     @Operation(summary = "지도 업로드 주소 발급 (젯슨용)",
             description = "지도 파일 두 개(pgm·yaml)를 올릴 주소를 받습니다. 응답의 mapId 가 이 지도의 공식 번호라서, "
                     + "젯슨은 이 값을 telemetry 와 발견(pose.mapId)에 그대로 씁니다. "
+                    + "요청에 mapId 를 담으면 그 값을 지도 번호로 씁니다 — SLAM 세션 시작 때 만든 번호를 "
+                    + "임무 내내 쓰다가 등록까지 일치시키는 용도입니다. 안 담으면 서버가 만듭니다. "
                     + "같은 임무로 다시 불러도 안전합니다 — 같은 mapId 로 새 주소를 줍니다. "
                     + "PUT 의 Content-Type 은 응답 값을 그대로 써야 합니다(다르면 403). 없는 임무면 404.")
     @PostMapping("/api/v1/maps/uploads")
     public ApiResponse<MapUploadResponse> createUpload(@Valid @RequestBody MapUploadRequest request) {
-        return ApiResponse.success(mapUploadService.createUpload(request.missionId(), UPLOAD_TTL));
+        return ApiResponse.success(
+                mapUploadService.createUpload(request.missionId(), request.mapId(), UPLOAD_TTL));
     }
 
     /** 완료 통지. 두 객체의 실재를 확인한다. 재호출에도 같은 응답(멱등). */

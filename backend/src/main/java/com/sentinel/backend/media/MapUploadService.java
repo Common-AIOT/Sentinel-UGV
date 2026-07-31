@@ -3,7 +3,10 @@ package com.sentinel.backend.media;
 import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
+import java.util.regex.Matcher;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -11,6 +14,7 @@ import org.springframework.stereotype.Service;
 import com.sentinel.backend.common.config.S3Properties;
 import com.sentinel.backend.common.exception.BusinessException;
 import com.sentinel.backend.common.exception.ErrorCode;
+import com.sentinel.backend.media.dto.MapCompleteRequest;
 import com.sentinel.backend.media.dto.MapCompleteResponse;
 import com.sentinel.backend.media.dto.MapUploadResponse;
 import com.sentinel.backend.media.dto.MapViewResponse;
@@ -36,6 +40,8 @@ import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignReques
  */
 @Service
 public class MapUploadService {
+
+    private static final Logger log = LoggerFactory.getLogger(MapUploadService.class);
 
     private static final String CONTENT_TYPE = "application/octet-stream";
 
@@ -94,16 +100,50 @@ public class MapUploadService {
                 CONTENT_TYPE, ttl.toSeconds());
     }
 
-    /** 두 객체가 스토리지에 실재하는지 확인한다. 재호출에도 같은 응답(멱등). */
-    public MapCompleteResponse completeUpload(UUID mapId) {
-        List<String[]> rows = jdbc.query(
-                "SELECT s3_key_pgm, s3_key_yaml FROM maps WHERE id = ?",
-                (rs, i) -> new String[]{rs.getString("s3_key_pgm"), rs.getString("s3_key_yaml")}, mapId);
+    /**
+     * 두 객체의 실재를 확인하고 메타데이터를 저장한다 (S15P11A301-197).
+     *
+     * <p>값의 우선순위는 본문 > 기존 저장값 > yaml 폴백이다 — 본문의 origin 은 젯슨이
+     * live 격자에서 읽은 전정밀 값이라 yaml(유효숫자 3자리 절단)보다 정확하다.
+     * 재호출하면 새 본문 값으로 갱신되므로, 과거에 본문 없이 완료된 지도도
+     * 완료 재호출 한 번으로 정밀값을 채울 수 있다.
+     */
+    public MapCompleteResponse completeUpload(UUID mapId, MapCompleteRequest body) {
+        List<MapRow> rows = jdbc.query(
+                "SELECT id, s3_key_pgm, s3_key_yaml, " + META_COLUMNS + " FROM maps WHERE id = ?",
+                this::mapRow, mapId);
         if (rows.isEmpty()) {
             throw new BusinessException(ErrorCode.MAP_NOT_FOUND);
         }
-        verifyExists(rows.getFirst()[0]);
-        verifyExists(rows.getFirst()[1]);
+        MapRow row = rows.getFirst();
+        verifyExists(row.pgmKey());
+        verifyExists(row.yamlKey());
+
+        Double resolution = coalesce(body == null ? null : body.resolution(), row.resolution());
+        Double originX = coalesce(body == null ? null : body.originX(), row.originX());
+        Double originY = coalesce(body == null ? null : body.originY(), row.originY());
+        Double originYaw = coalesce(body == null ? null : body.originYaw(), row.originYaw());
+        Integer width = coalesce(body == null ? null : body.width(), row.width());
+        Integer height = coalesce(body == null ? null : body.height(), row.height());
+        String pgmSha = coalesce(body == null ? null : body.pgmSha256(), row.pgmSha256());
+        String yamlSha = coalesce(body == null ? null : body.yamlSha256(), row.yamlSha256());
+
+        // 본문·기존값으로 못 채운 좌표계 정보는 스토리지의 yaml 에서 읽는다(절단값이지만 없는 것보단 낫다).
+        if (resolution == null || originX == null || originY == null || originYaw == null) {
+            YamlMeta yaml = parseYamlQuietly(row.yamlKey());
+            if (yaml != null) {
+                resolution = coalesce(resolution, yaml.resolution());
+                originX = coalesce(originX, yaml.originX());
+                originY = coalesce(originY, yaml.originY());
+                originYaw = coalesce(originYaw, yaml.originYaw());
+            }
+        }
+
+        jdbc.update("""
+                UPDATE maps SET resolution = ?, origin_x = ?, origin_y = ?, origin_yaw = ?,
+                       width = ?, height = ?, pgm_sha256 = ?, yaml_sha256 = ? WHERE id = ?
+                """,
+                resolution, originX, originY, originYaw, width, height, pgmSha, yamlSha, mapId);
         return new MapCompleteResponse(mapId);
     }
 
@@ -118,18 +158,81 @@ public class MapUploadService {
         if (!Boolean.TRUE.equals(missionExists)) {
             throw new BusinessException(ErrorCode.MISSION_NOT_FOUND);
         }
-        List<Object[]> rows = jdbc.query(
-                "SELECT id, s3_key_pgm, s3_key_yaml FROM maps WHERE mission_id = ? ORDER BY created_at LIMIT 1",
-                (rs, i) -> new Object[]{rs.getObject("id", UUID.class),
-                        rs.getString("s3_key_pgm"), rs.getString("s3_key_yaml")}, missionId);
+        List<MapRow> rows = jdbc.query(
+                "SELECT id, s3_key_pgm, s3_key_yaml, " + META_COLUMNS
+                        + " FROM maps WHERE mission_id = ? ORDER BY created_at LIMIT 1",
+                this::mapRow, missionId);
         if (rows.isEmpty()) {
             throw new BusinessException(ErrorCode.MAP_NOT_FOUND);
         }
-        Object[] map = rows.getFirst();
-        return new MapViewResponse((UUID) map[0],
-                presignGet((String) map[1], ttl), presignGet((String) map[2], ttl),
-                ttl.toSeconds());
+        MapRow map = rows.getFirst();
+        return new MapViewResponse(map.id(),
+                presignGet(map.pgmKey(), ttl), presignGet(map.yamlKey(), ttl), ttl.toSeconds(),
+                map.resolution(), map.originX(), map.originY(), map.originYaw(),
+                map.width(), map.height());
     }
+
+    private static final String META_COLUMNS =
+            "resolution, origin_x, origin_y, origin_yaw, width, height, pgm_sha256, yaml_sha256";
+
+    private MapRow mapRow(java.sql.ResultSet rs, int i) throws java.sql.SQLException {
+        return new MapRow(
+                rs.getObject("id", UUID.class),
+                rs.getString("s3_key_pgm"), rs.getString("s3_key_yaml"),
+                rs.getObject("resolution", Double.class),
+                rs.getObject("origin_x", Double.class),
+                rs.getObject("origin_y", Double.class),
+                rs.getObject("origin_yaw", Double.class),
+                rs.getObject("width", Integer.class),
+                rs.getObject("height", Integer.class),
+                rs.getString("pgm_sha256"), rs.getString("yaml_sha256"));
+    }
+
+    private record MapRow(UUID id, String pgmKey, String yamlKey,
+                          Double resolution, Double originX, Double originY, Double originYaw,
+                          Integer width, Integer height, String pgmSha256, String yamlSha256) {
+    }
+
+    private record YamlMeta(Double resolution, Double originX, Double originY, Double originYaw) {
+    }
+
+    private static <T> T coalesce(T preferred, T fallback) {
+        return preferred != null ? preferred : fallback;
+    }
+
+    /**
+     * 스토리지의 yaml(~130B)에서 resolution·origin 을 읽는다. 실패해도 완료를 막지
+     * 않는다 — 메타데이터는 보강 정보이고 완료 검증의 본체는 객체 실재 확인이다.
+     */
+    private YamlMeta parseYamlQuietly(String yamlKey) {
+        try {
+            String text = s3Client.getObjectAsBytes(
+                    b -> b.bucket(props.bucket()).key(yamlKey)).asUtf8String();
+            Double resolution = null, ox = null, oy = null, oyaw = null;
+            Matcher r = YAML_RESOLUTION.matcher(text);
+            if (r.find()) {
+                resolution = Double.parseDouble(r.group(1));
+            }
+            Matcher o = YAML_ORIGIN.matcher(text);
+            if (o.find()) {
+                String[] parts = o.group(1).split(",");
+                if (parts.length >= 3) {
+                    ox = Double.parseDouble(parts[0].trim());
+                    oy = Double.parseDouble(parts[1].trim());
+                    oyaw = Double.parseDouble(parts[2].trim());
+                }
+            }
+            return new YamlMeta(resolution, ox, oy, oyaw);
+        } catch (Exception e) {
+            log.warn("yaml 메타데이터 파싱 실패({}): {}", yamlKey, e.getMessage());
+            return null;
+        }
+    }
+
+    private static final java.util.regex.Pattern YAML_RESOLUTION =
+            java.util.regex.Pattern.compile("resolution:\\s*([-0-9.eE]+)");
+    private static final java.util.regex.Pattern YAML_ORIGIN =
+            java.util.regex.Pattern.compile("origin:\\s*\\[([^\\]]+)]");
 
     /** 29.6 스타일 결정적 key. 재시도에도 같은 위치에 덮어쓴다. */
     private String pgmKey(UUID missionId, UUID mapId) {

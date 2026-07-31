@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.sentinel.backend.common.response.ApiResponse;
+import com.sentinel.backend.media.dto.MapCompleteRequest;
 import com.sentinel.backend.media.dto.MapCompleteResponse;
 import com.sentinel.backend.media.dto.MapUploadRequest;
 import com.sentinel.backend.media.dto.MapUploadResponse;
@@ -50,13 +51,18 @@ public class MapUploadController {
                 mapUploadService.createUpload(request.missionId(), request.mapId(), UPLOAD_TTL));
     }
 
-    /** 완료 통지. 두 객체의 실재를 확인한다. 재호출에도 같은 응답(멱등). */
+    /** 완료 통지. 실재 확인 + 메타데이터 저장(재호출 시 갱신). */
     @Operation(summary = "지도 업로드 완료 알리기 (젯슨용)",
             description = "두 파일을 다 올린 뒤 부릅니다. 서버가 스토리지에 파일이 진짜 있는지 확인합니다. "
-                    + "두 번 불러도 문제없습니다(둘 다 200). 파일이 없으면 400 — 다시 올린 뒤 또 부르면 됩니다.")
+                    + "본문에 지도 메타데이터(resolution·originX/Y/Yaw·width·height·sha256)를 실으면 저장돼서 "
+                    + "관제 조회에 그대로 나갑니다 — 본문 origin 이 yaml(유효숫자 3자리)보다 정밀합니다. "
+                    + "본문을 생략하면 yaml 값으로 채웁니다. 두 번 불러도 문제없고, 재호출하면 메타데이터가 갱신됩니다. "
+                    + "파일이 없으면 400 — 다시 올린 뒤 또 부르면 됩니다.")
     @PostMapping("/api/v1/maps/uploads/{mapId}/complete")
-    public ApiResponse<MapCompleteResponse> completeUpload(@PathVariable UUID mapId) {
-        return ApiResponse.success(mapUploadService.completeUpload(mapId));
+    public ApiResponse<MapCompleteResponse> completeUpload(
+            @PathVariable UUID mapId,
+            @RequestBody(required = false) @Valid MapCompleteRequest request) {
+        return ApiResponse.success(mapUploadService.completeUpload(mapId, request));
     }
 
     /** 관제는 missionId 만 알고 시작하므로 임무 기준으로 조회한다 (S15P11A301-187). */

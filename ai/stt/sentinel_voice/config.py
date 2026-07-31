@@ -118,6 +118,24 @@ SILENCE_RMS = 0.005
 # 정규화 목표 RMS
 NORM_TARGET_RMS = 0.08
 
+# 안내 재생이 끝난 뒤 청취를 시작하기까지 대기(초).
+# sounddevice의 wait()는 로컬 PortAudio 스트림 기준이라, Bluetooth A2DP의
+# 싱크 버퍼(100~250ms)만큼 스피커에서 안내 꼬리가 더 재생된다. 그 구간을 녹음하면
+# 로봇 자기 음성이 요구조자 응답으로 오인된다(S15P11A301-165).
+LISTEN_DELAY = float(os.getenv("SENTINEL_LISTEN_DELAY", "0.3"))
+
+# 청취 결과가 안내 문구 자체로 판정되는 기준. 문자 바이그램 포함률과 최소 길이다.
+#
+# 0.9는 실측 분포에서 고른 값이다. 안내 문구와 그 꼬리 조각은 1.00으로 모이고,
+# 실제 응답은 최대 0.78("스스로 움직일 수 있어요" — 질문의 단어를 그대로 쓴 답)이라
+# 두 무리 사이가 비어 있다. 0.8로 두면 그 답변과 여유가 0.02뿐이어서, 걸을 수 있는
+# 부상자를 무응답으로 보고한다. 측정표는 docs/README.md 11-3.
+#
+# 실기기 재검증에서 조정할 수 있도록 환경변수로 열어 둔다. 조각난 에코가 0.9에
+# 못 미쳐 새는 경우가 관측되면 178이 저장한 청취 원본으로 값을 다시 고른다.
+ECHO_MATCH_RATIO = float(os.getenv("SENTINEL_ECHO_MATCH_RATIO", "0.9"))
+ECHO_MIN_CHARS = int(os.getenv("SENTINEL_ECHO_MIN_CHARS", "8"))
+
 PROMPT_PATH = STT_ROOT / "prompts" / "triage_extract.txt"
 
 

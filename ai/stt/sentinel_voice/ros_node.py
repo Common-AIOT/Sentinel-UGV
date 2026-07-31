@@ -258,7 +258,7 @@ class VoiceSessionNode(Node):
         # 안내를 먼저 끝내고 DIALOGUE_ENDED를 발행한다. 순서를 뒤집으면 Mission
         # Manager가 즉시 탐사를 재개해, 로봇이 멀어지며 모터 소음 속에서 마지막
         # 안내를 하게 되고 요구조자가 그것을 듣지 못한다.
-        self._announce_delivery(delivery)
+        self._announce_delivery(delivery, session_log)
 
         signal = dialogue_ended_signal(
             context, termination_reason=result.termination_reason
@@ -270,8 +270,13 @@ class VoiceSessionNode(Node):
             f"DIALOGUE_ENDED 발행 encounter={context.encounter_id[:8]}"
         )
 
-    def _announce_delivery(self, delivery: DeliveryResult) -> None:
-        """전송 상태에 맞는 안내를 재생한다. 실패는 기록만 하고 노드를 죽이지 않는다.
+    def _announce_delivery(
+        self, delivery: DeliveryResult, session_log: SessionLog
+    ) -> None:
+        """세션의 마지막 안내를 재생한다. 실패는 기록만 하고 노드를 죽이지 않는다.
+
+        상태머신은 발신 상태를 알 수 없어 종료 안내를 하지 않는다. 이 안내가
+        세션에서 유일한 종료 안내다.
 
         아직 DIALOGUE_ENDED를 보내지 않아 재개를 관측할 수 없으므로, 탐사 문구는
         임무 상태가 중단·정지·종료가 아님을 확인하고 쓴다.
@@ -302,7 +307,9 @@ class VoiceSessionNode(Node):
             self.get_logger().warn(
                 f"안내 음성 재생 예외: {type(error).__name__}: {error}"
             )
+            session_log.announcement(code.value, "EXCEPTION", type(error).__name__)
             return
+        session_log.announcement(code.value, result.status.value, result.detail)
         if result.ok:
             self.get_logger().info(f"안내 음성 재생: {code.value}")
         else:

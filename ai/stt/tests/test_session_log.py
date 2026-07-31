@@ -18,7 +18,7 @@ from pathlib import Path
 import numpy as np
 
 from sentinel_voice import config
-from sentinel_voice.conversation import QuestionCode, SessionState
+from sentinel_voice.conversation import ASKED_QUESTIONS, QuestionCode, SessionState
 from sentinel_voice.guide_audio import GUIDE_BY_TEXT, PlaybackResult, PlaybackStatus
 from sentinel_voice.session_log import ENV_DIR, SessionLog, open_session_log
 from sentinel_voice.session_runner import SessionDependencies, VoiceSessionRunner
@@ -62,7 +62,8 @@ def build_runner(session_log, *, audio=None, has_speech=True, text="네"):
         ),
         player=StubPlayer(),
     )
-    return VoiceSessionRunner(deps, session_log=session_log)
+    # 대역 재생기는 스피커 꼬리가 없다. 실제 대기는 테스트만 느리게 한다(165).
+    return VoiceSessionRunner(deps, session_log=session_log, listen_delay=0)
 
 
 def read_records(directory):
@@ -77,7 +78,7 @@ def turn_records(directory):
 
 
 def listened(directory):
-    """청취가 있었던 기록만. CLOSING은 안내만 하므로 제외된다."""
+    """청취가 있었던 기록만."""
     return [
         record
         for record in turn_records(directory)
@@ -168,23 +169,24 @@ class SessionTranscriptTest(TempSessionTest):
         self.assertEqual(end["fields"]["mobilityStatus"], "NO")
 
         asked = [turn["question"] for turn in turn_records(self.log.directory)]
-        self.assertEqual(asked, [code.value for code in QuestionCode])
+        self.assertEqual(asked, [code.value for code in ASKED_QUESTIONS])
+        # 종료 안내는 상태머신 밖에서 일어나므로 턴 기록에 없다.
+        self.assertNotIn(QuestionCode.CLOSING.value, asked)
 
-    def test_closing_announcement_is_recorded_without_listening(self):
-        """183 종료 안내가 실제로 재생됐는지 확인할 근거가 남아야 한다."""
-        runner = build_runner(self.log)
-        runner.run()
+    def test_closing_announcement_is_recorded_separately(self):
+        """종료 안내가 실제로 무엇을 말했는지 남아야 한다(183 검증 근거).
 
-        closing = [
+        상태머신이 아니라 전송 단계가 안내하므로 턴이 아니라 별도 기록이다.
+        """
+        self.log.announcement("REPORT_SUCCEEDED_DEPARTURE", "PLAYED", "ACK 대기")
+        records = [
             record
-            for record in turn_records(self.log.directory)
-            if record["question"] == QuestionCode.CLOSING.value
+            for record in read_records(self.log.directory)
+            if record["type"] == "announcement"
         ]
-        self.assertEqual(len(closing), 1)
-        self.assertEqual(closing[0]["playback"], PlaybackStatus.PLAYED.value)
-        # 청취가 없으므로 응답 분류와 오디오는 없다.
-        self.assertIsNone(closing[0]["responseClass"])
-        self.assertIsNone(closing[0]["audio"])
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["guide"], "REPORT_SUCCEEDED_DEPARTURE")
+        self.assertEqual(records[0]["status"], "PLAYED")
 
     def test_turn_keeps_full_extraction_not_only_the_asked_field(self):
         """질문이 요구한 필드 외 추출값은 보고 스키마에 담을 자리가 없다(11-1)."""

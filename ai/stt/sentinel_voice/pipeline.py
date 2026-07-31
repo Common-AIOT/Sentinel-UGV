@@ -32,7 +32,7 @@ from silero_vad import load_silero_vad, get_speech_timestamps
 from . import config
 from .config import FS
 from .conversation import SessionResult, SessionState
-from .guide_audio import GUIDE_ASSETS, GuideCode, GuidePlayer
+from .guide_audio import GUIDE_ASSETS, GuidePlayer
 from .llm import extract_with_status
 from .report_delivery import queue_report
 from .safety import coerce_report, risk_assessment
@@ -137,11 +137,19 @@ def speak(text: str, *, report_succeeded: bool = False):
     return result
 
 
-def queue_and_announce(info: dict):
-    """보고서를 전송 경계에 인계하고 ACK 상태에 맞는 안내만 재생한다."""
+def queue_and_announce(info: dict, *, session_log: SessionLog | None = None):
+    """보고서를 전송 경계에 인계하고 발신 상태에 맞는 종료 안내를 재생한다.
+
+    세션의 마지막 안내는 여기서만 나온다. 상태머신은 발신 상태를 알 수 없으므로
+    종료 안내를 하지 않는다(`conversation.PROMPTS` 참고).
+    """
     delivery = queue_report(info)
     say(f"📨 관제 보고 상태: {delivery.state.value} ({delivery.detail})")
-    speak(GUIDE_ASSETS[delivery.guide_code].text)
+    playback = speak(GUIDE_ASSETS[delivery.guide_code].text)
+    if session_log is not None:
+        session_log.announcement(
+            delivery.guide_code.value, playback.status.value, delivery.detail
+        )
     return delivery
 
 
@@ -166,7 +174,7 @@ def report_session(
         say("ℹ️ 일부 응답은 33-8 키워드 폴백으로 구조화됨")
     if session_log is not None:
         session_log.report({"report": info, "risk": risk})
-    queue_and_announce(info)
+    queue_and_announce(info, session_log=session_log)
     return info
 
 

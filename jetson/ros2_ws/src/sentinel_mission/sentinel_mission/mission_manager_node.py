@@ -96,6 +96,11 @@ class MissionManagerNode(Node):
         # 같은 기본값이다 — 두 노드가 같은 좌표를 봐야 telemetry의 로봇 위치와
         # encounter 위치가 한 지도에서 맞는다.
         self.declare_parameter('map_frame', 'map')
+        # map_uploader가 임무 시작에 발급한 mapId(S15P11A301-193). S15P11A301-170이
+        # pose.mapId를 null로 비워 둔 자리를 이 값이 채운다.
+        self.declare_parameter(
+            'map_registered_topic', '/map_uploader/registered'
+        )
         self.declare_parameter('base_frame', 'base_footprint')
 
         self.machine = MissionStateMachine(
@@ -164,6 +169,14 @@ class MissionManagerNode(Node):
         self.create_subscription(
             String, self._param('signal_topic'), self._on_signal, reliable
         )
+        # map_uploader가 발급한 mapId (S15P11A301-193). status_qos와 같은
+        # TRANSIENT_LOCAL이라 이 노드가 나중에 떠도 현재 임무의 값을 받는다.
+        self.create_subscription(
+            String,
+            self._param('map_registered_topic'),
+            self._on_map_registered,
+            status_qos,
+        )
 
         # TF는 encounter 위치 스탬프에만 쓴다 (S15P11A301-170). SLAM이 없으면
         # 조회가 실패하고 pose는 null이 된다 — 값을 지어내지 않는다. 관제가
@@ -178,6 +191,9 @@ class MissionManagerNode(Node):
         # 조회 실패 로그는 상태가 바뀔 때만 남긴다. 후보가 계속 오면 발행도
         # 잦아서, 매번 경고하면 로그가 그 소리로 가득 찬다.
         self._pose_available = False
+        # map_uploader가 발급한 지도 식별자. 못 받았으면 None이고 encounter의
+        # pose.mapId도 null이다 — 지어내면 관제가 다른 지도의 좌표로 해석한다.
+        self._map_id: str | None = None
 
         self.create_timer(float(self._param('tick_period_seconds')), self._on_tick)
 
@@ -209,6 +225,24 @@ class MissionManagerNode(Node):
     # ------------------------------------------------------------------
     # 입력
     # ------------------------------------------------------------------
+
+    def _on_map_registered(self, message: String) -> None:
+        """map_uploader가 발급한 mapId를 받아 둔다.
+
+        encounter의 `pose.mapId`가 이 값을 쓴다. S15P11A301-170이 소유자가
+        정해지기 전까지 null로 비워 둔 자리다.
+        """
+        try:
+            body = json.loads(message.data)
+        except json.JSONDecodeError:
+            return
+        if not isinstance(body, dict):
+            return
+        map_id = body.get('mapId')
+        if not map_id or map_id == self._map_id:
+            return
+        self._map_id = str(map_id)
+        self.get_logger().info(f'지도 세션 수신. mapId={self._map_id}')
 
     def _on_candidates(self, message: String) -> None:
         try:
@@ -470,6 +504,7 @@ class MissionManagerNode(Node):
             translation.x,
             translation.y,
             (rotation.x, rotation.y, rotation.z, rotation.w),
+            map_id=self._map_id,
         )
 
     def _publish_status(

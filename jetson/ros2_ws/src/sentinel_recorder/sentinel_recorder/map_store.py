@@ -22,6 +22,7 @@ ROS를 모르므로 CI에서 시험할 수 있다. `pending_store`와 같은 원
 from __future__ import annotations
 
 import json
+import math
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -163,6 +164,7 @@ class MapStore:
         saved_at: str,
         resolution: float | None,
         origin: list[float] | None,
+        grid: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """업로더가 읽을 보고서. 13.2의 maps 행에 필요한 것을 담는다."""
         return {
@@ -178,9 +180,29 @@ class MapStore:
             },
             # 관제가 좌표를 얹는 데 필요한 값이다. yaml 안에도 있지만 여기에
             # 두면 업로더와 관제가 yaml을 파싱하지 않아도 된다.
+            #
+            # **이 두 값은 yaml에서 읽은 것이라 이미 잘려 있다.** map_saver가
+            # origin을 유효숫자 3자리로 쓴다(-10.126487 → -10.1). 전정밀도가
+            # 필요한 곳은 아래 `grid`를 쓴다(S15P11A301-193).
             'resolution': resolution,
             'origin': origin,
+            # /map(OccupancyGrid)의 info를 그대로 옮긴 값. 백엔드 완료 호출에
+            # 이것을 실어 보내면 yaml 절단 오차가 사라진다. SLAM이 없거나 격자를
+            # 못 받았으면 None이고, 그때 백엔드는 yaml에서 읽는다(기존 동작).
+            'grid': grid,
         }
+
+
+def yaw_from_quaternion(x: float, y: float, z: float, w: float) -> float:
+    """쿼터니언에서 ZYX yaw만 뽑는다.
+
+    `sentinel_bridge`·`sentinel_mission`에 같은 함수가 있다. import하지 않는 것은
+    패키지 간 결합을 만들지 않기 위해서다 — 4줄짜리 수학의 중복이 빌드 의존보다
+    싸다는 판단이 S15P11A301-170에서 이미 내려졌고 여기도 같다.
+    """
+    siny = 2.0 * (w * z + x * y)
+    cosy = 1.0 - 2.0 * (y * y + z * z)
+    return math.atan2(siny, cosy)
 
 
 def read_map_yaml(path: Path) -> tuple[float | None, list[float] | None]:

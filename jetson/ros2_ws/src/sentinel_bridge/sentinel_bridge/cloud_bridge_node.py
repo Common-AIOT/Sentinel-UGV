@@ -35,7 +35,6 @@ Outbox → 영상 → telemetry 순서를 정했다. 순서가 뒤바뀌면 서�
 from __future__ import annotations
 
 import json
-import uuid
 
 import rclpy
 import tf2_ros
@@ -105,6 +104,11 @@ class CloudBridgeNode(Node):
         self.declare_parameter('map_frame', 'map')
         self.declare_parameter('base_frame', 'base_footprint')
         self.declare_parameter('map_topic', '/map')
+        # map_uploader가 임무 시작에 발급한 mapId(S15P11A301-193). 이 값이
+        # 13.2 maps 행의 식별자이므로 telemetry가 자체 UUID를 만들지 않는다.
+        self.declare_parameter(
+            'map_registered_topic', '/map_uploader/registered'
+        )
         # 사람 발견 이벤트를 관제로 중계한다(S15P11A301-140). mission_manager가
         # 발행하는 것을 그대로 31-5 봉투에 담아 MQTT events 채널로 보낸다.
         self.declare_parameter('encounter_topic', '/perception/encounter')
@@ -145,8 +149,12 @@ class CloudBridgeNode(Node):
         # 마지막으로 받은 임무 상태. mission_manager가 상태 변경 시에만 발행하므로
         # 여기 들고 있다가 1초 heartbeat마다 관제로 내보낸다(31-4).
         self._mission_status: dict | None = None
-        # 지도 세션 식별자. SLAM이 새로 뜨면 지도가 달라지므로 새 값을 발급한다.
-        # 관제가 옛 좌표와 새 좌표를 같은 지도로 섞으면 이벤트 위치가 엉뚱해진다.
+        # 지도 세션 식별자. **map_uploader가 발급한 값을 받아 쓴다**
+        # (S15P11A301-193). 이전에는 이 노드가 uuid4를 만들었는데, 그 값은
+        # 백엔드 maps.id와 무관해서 관제가 두 식별자를 보게 됐다.
+        #
+        # 아직 못 받았으면 None이다. 지어내지 않는다 — 스키마가 null을 허용하고,
+        # 틀린 식별자를 보내면 관제가 다른 지도의 좌표로 해석한다.
         self._map_id: str | None = None
         # pose 조회 실패를 매 주기 로그로 남기면 2Hz로 쏟아진다. 상태가 바뀔 때만
         # 남긴다.
@@ -199,6 +207,20 @@ class CloudBridgeNode(Node):
             self._param('mission_status_topic'),
             self._on_mission_status,
             self.mission_status_qos,
+        )
+
+        # map_uploader의 mapId. TRANSIENT_LOCAL로 발행되므로 이 노드가 나중에
+        # 떠도 현재 임무의 값을 즉시 받는다(S15P11A301-193).
+        self.create_subscription(
+            String,
+            self._param('map_registered_topic'),
+            self._on_map_registered,
+            QoSProfile(
+                reliability=QoSReliabilityPolicy.RELIABLE,
+                durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
+                history=QoSHistoryPolicy.KEEP_LAST,
+                depth=1,
+            ),
         )
 
         # TF는 map → base_footprint 조회에만 쓴다. SLAM(S15P11A301-137)이 없으면
@@ -305,9 +327,22 @@ class CloudBridgeNode(Node):
     def _on_scan(self, _message: LaserScan) -> None:
         self._scan_last_seen = self._now()
 
-    def _on_candidates(self, _message: String) -> None:
-        """탐지 노드가 살아 있다는 신호. 내용은 보지 않는다."""
-        self._candidates_last_seen = self._now()
+    def _on_map_registered(self, message: String) -> None:
+        """map_uploader가 발급한 mapId를 받아 둔다."""
+        try:
+            body = json.loads(message.data)
+        except json.JSONDecodeError:
+            return
+        if not isinstance(body, dict):
+            return
+        map_id = body.get('mapId')
+        if not map_id or map_id == self._map_id:
+            return
+        self._map_id = str(map_id)
+        self.get_logger().info(
+            f'지도 세션 수신. mapId={self._map_id} '
+            f'mission={str(body.get("missionId") or "")[:8]}'
+        )
 
     def _on_mission_status(self, message: String) -> None:
         """mission_manager의 임무 상태를 받아 둔다.
@@ -444,14 +479,12 @@ class CloudBridgeNode(Node):
         """
         if not self._slam_alive():
             if self._pose_available:
-                self.get_logger().warn(
-                    'SLAM이 내려갔다. pose를 null로 보낸다. '
-                    '지도 세션도 버리므로 다시 뜨면 새 mapId가 발급된다.'
-                )
+                self.get_logger().warn('SLAM이 내려갔다. pose를 null로 보낸다.')
             self._pose_available = False
-            # 지도 세션을 버린다. SLAM이 다시 뜨면 지도가 처음부터 만들어지므로
-            # 옛 mapId를 유지하면 관제가 두 지도의 좌표를 섞는다.
-            self._map_id = None
+            # mapId는 버리지 않는다. 이제 map_uploader가 임무 단위로 발급하고
+            # 백엔드 maps.id가 되므로(S15P11A301-193), SLAM 재기동으로 값을
+            # 바꾸면 같은 임무에 식별자가 둘 생긴다. 백엔드도 임무당 지도
+            # 하나를 전제한다(maps.mission_id 조회가 LIMIT 1이다).
             return None
 
         try:
@@ -470,9 +503,6 @@ class CloudBridgeNode(Node):
             self._pose_available = False
             return None
 
-        if self._map_id is None:
-            self._map_id = str(uuid.uuid4())
-            self.get_logger().info(f'지도 세션 시작. mapId={self._map_id[:8]}')
         if not self._pose_available:
             self.get_logger().info('pose 조회 성공. telemetry에 위치를 담는다.')
         self._pose_available = True

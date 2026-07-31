@@ -8,6 +8,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sentinel_recorder.map_store import (  # noqa: E402
@@ -257,3 +259,164 @@ def test_보고서_쓰기가_원자적이다(tmp_path):
     write_report(path, {'a': 2})
     assert json.loads(path.read_text(encoding='utf-8')) == {'a': 2}
     assert list(tmp_path.iterdir()) == [path]
+
+
+# ----------------------------------------------------------------------
+# 완료 호출 본문 (S15P11A301-193)
+# ----------------------------------------------------------------------
+
+GRID = {
+    'resolution': 0.05,
+    'originX': -5.78892310432163,
+    'originY': -10.126487709221227,
+    'originYaw': 0.0,
+    'width': 289,
+    'height': 316,
+}
+
+
+def test_grid의_전정밀도가_그대로_실린다():
+    from sentinel_recorder.map_upload import complete_body
+
+    body = complete_body({'grid': GRID})
+    assert body['originY'] == -10.126487709221227
+    assert body['originX'] == -5.78892310432163
+    assert body['width'] == 289 and body['height'] == 316
+
+
+def test_잘린_yaml_origin은_쓰지_않는다():
+    """report['origin']은 유효숫자 3자리로 잘려 있다.
+
+    그 값을 보내면 "전정밀도를 보냈다"고 믿으면서 같은 오차가 남는다.
+    """
+    from sentinel_recorder.map_upload import complete_body
+
+    report = {'origin': [-5.79, -10.1, 0], 'resolution': 0.05, 'grid': GRID}
+    body = complete_body(report)
+    assert body['originY'] == -10.126487709221227
+    assert body['originY'] != -10.1
+
+
+def test_grid가_없으면_해시만_실린다():
+    """SLAM 미기동이면 격자를 못 받는다. 백엔드가 yaml로 폴백한다."""
+    from sentinel_recorder.map_upload import complete_body
+
+    body = complete_body({'origin': [-5.79, -10.1, 0]}, pgm_sha256='a' * 64)
+    assert 'originX' not in body and 'resolution' not in body
+    assert body == {'pgmSha256': 'a' * 64}
+
+
+def test_보고서가_없어도_예외가_없다():
+    from sentinel_recorder.map_upload import complete_body
+
+    assert complete_body(None) == {}
+    assert complete_body({}) == {}
+
+
+def test_해시가_없으면_필드를_넣지_않는다():
+    """전부 선택 필드다. 빈 문자열을 보내면 백엔드가 잘못된 값으로 저장한다."""
+    from sentinel_recorder.map_upload import complete_body
+
+    body = complete_body({'grid': GRID}, pgm_sha256='', yaml_sha256='')
+    assert 'pgmSha256' not in body and 'yamlSha256' not in body
+
+
+def test_격자_일부만_있어도_있는_것만_보낸다():
+    from sentinel_recorder.map_upload import complete_body
+
+    body = complete_body({'grid': {'resolution': 0.05, 'originX': None}})
+    assert body == {'resolution': 0.05}
+
+
+def test_yaw_추출이_단위_쿼터니언에서_0이다():
+    """slam_toolbox 격자는 map 프레임에 축 정렬이라 항상 0이어야 한다."""
+    import math
+
+    from sentinel_recorder.map_store import yaw_from_quaternion
+
+    assert yaw_from_quaternion(0.0, 0.0, 0.0, 1.0) == pytest.approx(0.0)
+    # 90도 회전은 pi/2가 나와야 한다 — 값이 0으로 고정된 것이 아님을 확인한다
+    half = math.sqrt(0.5)
+    assert yaw_from_quaternion(0.0, 0.0, half, half) == pytest.approx(math.pi / 2)
+
+
+# ----------------------------------------------------------------------
+# mapId 수명주기 (S15P11A301-193 B)
+# ----------------------------------------------------------------------
+
+
+def test_활성_상태에서만_발급한다():
+    from sentinel_recorder.map_upload import should_mint
+
+    assert should_mint({'state': 'EXPLORING', 'missionId': MISSION}) == MISSION
+    assert should_mint({'state': 'SAFE_IDLE', 'missionId': MISSION}) is None
+
+
+def test_COMPLETED에서도_발급한다():
+    """telemetry(S15P11A301-190)와 다른 점이다.
+
+    지도는 임무 종료 시 저장되므로 COMPLETED에서도 mapId가 있어야 한다.
+    재기동으로 임무 시작을 놓친 경우가 정확히 이 경로다.
+    """
+    from sentinel_recorder.map_upload import should_mint
+
+    assert should_mint({'state': 'COMPLETED', 'missionId': MISSION}) == MISSION
+
+
+def test_모르는_상태나_missionId_없으면_발급하지_않는다():
+    from sentinel_recorder.map_upload import should_mint
+
+    assert should_mint({'state': '새상태', 'missionId': MISSION}) is None
+    assert should_mint({'state': 'EXPLORING'}) is None
+    assert should_mint(None) is None
+
+
+def test_발급_상태_매핑이_모든_상태를_덮는다():
+    import importlib
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    _sys.path.insert(0, str(_Path(__file__).resolve().parents[2] / 'sentinel_mission'))
+    try:
+        mission_state = importlib.import_module('sentinel_mission.mission_state')
+    except ImportError:
+        pytest.skip('sentinel_mission이 없다. 같은 워크스페이스에서만 검사한다')
+
+    from sentinel_recorder.map_upload import MISSION_ACTIVE_BY_STATE
+
+    missing = [
+        s.value
+        for s in mission_state.MissionState
+        if s.value not in MISSION_ACTIVE_BY_STATE
+    ]
+    assert not missing, f'발급 매핑이 없는 상태: {missing}'
+
+
+def test_session_파일에서_mapId를_읽는다(tmp_path):
+    """재기동에서 같은 값을 이어받아야 한다.
+
+    달라지면 telemetry·encounter에 이미 나간 값과 어긋나 관제가 두 지도를 섞는다.
+    """
+    from sentinel_recorder.map_upload import SESSION_NAME, read_session_map_id
+
+    write_report(tmp_path / SESSION_NAME, {'mapId': 'map-uuid-1'})
+    assert read_session_map_id(tmp_path) == 'map-uuid-1'
+
+
+def test_session_파일이_없거나_깨졌으면_None(tmp_path):
+    from sentinel_recorder.map_upload import SESSION_NAME, read_session_map_id
+
+    assert read_session_map_id(tmp_path) is None
+    (tmp_path / SESSION_NAME).write_text('{ 깨짐', encoding='utf-8')
+    assert read_session_map_id(tmp_path) is None
+
+
+def test_session_파일이_report와_별_파일이다():
+    """시점이 다르다 — mapId는 임무 시작, report는 임무 종료에 쓰인다.
+
+    같은 파일을 쓰면 map_saver의 나중 쓰기가 mapId를 덮는다.
+    """
+    from sentinel_recorder.map_store import REPORT_NAME
+    from sentinel_recorder.map_upload import SESSION_NAME
+
+    assert SESSION_NAME != REPORT_NAME

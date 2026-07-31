@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import time
+import uuid
 from datetime import datetime, timezone
 
 import rclpy
@@ -41,13 +42,17 @@ from std_msgs.msg import String
 
 from .map_store import MapStore, REPORT_NAME, write_report
 from .map_upload import (
+    SESSION_NAME,
     AttemptState,
     backoff_delay,
+    complete_body,
     failed_report,
     is_due,
     needs_upload,
+    read_session_map_id,
     registered_report,
     sha256_of,
+    should_mint,
 )
 from .map_upload_client import MapUploadClient
 from .upload_client import UploadError
@@ -70,6 +75,8 @@ class MapUploaderNode(Node):
         self.declare_parameter('retry_backoff_seconds', [5.0, 15.0, 60.0, 300.0])
         # 완료 호출을 건너뛴다. 백엔드 없이 PUT 경로만 시험할 때 쓴다.
         self.declare_parameter('skip_complete', False)
+        # 임무 상태를 보고 mapId를 발급한다(S15P11A301-193).
+        self.declare_parameter('mission_status_topic', '/mission/status')
 
         self.store = MapStore(str(self._param('map_directory')))
         self.store.prepare()
@@ -79,6 +86,8 @@ class MapUploaderNode(Node):
         )
         self._attempts: dict[str, AttemptState] = {}
         self._registered: dict[str, str] = {}
+        # 임무 시작 때 발급한 mapId. 파일에도 남기므로 재기동에서 이어받는다.
+        self._session_map_ids: dict[str, str] = {}
 
         self.status_pub = self.create_publisher(String, '~/status', 10)
         # 등록된 mapId. 임무당 한 번뿐인 신호라 VOLATILE로 두면 나중에 뜬
@@ -87,6 +96,26 @@ class MapUploaderNode(Node):
         self.registered_pub = self.create_publisher(
             String,
             '~/registered',
+            QoSProfile(
+                reliability=QoSReliabilityPolicy.RELIABLE,
+                durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
+                history=QoSHistoryPolicy.KEEP_LAST,
+                depth=1,
+            ),
+        )
+
+        # 임무 상태를 구독해 mapId를 임무 **시작**에 발급한다(S15P11A301-193).
+        #
+        # 백엔드 발급 요청이 선택 필드 mapId를 받으므로(이원빈 배포) 젯슨이 정한
+        # 값이 maps.id가 된다. encounterId·mediaId와 같은 패턴이고(29.3), 망이
+        # 끊겨도 식별자를 만들 수 있다.
+        #
+        # mission_manager가 TRANSIENT_LOCAL로 발행하므로 이 노드가 나중에 떠도
+        # 현재 임무를 즉시 안다.
+        self.create_subscription(
+            String,
+            str(self._param('mission_status_topic')),
+            self._on_status,
             QoSProfile(
                 reliability=QoSReliabilityPolicy.RELIABLE,
                 durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
@@ -111,6 +140,58 @@ class MapUploaderNode(Node):
         return datetime.now(timezone.utc).isoformat(timespec='seconds')
 
     # ------------------------------------------------------------------
+
+    def _on_status(self, message: String) -> None:
+        """임무 상태를 보고 mapId를 확보한다.
+
+        예외가 콜백 밖으로 나가지 않게 한다 — 여기서 터지면 이후 상태를
+        놓치고, 그러면 그 임무의 mapId가 영영 없다.
+        """
+        try:
+            body = json.loads(message.data)
+        except json.JSONDecodeError:
+            return
+        if not isinstance(body, dict):
+            return
+        mission_id = should_mint(body)
+        if mission_id:
+            self._ensure_map_id(mission_id)
+
+    def _ensure_map_id(self, mission_id: str) -> str | None:
+        """이 임무의 mapId를 확보해 돌려준다. 이미 있으면 그대로 쓴다.
+
+        메모리 → 파일 순으로 찾고 둘 다 없으면 새로 만든다. 파일을 보는 것은
+        재기동 때문이다 — 임무 중에 노드가 죽으면 telemetry·encounter에 이미
+        나간 값과 달라져 관제가 두 지도를 섞는다.
+        """
+        existing = self._session_map_ids.get(mission_id)
+        if existing:
+            return existing
+
+        directory = self.store.directory_for(mission_id)
+        from_disk = read_session_map_id(directory)
+        if from_disk:
+            self._session_map_ids[mission_id] = from_disk
+            self._publish_registered(mission_id, from_disk)
+            return from_disk
+
+        map_id = str(uuid.uuid4())
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+            write_report(directory / SESSION_NAME, {'mapId': map_id})
+        except OSError as error:
+            # 파일에 못 남기면 재기동 후 값이 달라진다. 그래도 이번 임무 동안은
+            # 일관되므로 메모리에만 두고 계속한다.
+            self.get_logger().warning(
+                f'mapId를 파일에 남기지 못했다({error}). '
+                '재기동하면 다른 값이 발급된다.'
+            )
+        self._session_map_ids[mission_id] = map_id
+        self.get_logger().info(
+            f'지도 세션 발급. mission={mission_id[:8]} mapId={map_id}'
+        )
+        self._publish_registered(mission_id, map_id)
+        return map_id
 
     def _tick(self) -> None:
         """올릴 지도를 찾아 순서대로 처리한다.
@@ -151,22 +232,43 @@ class MapUploaderNode(Node):
         yaml_path = directory / 'map.yaml'
         report = self.store.read_report(mission_id) or {}
 
-        try:
-            presign = self.client.request_upload(mission_id=mission_id)
-            self.client.put_pair(presign, pgm=pgm, yaml_path=yaml_path)
-            already = False
-            if not bool(self._param('skip_complete')):
-                already = self.client.complete(map_id=presign.map_id)
-        except UploadError as error:
-            self._record_failure(mission_id, error, now, report)
-            return
-
-        # 해시는 성공 후에 계산한다. 실패할 경로에서 파일을 두 번 읽지 않는다.
+        # 해시를 PUT 전에 계산한다. 완료 호출 본문에 실어야 하기 때문이다
+        # (S15P11A301-193). 실패할 경로에서 파일을 두 번 읽는 낭비가 있지만,
+        # 지도는 수백 KB라 무시할 수 있다 — 이벤트 영상(94MB)과 다르다.
         try:
             pgm_hash = sha256_of(pgm)
             yaml_hash = sha256_of(yaml_path)
         except OSError:
             pgm_hash = yaml_hash = ''
+
+        requested_map_id = self._ensure_map_id(mission_id)
+        try:
+            presign = self.client.request_upload(
+                mission_id=mission_id, map_id=requested_map_id
+            )
+            if requested_map_id and presign.map_id != requested_map_id:
+                # 백엔드가 mapId 필드를 모르는 버전이거나 다른 임무가 그 값을
+                # 쓰고 있다. telemetry·encounter에는 이미 우리 값이 나갔으므로
+                # 관제가 두 값을 보게 된다.
+                self.get_logger().warning(
+                    f'보낸 mapId({requested_map_id})와 응답'
+                    f'({presign.map_id})이 다르다. telemetry·encounter에 나간 '
+                    '값과 어긋나므로 백엔드 버전을 확인한다.'
+                )
+            self.client.put_pair(presign, pgm=pgm, yaml_path=yaml_path)
+            already = False
+            if not bool(self._param('skip_complete')):
+                already = self.client.complete(
+                    map_id=presign.map_id,
+                    body=complete_body(
+                        report,
+                        pgm_sha256=pgm_hash,
+                        yaml_sha256=yaml_hash,
+                    ),
+                )
+        except UploadError as error:
+            self._record_failure(mission_id, error, now, report)
+            return
 
         updated = registered_report(
             report,

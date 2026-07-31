@@ -67,6 +67,14 @@ pose_trigger:
   activate_after_frames: 3
   max_fps: 2.0
   deactivate_after_seconds: 3.0
+  # 명세 431행의 "약 2FPS, 전체 화면 분석"은 파이프라인 전체 예산이다.
+  # true면 사람이 몇 명이든 초당 Pose 실행이 max_fps로 묶이고, 자격을 갖춘
+  # 사람들에게 라운드로빈으로 배분된다.
+  #
+  # false면 track별로만 제한되어 사람 N명일 때 초당 2N회가 된다. 이것이
+  # Jetson 실측(S15P11A301-150, 사람 4명)에서 기대 약 127회 대비 300회가
+  # 기록된 원인이다. A/B 비교할 때만 false로 두고, 평소에는 true를 유지한다.
+  global_budget: true
 
 pose:
   model: models/yolo26n-pose.pt

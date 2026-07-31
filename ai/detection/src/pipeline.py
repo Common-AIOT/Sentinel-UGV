@@ -72,9 +72,34 @@ class PipelineStats:
     memory_target_sec: float = 0.0
     memory_actual_sec: float = 0.0
 
+    # 단계별 누적 소요 시간(초). Jetson에서 병목이 Detect인지 Pose인지 가르는 근거다.
+    #
+    # CUDA 커널은 비동기라 호출 직후 벽시계를 읽으면 실제 GPU 시간이 안 잡힌다.
+    # 다만 ObjectDetector._parse()와 PoseEstimator가 결과를 .cpu()로 내리는 시점에
+    # 암묵적 동기화가 일어나므로, detect()/estimate() 호출 전체를 한 구간으로 묶으면
+    # 그 안에 GPU 시간이 포함된다. 구간을 더 잘게 쪼개면 오히려 왜곡된다.
+    detect_sec: float = 0.0
+    pose_sec: float = 0.0
+    # 자세 판정·persistence·로깅·이벤트 저장. 위 둘에 속하지 않는 나머지.
+    post_sec: float = 0.0
+
+    # 정상 상태 측정값. 초기 몇 프레임은 모델 워밍업·CUDA 컨텍스트 생성 때문에
+    # 비정상적으로 느려서, 그대로 평균에 넣으면 실제 성능을 과소평가한다.
+    # 벤치에서 A/B를 비교할 때는 avg_fps가 아니라 이 값을 쓴다.
+    warmup_frames: int = 0
+    steady_frames: int = 0
+    steady_elapsed_sec: float = 0.0
+
     @property
     def avg_fps(self) -> float:
         return self.frames / self.elapsed_sec if self.elapsed_sec > 0 else 0.0
+
+    @property
+    def steady_fps(self) -> float:
+        """워밍업 프레임을 제외한 FPS. 워밍업을 지정하지 않았으면 avg_fps와 같다."""
+        if self.steady_elapsed_sec > 0:
+            return self.steady_frames / self.steady_elapsed_sec
+        return self.avg_fps
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -88,6 +113,27 @@ class PipelineStats:
             "elapsed_sec": round(self.elapsed_sec, 2),
             "avg_fps": round(self.avg_fps, 2),
         }
+        if self.warmup_frames > 0 and self.steady_frames > 0:
+            out["warmup_frames"] = self.warmup_frames
+            out["steady_frames"] = self.steady_frames
+            out["steady_fps"] = round(self.steady_fps, 2)
+        # 단계별 비중. 프레임당 ms와 전체 대비 비율을 같이 낸다.
+        # 세 구간의 합은 elapsed_sec보다 작다. 카메라 읽기·표시·대기가 빠져 있기 때문이다.
+        staged = self.detect_sec + self.pose_sec + self.post_sec
+        if self.frames > 0 and staged > 0:
+            out["stage_ms_per_frame"] = {
+                "detect": round(self.detect_sec / self.frames * 1000, 2),
+                "pose": round(self.pose_sec / self.frames * 1000, 2),
+                "post": round(self.post_sec / self.frames * 1000, 2),
+            }
+            out["stage_share"] = {
+                "detect": round(self.detect_sec / staged, 3),
+                "pose": round(self.pose_sec / staged, 3),
+                "post": round(self.post_sec / staged, 3),
+            }
+            # Pose 1회당 비용. 사람 수에 비례해 늘어나는지 확인하는 값이다.
+            if self.pose_runs > 0:
+                out["pose_ms_per_run"] = round(self.pose_sec / self.pose_runs * 1000, 2)
         # 기억 시간은 초 단위 설정값이고, track_buffer는 거기서 환산된 프레임 수다.
         # memory_actual_sec가 target에서 크게 벗어나면 min/max 클램프에 걸린 것이다.
         if self.track_buffer_frames:
@@ -164,6 +210,9 @@ class InferencePipeline:
             deactivate_after_seconds=trigger.get("deactivate_after_seconds", 3.0),
             min_bbox_width=trigger["min_bbox_width"],
             min_bbox_height=trigger["min_bbox_height"],
+            # 명세 431행의 "약 2FPS"는 파이프라인 전체 예산이다. False로 두면
+            # 사람 수에 비례해 Pose가 늘어난다(A/B 비교용으로만 끈다).
+            global_budget=trigger.get("global_budget", True),
         )
 
         self.logger = PipelineLogger(
@@ -211,20 +260,31 @@ class InferencePipeline:
     def process_frame(
         self, frame: np.ndarray, frame_index: int, timestamp_sec: float, source: str
     ) -> FrameResult:
+        stage_start = time.perf_counter()
         detections = self.detector.detect(frame)
+        self.stats.detect_sec += time.perf_counter() - stage_start
+
+        post_start = time.perf_counter()
+        # 이 프레임에서 Pose에 쓴 시간을 나중에 빼기 위한 기준점.
+        pose_sec_before = self.stats.pose_sec
         self.stats.frames += 1
         self.stats.detections += len(detections)
         if detections:
             self.stats.frames_with_person += 1
 
+        # person이 탐지되지 않으면 Pose를 아예 실행하지 않는다(게이트 2번).
+        # 실행 대상은 명세 25.6의 조건부 규칙을 따른다(3프레임 연속, 전체 약 2FPS).
+        # 프레임 전체를 한 번에 보고 정해야 전역 예산을 라운드로빈으로 나눌 수 있다.
+        pose_targets = self.pose_scheduler.select(detections, timestamp_sec)
+
         persons: list[PersonObservation] = []
         for det in detections:
             pose = None
-            # person이 탐지되지 않으면 Pose를 아예 실행하지 않는다(게이트 2번).
-            # 실행 여부는 명세 25.6의 조건부 규칙을 따른다(3프레임 연속, 약 2FPS).
-            pose_ran = self.pose_scheduler.should_run(det, timestamp_sec)
+            pose_ran = det.track_id is not None and det.track_id in pose_targets
             if pose_ran:
+                pose_start = time.perf_counter()
                 pose = self.pose_estimator.estimate(frame, det)
+                self.stats.pose_sec += time.perf_counter() - pose_start
                 self.stats.pose_runs += 1
                 posture = self.smoother.smooth(det.track_id, self.classifier.classify(det, pose))
                 self.pose_scheduler.cache(det.track_id, posture)
@@ -280,6 +340,10 @@ class InferencePipeline:
         if confirmed_persons:
             self._emit_event(frame, persons, confirmed_persons, result)
 
+        # post는 Detect·Pose를 뺀 나머지다. Pose는 이 구간 안에서 돌았으므로 빼준다.
+        self.stats.post_sec += (time.perf_counter() - post_start) - (
+            self.stats.pose_sec - pose_sec_before
+        )
         return result
 
     def _emit_event(
@@ -402,6 +466,7 @@ class InferencePipeline:
         max_frames: int | None = None,
         show: bool = False,
         window_name: str = "Sentinel Detection",
+        warmup_frames: int = 0,
     ) -> PipelineStats:
         """영상 하나 또는 카메라 스트림을 처리한다.
 
@@ -410,6 +475,10 @@ class InferencePipeline:
         파일 입력은 재현성을 위해 영상 내 시간(frame_index/fps)을 쓴다.
 
         show=True면 overlay 미리보기 창을 띄운다. q 또는 ESC로 종료한다.
+
+        warmup_frames > 0이면 그 프레임 수를 지난 시점부터를 따로 잰다(stats.steady_fps).
+        모델 워밍업·CUDA 컨텍스트 생성이 초반 몇 프레임을 크게 느리게 만들기 때문에,
+        설정을 A/B 비교할 때는 avg_fps가 아니라 steady_fps를 봐야 한다.
         """
         is_live = isinstance(source, int)
 
@@ -450,6 +519,8 @@ class InferencePipeline:
         frame_index = 0
         start = time.monotonic()
         recent = deque(maxlen=30)  # 최근 프레임 소요 시간(초). 순간 FPS 표시용.
+        self.stats.warmup_frames = max(0, warmup_frames)
+        steady_start: float | None = None
         try:
             while True:
                 loop_start = time.monotonic()
@@ -458,6 +529,10 @@ class InferencePipeline:
                     if is_live:
                         print("[pipeline] 카메라 프레임을 읽지 못했습니다.", file=sys.stderr)
                     break
+
+                # 워밍업 경계에 도달하면 여기서부터를 정상 상태로 따로 잰다.
+                if warmup_frames > 0 and steady_start is None and frame_index == warmup_frames:
+                    steady_start = loop_start
 
                 timestamp_sec = (loop_start - start) if is_live else (frame_index / fps)
                 result = self.process_frame(frame, frame_index, timestamp_sec, str(source))
@@ -495,7 +570,11 @@ class InferencePipeline:
                 if max_frames is not None and frame_index >= max_frames:
                     break
         finally:
-            self.stats.elapsed_sec = time.monotonic() - start
+            end = time.monotonic()
+            self.stats.elapsed_sec = end - start
+            if steady_start is not None and frame_index > warmup_frames:
+                self.stats.steady_frames = frame_index - warmup_frames
+                self.stats.steady_elapsed_sec = end - steady_start
             self.stats.track_buffer_frames = self._track_buffer_frames
             # 종료 시 반드시 리소스를 해제한다(게이트 10번).
             capture.release()

@@ -372,6 +372,66 @@ def test_pose_cache_reused_between_runs() -> None:
     assert sch.cached(1).status == POSTURE_POSSIBLE_FALLEN
 
 
+def test_pose_global_budget_does_not_scale_with_person_count() -> None:
+    """명세 431행의 "약 2FPS"는 파이프라인 전체 예산이다.
+
+    사람이 4명이어도 초당 Pose 실행이 max_fps를 넘으면 안 된다. track별로만
+    제한하면 초당 2N회가 되어 Jetson에서 Detect FPS를 잡아먹는다
+    (S15P11A301-150 실측: 기대 약 127회 대비 실제 300회).
+    """
+    sch = PoseScheduler(activate_after_frames=1, max_fps=2.0, global_budget=True)
+    people = [_det(200, 400, track_id=i) for i in range(1, 5)]
+
+    runs = 0
+    # 1초 구간을 0.05초 간격(20FPS)으로 돈다.
+    for step in range(20):
+        runs += len(sch.select(people, round(step * 0.05, 2)))
+
+    # 2FPS 예산이므로 1초에 2~3회(경계 포함). 사람 수 4를 곱한 8회가 나오면 안 된다.
+    assert runs <= 3, f"전역 예산이 적용되지 않음: 1초에 {runs}회"
+
+
+def test_pose_per_track_budget_scales_with_person_count() -> None:
+    """global_budget=False면 예전 동작(사람 수에 비례)으로 돌아간다.
+
+    A/B 비교용 스위치가 실제로 동작하는지 고정한다. 이 값이 기본이 되면 안 된다.
+    """
+    sch = PoseScheduler(activate_after_frames=1, max_fps=2.0, global_budget=False)
+    people = [_det(200, 400, track_id=i) for i in range(1, 5)]
+
+    runs = 0
+    for step in range(20):
+        runs += len(sch.select(people, round(step * 0.05, 2)))
+
+    assert runs >= 8, f"track별 예산인데 사람 수에 비례하지 않음: {runs}회"
+
+
+def test_pose_global_budget_round_robins() -> None:
+    """전역 예산은 가장 오래 갱신되지 않은 사람에게 차례를 준다.
+
+    한 명만 계속 갱신되고 나머지가 굶으면, 쓰러진 사람을 영영 못 볼 수 있다.
+    """
+    sch = PoseScheduler(activate_after_frames=1, max_fps=2.0, global_budget=True)
+    people = [_det(200, 400, track_id=i) for i in range(1, 4)]
+
+    served: list[int] = []
+    # 0.5초 간격이면 매 호출마다 예산이 정확히 한 번씩 열린다.
+    for step in range(6):
+        served.extend(sorted(sch.select(people, round(step * 0.5, 2))))
+
+    assert len(served) == 6, served
+    # 3명이 두 바퀴씩 돌아야 한다. 특정 ID가 독점하면 실패한다.
+    assert sorted(served) == [1, 1, 2, 2, 3, 3], served
+
+
+def test_pose_select_respects_consecutive_frames() -> None:
+    """select()도 명세의 3프레임 연속 조건을 지킨다(should_run과 동일 기준)."""
+    sch = PoseScheduler(activate_after_frames=3, max_fps=1000.0, global_budget=True)
+    people = [_det(200, 400, track_id=1)]
+    ran = [bool(sch.select(people, round(i * 0.01, 2))) for i in range(5)]
+    assert ran == [False, False, True, True, True], ran
+
+
 def test_no_person_no_event() -> None:
     """사람이 없으면 아무 이벤트도 나면 안 된다."""
     tracker = PersistenceTracker(person_confirm_seconds=1.0)

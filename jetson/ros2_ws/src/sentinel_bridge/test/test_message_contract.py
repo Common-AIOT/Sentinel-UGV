@@ -1175,3 +1175,91 @@ def test_relay_rejections_satisfy_the_ack_contract():
         ).iter_errors(decision.ack)
     )
     assert not errors, [error.message for error in errors]
+
+
+# ----------------------------------------------------------------------
+# telemetry의 임무 귀속 (S15P11A301-190)
+# ----------------------------------------------------------------------
+
+
+def test_임무_활성_매핑이_모든_상태를_덮는다():
+    """상태가 추가되면 여기서 걸린다.
+
+    누락되면 `.get(..., False)`가 임무 중 궤적을 통째로 버린다. 화면에는
+    "안 나온다"로만 보여서 원인을 찾기 어렵다.
+    """
+    import importlib
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'sentinel_mission'))
+    try:
+        mission_state = importlib.import_module('sentinel_mission.mission_state')
+    except ImportError:
+        import pytest as _pytest
+
+        _pytest.skip('sentinel_mission이 없다. 같은 워크스페이스에서만 검사한다')
+
+    from sentinel_bridge.message_mapper import MISSION_ACTIVE_BY_STATE
+
+    missing = [
+        state.value
+        for state in mission_state.MissionState
+        if state.value not in MISSION_ACTIVE_BY_STATE
+    ]
+    assert not missing, f'임무 활성 매핑이 없는 상태: {missing}'
+    assert all(isinstance(v, bool) for v in MISSION_ACTIVE_BY_STATE.values())
+
+
+def test_임무_밖_상태는_귀속시키지_않는다():
+    """종료 후 telemetry가 완료된 임무의 궤적에 섞이면 안 된다.
+
+    `/mission/status`가 TRANSIENT_LOCAL이라 COMPLETED가 missionId를 담은 채
+    계속 남아 있다(S15P11A301-171). 상태로 걸러야 하는 이유다.
+    """
+    from sentinel_bridge.message_mapper import active_mission_id
+
+    mid = '11111111-2222-3333-4444-555555555555'
+    assert active_mission_id({'state': 'COMPLETED', 'missionId': mid}) is None
+    assert active_mission_id({'state': 'SAFE_IDLE', 'missionId': mid}) is None
+
+
+def test_임무_중_상태는_귀속시킨다():
+    from sentinel_bridge.message_mapper import active_mission_id
+
+    mid = '11111111-2222-3333-4444-555555555555'
+    for state in ('EXPLORING', 'INTERACTING', 'PAUSED', 'MANUAL', 'ESTOP'):
+        assert active_mission_id({'state': state, 'missionId': mid}) == mid, state
+
+
+def test_상태가_없거나_모르면_귀속시키지_않는다():
+    """오염이 누락보다 고치기 어렵다 — 그럴싸한 궤적 안에 섞여 안 보인다."""
+    from sentinel_bridge.message_mapper import active_mission_id
+
+    mid = '11111111-2222-3333-4444-555555555555'
+    assert active_mission_id(None) is None
+    assert active_mission_id({}) is None
+    assert active_mission_id({'state': 'EXPLORING'}) is None
+    assert active_mission_id({'state': '새로운상태', 'missionId': mid}) is None
+    assert active_mission_id({'state': 'EXPLORING', 'missionId': None}) is None
+
+
+def test_telemetry_봉투에_missionId가_실린다():
+    """robot_pose.mission_id가 NOT NULL이라 비면 INSERT가 실패한다."""
+    jsonschema = pytest.importorskip(
+        "jsonschema", reason="jsonschema가 없으면 계약 검증을 건너뛴다"
+    )
+    mapper = MessageMapper('SENTINEL-01')
+    mid = '11111111-2222-3333-4444-555555555555'
+    envelope = mapper.telemetry(
+        pose={'x': 1.0, 'y': 2.0, 'yaw': 0.5, 'mapId': None},
+        mission_state='EXPLORING',
+        mission_id=mid,
+    )
+    assert envelope['missionId'] == mid
+    errors = list(
+        jsonschema.Draft202012Validator(
+            _load_schema('envelope.schema.json')
+        ).iter_errors(envelope)
+    )
+    assert not errors, [error.message for error in errors]

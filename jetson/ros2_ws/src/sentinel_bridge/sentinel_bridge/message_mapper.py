@@ -82,6 +82,53 @@ SAFETY_STATE_BY_MISSION_STATE = {
     "ERROR": "FAULT",
 }
 
+# 이 상태의 telemetry를 임무에 귀속시킬 것인가 (S15P11A301-190).
+#
+# `/mission/status`는 TRANSIENT_LOCAL이라 임무가 끝나도 COMPLETED가 계속 남아
+# 있고 그 페이로드는 missionId를 담고 있다(S15P11A301-171). 그 값을 무조건 쓰면
+# **임무 종료 후의 위치가 완료된 임무의 궤적에 섞인다** — 로봇을 손으로 들어
+# 옮기는 중일 수도 있다. 그래서 상태로 걸러야 한다.
+#
+# SAFETY_STATE_BY_MISSION_STATE와 같은 규칙으로 dict에 전수를 적고 `.get()`의
+# 기본값을 쓰지 않는다. 상태가 추가될 때 조용히 True가 되면 임무 밖 데이터가
+# 궤적을 오염시키고, 조용히 False가 되면 임무 중 궤적이 통째로 사라진다.
+# 어느 쪽이든 화면을 보고 알아내기 어렵다.
+MISSION_ACTIVE_BY_STATE = {
+    # 임무를 받기 전이다. 이 구간의 telemetry는 어느 임무에도 속하지 않는다.
+    "SAFE_IDLE": False,
+    "EXPLORING": True,
+    "PERSON_APPROACHING": True,
+    "INTERACTING": True,
+    "POST_RECORDING": True,
+    "REPORTING": True,
+    # 멈춰 있어도 임무 중이다. 어디서 멈췄는지가 기록될 값이다.
+    "PAUSED": True,
+    "MANUAL": True,
+    "RETURNING": True,
+    # 임무가 끝났다. 이후 telemetry는 다음 임무를 기다리는 구간이다.
+    "COMPLETED": False,
+    # 임무 중 비상정지·오류다. 어디서 그랬는지가 사후 분석의 핵심이라
+    # 반드시 귀속시킨다. 임무 밖에서 났다면 status의 missionId가 애초에
+    # null이므로 여기서 True여도 null이 나간다.
+    "ESTOP": True,
+    "ERROR": True,
+}
+
+
+def active_mission_id(status: dict | None) -> str | None:
+    """`/mission/status` 페이로드에서 귀속시킬 missionId를 꺼낸다.
+
+    상태가 활성이 아니거나 모르는 상태면 None이다. 모르는 상태를 활성으로 보지
+    않는 것은 오염이 누락보다 고치기 어렵기 때문이다 — 누락은 궤적이 비어
+    "안 나온다"로 바로 보이지만, 오염은 그럴싸한 궤적 안에 섞여 보이지 않는다.
+    """
+    if not status:
+        return None
+    if not MISSION_ACTIVE_BY_STATE.get(status.get("state"), False):
+        return None
+    mission_id = status.get("missionId")
+    return str(mission_id) if mission_id else None
+
 
 def yaw_from_quaternion(x: float, y: float, z: float, w: float) -> float:
     """쿼터니언에서 yaw(라디안)만 뽑는다.

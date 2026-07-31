@@ -80,17 +80,27 @@ class MapUploadClient:
     # 발급
     # ------------------------------------------------------------------
 
-    def request_upload(self, *, mission_id: str) -> MapPresign:
+    def request_upload(
+        self, *, mission_id: str, map_id: str | None = None
+    ) -> MapPresign:
         """URL 두 개와 mapId를 받는다.
 
-        `mapId`는 **응답의 값**이다. 우리가 만든 UUID가 아니다 - 13.2 maps 행의
-        실제 식별자다(31-11의 "object key는 응답의 값"과 같은 원칙).
+        `map_id`를 주면 백엔드가 그 값으로 maps.id를 만든다(선택 필드,
+        S15P11A301-193). 젯슨이 임무 시작에 정한 값을 임무 내내 쓰기 위한
+        것이며, 같은 임무에 이미 지도가 있으면 기존 행이 그대로 온다.
+
+        **그래도 쓰는 것은 응답의 mapId다.** 우리가 보낸 값과 다를 수 있다 —
+        백엔드가 그 필드를 모르는 버전이면 서버 생성 값이 온다. 그때 우리
+        값을 쓰면 관제와 어긋나므로, 호출자가 차이를 보고 판단하게 한다.
         """
         url = f'{self.base_url}{MAP_UPLOAD_PATH}'
+        payload: dict[str, Any] = {'missionId': mission_id}
+        if map_id:
+            payload['mapId'] = map_id
         try:
             response = self.session.post(
                 url,
-                json={'missionId': mission_id},
+                json=payload,
                 headers=self._headers,
                 timeout=self.request_timeout,
             )
@@ -181,8 +191,14 @@ class MapUploadClient:
     # 완료
     # ------------------------------------------------------------------
 
-    def complete(self, *, map_id: str) -> bool:
+    def complete(
+        self, *, map_id: str, body: dict[str, Any] | None = None
+    ) -> bool:
         """등록을 알린다. 이미 등록된 것도 성공으로 본다.
+
+        `body`에 지도 메타데이터를 실어 보낸다(S15P11A301-193). 전부 선택
+        필드이므로 비어 있으면 본문 없이 부른다 — 백엔드가 그때는 yaml에서
+        읽는 기존 동작을 유지한다.
 
         409를 성공으로 보는 이유는 MQTT QoS 1과 같은 문제다 - PUT은 성공했는데
         완료 응답을 못 받으면 다시 시도하게 되고, 그때 409가 온다. 이것을
@@ -191,7 +207,10 @@ class MapUploadClient:
         url = f'{self.base_url}{MAP_COMPLETE_PATH_TEMPLATE.format(map_id=map_id)}'
         try:
             response = self.session.post(
-                url, headers=self._headers, timeout=self.request_timeout
+                url,
+                json=body or None,
+                headers=self._headers,
+                timeout=self.request_timeout,
             )
         except requests.RequestException as error:
             raise UploadError('COMPLETE_UNREACHABLE', str(error)[:200])

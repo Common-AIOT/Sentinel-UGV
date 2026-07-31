@@ -60,6 +60,7 @@ from rclpy.qos import (
     QoSProfile,
     ReliabilityPolicy,
 )
+from nav_msgs.msg import OccupancyGrid
 from slam_toolbox.srv import SaveMap
 from std_msgs.msg import String
 
@@ -70,6 +71,7 @@ from .map_store import (
     MapStore,
     read_map_yaml,
     write_report,
+    yaw_from_quaternion,
 )
 
 STATE_COMPLETED = 'COMPLETED'
@@ -82,6 +84,8 @@ class MapSaverNode(Node):
         self.declare_parameter('mission_status_topic', '/mission/status')
         self.declare_parameter('map_directory', '/var/lib/sentinel/maps')
         self.declare_parameter('save_map_service', '/slam_toolbox/save_map')
+        # 격자 메타데이터를 전정밀도로 얻을 출처(S15P11A301-193).
+        self.declare_parameter('map_topic', '/map')
         # 저장 재시도. slam_toolbox 내부 map_saver가 /map을 2초만 기다리고
         # 우리 /map은 2초 주기라 경합한다(모듈 문서 참고). 실패하면 발행 주기를
         # 건너뛸 만큼 쉬고 다시 부른다.
@@ -124,6 +128,34 @@ class MapSaverNode(Node):
             ),
         )
 
+        # /map을 직접 구독해 격자 메타데이터를 전정밀도로 들고 있는다
+        # (S15P11A301-193).
+        #
+        # map_saver가 쓰는 yaml은 origin을 **유효숫자 3자리로 자른다.** 같은
+        # 순간의 live 값과 비교해 확인했다.
+        #
+        #   live  y = -10.126487709221227
+        #   yaml  y = -10.1                 차이 2.65cm (해상도 5cm에서 약 0.5픽셀)
+        #
+        # 백엔드가 yaml에서 읽으면 이 오차가 그대로 남아 관제의 발견 마커가 최대
+        # 1픽셀 어긋난다. 여기서 전정밀도를 기록해 완료 호출에 실어 보낸다.
+        #
+        # TRANSIENT_LOCAL로 구독한다. slam_toolbox가 같은 설정으로 발행하므로
+        # 이 노드가 나중에 떠도 마지막 격자를 즉시 받는다. 저장 직전에만 쓰는
+        # 값이라 VOLATILE이면 그 순간 발행을 놓칠 수 있다.
+        self._last_grid_meta: dict | None = None
+        self.create_subscription(
+            OccupancyGrid,
+            str(self._param('map_topic')),
+            self._on_map,
+            QoSProfile(
+                reliability=ReliabilityPolicy.RELIABLE,
+                durability=DurabilityPolicy.TRANSIENT_LOCAL,
+                history=HistoryPolicy.KEEP_LAST,
+                depth=1,
+            ),
+        )
+
         self.save_client = self.create_client(
             SaveMap, str(self._param('save_map_service'))
         )
@@ -148,6 +180,27 @@ class MapSaverNode(Node):
     # ------------------------------------------------------------------
     # 임무 상태
     # ------------------------------------------------------------------
+
+    def _on_map(self, message: OccupancyGrid) -> None:
+        """격자 메타데이터만 보관한다. 셀 데이터는 쓰지 않는다.
+
+        `data` 배열은 수만 개라 복사하면 낭비다. 저장 시점에 필요한 것은
+        해상도·원점·크기뿐이고 그것들은 `info`에 있다.
+        """
+        info = message.info
+        self._last_grid_meta = {
+            'resolution': float(info.resolution),
+            'originX': float(info.origin.position.x),
+            'originY': float(info.origin.position.y),
+            'originYaw': yaw_from_quaternion(
+                info.origin.orientation.x,
+                info.origin.orientation.y,
+                info.origin.orientation.z,
+                info.origin.orientation.w,
+            ),
+            'width': int(info.width),
+            'height': int(info.height),
+        }
 
     def _on_status(self, message: String) -> None:
         try:
@@ -280,6 +333,7 @@ class MapSaverNode(Node):
             saved_at=self._now_iso(),
             resolution=resolution,
             origin=origin,
+            grid=self._last_grid_meta,
         )
         try:
             write_report(saved.directory / REPORT_NAME, report)

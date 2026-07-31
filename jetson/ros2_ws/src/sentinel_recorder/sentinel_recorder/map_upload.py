@@ -12,6 +12,7 @@ rclpy도 requests도 import하지 않는다. "무엇을 올릴지, 언제 다시
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -148,6 +149,98 @@ def registered_report(
             checksums['yaml'] = yaml_sha256
         updated['sha256'] = checksums
     return updated
+
+
+SESSION_NAME = 'session.json'
+
+# 이 상태에서만 임무가 살아 있다고 보고 mapId를 발급한다. sentinel_bridge의
+# MISSION_ACTIVE_BY_STATE와 같은 규칙이며 같은 이유로 전수를 적는다 —
+# 조용한 기본값을 두면 상태가 추가될 때 발급이 되거나 안 되거나 하고, 어느
+# 쪽이든 화면을 보고 알아내기 어렵다.
+MISSION_ACTIVE_BY_STATE = {
+    'SAFE_IDLE': False,
+    'EXPLORING': True,
+    'PERSON_APPROACHING': True,
+    'INTERACTING': True,
+    'POST_RECORDING': True,
+    'REPORTING': True,
+    'PAUSED': True,
+    'MANUAL': True,
+    'RETURNING': True,
+    'COMPLETED': True,
+    'ESTOP': True,
+    'ERROR': True,
+}
+
+
+def should_mint(status: dict | None) -> str | None:
+    """이 상태에서 mapId를 발급할 임무 ID. 아니면 None.
+
+    COMPLETED를 True로 두는 것이 telemetry(S15P11A301-190)와 다른 점이다.
+    거기서는 종료 후 위치가 완료된 임무 궤적을 오염시키므로 걸렀지만, 여기서는
+    **지도가 임무 종료 시 저장되므로** COMPLETED에서도 mapId가 있어야 한다.
+    임무 시작을 놓친 채 뜬 경우(재기동)에도 발급할 수 있어야 한다.
+    """
+    if not status:
+        return None
+    if not MISSION_ACTIVE_BY_STATE.get(status.get('state'), False):
+        return None
+    mission_id = status.get('missionId')
+    return str(mission_id) if mission_id else None
+
+
+def read_session_map_id(directory: Path) -> str | None:
+    """임무 시작 때 발급한 mapId를 읽는다.
+
+    `report.json`이 아니라 별 파일에 두는 이유는 시점이다. mapId는 임무
+    **시작**에 발급되고 report.json은 임무 **종료**에 map_saver가 쓴다. 같은
+    파일을 쓰면 나중 쓰기가 앞의 값을 덮는다.
+    """
+    try:
+        payload = json.loads(
+            (directory / SESSION_NAME).read_text(encoding='utf-8')
+        )
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    value = payload.get('mapId')
+    return str(value) if value else None
+
+
+def complete_body(
+    report: dict[str, Any] | None,
+    *,
+    pgm_sha256: str = '',
+    yaml_sha256: str = '',
+) -> dict[str, Any]:
+    """완료 호출에 실을 지도 메타데이터 (S15P11A301-193, 백엔드 요청).
+
+    전부 선택 필드라 비어 있으면 그냥 보내지 않는다. 백엔드는 값이 없으면
+    yaml에서 읽는 기존 동작을 유지한다.
+
+    **`report['grid']`를 쓰고 `report['origin']`은 쓰지 않는다.** 후자는
+    map_saver가 쓴 yaml을 파싱한 값이라 유효숫자 3자리로 잘려 있다
+    (-10.126487 → -10.1, 해상도 5cm에서 약 0.5픽셀). 전정밀도를 보내는 것이
+    이 요청의 핵심이므로 잘린 값을 보내면 아무것도 고쳐지지 않는다 — "전정밀도를
+    보냈다"고 믿으면서 같은 오차가 남는다.
+
+    grid가 없으면(SLAM 미기동, 격자 미수신) 크기만이라도 보낸다. pgm 헤더에서
+    읽을 수 있는 값이고 백엔드의 파싱을 아껴 준다.
+    """
+    body: dict[str, Any] = {}
+    grid = (report or {}).get('grid')
+    if isinstance(grid, dict):
+        for key in ('resolution', 'originX', 'originY', 'originYaw',
+                    'width', 'height'):
+            value = grid.get(key)
+            if value is not None:
+                body[key] = value
+    if pgm_sha256:
+        body['pgmSha256'] = pgm_sha256
+    if yaml_sha256:
+        body['yamlSha256'] = yaml_sha256
+    return body
 
 
 def failed_report(

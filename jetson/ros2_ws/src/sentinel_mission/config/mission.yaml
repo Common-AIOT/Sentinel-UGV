@@ -10,6 +10,12 @@ mission_manager:
     # 회신합니다. 본문 형식은 common/schemas/command-ack.schema.json 입니다.
     command_result_topic: /mission/command_result
 
+    # encounter 위치 스탬프용 TF 프레임 (S15P11A301-170).
+    # cloud_bridge의 communication.yaml과 같은 값이어야 telemetry의 로봇 위치와
+    # encounter 위치가 한 지도에서 맞는다.
+    map_frame: map
+    base_frame: base_footprint
+
     # 32-5가 정한 사후 녹화 3초. sentinel_recorder의 post_seconds와 같아야 한다.
     # 다르면 한쪽이 먼저 끊어 영상과 상태가 어긋난다.
     post_recording_seconds: 3

@@ -350,6 +350,82 @@ pgm을 열어 실제 복도 형상이 보이는 것까지 확인했습니다.
 `observe_candidates`가 이미 막고 있어(EXPLORING이 아니면 새 encounter를 만들지
 않음) 이중 방어가 정보만 잃는 셈이었으므로, 지우지 않도록 고쳤습니다.
 
+## 지도 업로드 (S15P11A301-171 후반부)
+
+`map_uploader`가 디렉터리를 주기적으로 훑어 `uploadState`가 `AVAILABLE`이 아닌
+지도를 올립니다. 백엔드 계약은 S15P11A301-185입니다.
+
+```text
+POST /api/v1/maps/uploads                    { missionId }
+  → { mapId, pgmKey, yamlKey, pgmUrl, yamlUrl, contentType, expiresInSec }
+PUT  <pgmUrl>, <yamlUrl>                     presigned, 스토리지 직접
+POST /api/v1/maps/uploads/{mapId}/complete
+```
+
+저장 노드와 별 프로세스입니다(32장 장애 격리). 업로드가 망 때문에 막혀도 저장은
+계속되고, 업로더가 죽어도 파일이 남아 다음 기동에서 이어받습니다. 저장 완료를
+토픽으로 받지 않고 폴링하는 이유가 그것입니다 — 프로세스가 죽은 사이에 저장된
+지도와 망이 끊겼던 동안 쌓인 지도를 **재기동만으로** 집어야 합니다(31-10).
+
+`no-mission` 디렉터리는 올리지 않습니다. `maps.mission_id`가 NOT NULL FK라
+등록할 수 없습니다. 파일은 남겨 사람이 열어볼 수 있게만 합니다.
+
+### 백엔드 주소를 틀리면 망 문제로 보이지 않습니다
+
+`backend_base_url`에 apex 도메인(`sentinel-ugv.xyz`)을 쓰면 모든 요청이 404가
+됩니다. 그곳은 Vercel 프론트입니다. **프론트가 200을 주므로 연결이 안 되는
+것처럼 보이지도 않습니다.** API는 `api.sentinel-ugv.xyz`입니다.
+
+`media_uploader`의 기본값도 apex였고 `demo.launch.py`가 손으로 덮어쓰고
+있었습니다. 지도 업로더가 같은 함정을 밟았으므로 두 기본값을 모두 API 호스트로
+올렸습니다.
+
+### 검증 (2026-07-31, 실제 백엔드)
+
+```text
+성공        mission 4355aefb-… → mapId c6522cf7-d323-410b-ad63-c8feb3544872
+            keys missions/<missionId>/maps/<mapId>/map.{pgm,yaml}
+            report.json: AVAILABLE + mapId + keys + sha256
+중복 방지   폴링을 계속 돌려도 등록 1회 (AVAILABLE이면 건너뜀)
+임무 없음   404 MISSION-001 → 재시도하지 않는 실패로 기록
+망 단절     PRESIGN_UNREACHABLE 5회, PENDING 유지, 파일 보존, mapId 없음
+복구        같은 디렉터리로 재기동 → 집어서 등록, mapId 963f4e8f-…
+토픽        /map_uploader/registered  {"missionId": …, "mapId": …}
+```
+
+업로드가 실제로 스토리지에 닿았다는 근거는 백엔드 쪽에 있습니다.
+`MapUploadService.completeUpload`가 `s3Client.headObject`로 객체 존재를
+검증하고 없으면 `MAP_UPLOAD_INCOMPLETE`를 던집니다. 완료가 성공했다는 것이
+객체가 있다는 뜻입니다.
+
+sha256은 계약에 없습니다(`MapUploadRequest`는 `missionId` 하나). 그래도 계산해
+`report.json`에 남깁니다 — 나중에 객체가 깨진 것으로 의심될 때 우리 쪽에 비교할
+값이 없으면 확인할 방법이 없습니다.
+
+### 남은 것 — mapId 수명주기
+
+`mapId`가 등록됐지만 **telemetry·encounter의 mapId는 아직 이 값을 쓰지
+않습니다.** 시점이 맞지 않습니다.
+
+```text
+임무 중    telemetry·encounter가 mapId를 필요로 한다
+임무 종료  이때 지도가 등록되고 진짜 mapId가 생긴다
+```
+
+같은 임무 안에서는 앞의 것이 뒤의 것을 참조할 수 없습니다. 그래서
+`cloud_bridge`는 SLAM 세션마다 자체 UUID를 쓰고(S15P11A301-137),
+`encounter.pose.mapId`는 null입니다(S15P11A301-170).
+
+푸는 방법은 둘입니다.
+
+| 방법 | 대가 |
+| --- | --- |
+| 발급 요청이 클라이언트가 만든 `mapId`를 받아준다 | 백엔드 변경 필요. 젯슨이 SLAM 세션 시작 때 UUID를 만들어 처음부터 일관되게 쓸 수 있다 |
+| 등록 후 `/map_uploader/registered`를 받아 소급 연결한다 | 백엔드 변경 없음. 임무 중 발행된 값은 여전히 다른 UUID이므로 관제가 두 값을 이어야 한다 |
+
+첫 번째가 옳지만 백엔드 합의가 필요합니다. 지금은 `registered` 토픽을
+TRANSIENT_LOCAL로 발행해 두어 어느 쪽으로 가든 소비할 수 있게만 했습니다.
+
 ## 부팅 복구
 
 `.partial`이 남아 있으면 지우고 `CORRUPT`로 표시합니다. **재다중화를 다시

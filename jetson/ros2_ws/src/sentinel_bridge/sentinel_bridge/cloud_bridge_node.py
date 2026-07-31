@@ -47,6 +47,7 @@ from std_msgs.msg import String
 from .command_relay import CommandRelay
 from .message_mapper import (
     SAFETY_STATE_BY_MISSION_STATE,
+    active_mission_id,
     MessageMapper,
     utc_now_iso,
     yaw_from_quaternion,
@@ -692,7 +693,10 @@ class CloudBridgeNode(Node):
             mission_state=mission_state,
             control_mode=control_mode,
             safety_state=safety_state,
-            active_mission_id=None,
+            # 활성 임무일 때만 채운다(S15P11A301-190). 여기가 None으로 박혀
+            # 있어서 관제가 "지금 어떤 임무를 하고 있나"를 state만으로는 알 수
+            # 없었다.
+            active_mission_id=active_mission_id(status),
             components={
                 'camera': bool(self._fresh(self._camera_last_seen)),
                 'lidar': bool(self._fresh(self._scan_last_seen)),
@@ -705,6 +709,14 @@ class CloudBridgeNode(Node):
     def _publish_telemetry(self) -> None:
         if not self.mqtt.connected:
             return
+        # 봉투의 missionId가 백엔드에서 robot_pose.mission_id가 되고 그 컬럼은
+        # NOT NULL이다(S15P11A301-190). 즉 이 값이 비면 행이 mission_id 없이
+        # 쌓이는 것이 아니라 INSERT가 제약 위반으로 실패한다. MqttGateway가
+        # 예외를 흡수하므로 젯슨 쪽에서는 아무 징후도 보이지 않는다 — 임무
+        # 5개에서 telemetry가 0건인 것을 관제 API로 확인해야 알았다.
+        mission_id = active_mission_id(
+            self._mission_status if self._mission_manager_alive() else None
+        )
         message = self.mapper.telemetry(
             # 엔코더·ESP32가 붙기 전에는 나머지가 null이다. 31-6 전체 형태를
             # 유지해 나중에 필드를 추가하지 않도록 한다.
@@ -719,6 +731,7 @@ class CloudBridgeNode(Node):
                 if self._mission_manager_alive()
                 else None
             ),
+            mission_id=mission_id,
         )
         self.mqtt.publish('telemetry', message)
 

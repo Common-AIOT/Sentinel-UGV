@@ -12,11 +12,14 @@ import com.sentinel.backend.common.exception.BusinessException;
 import com.sentinel.backend.common.exception.ErrorCode;
 import com.sentinel.backend.media.dto.MapCompleteResponse;
 import com.sentinel.backend.media.dto.MapUploadResponse;
+import com.sentinel.backend.media.dto.MapViewResponse;
 
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
+import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignRequest;
 import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignRequest;
 
 /**
@@ -92,6 +95,30 @@ public class MapUploadService {
         return new MapCompleteResponse(mapId);
     }
 
+    /**
+     * 임무의 지도 조회용 Presigned GET URL 쌍 (S15P11A301-187). 관제는 missionId 만
+     * 알고 시작하므로 임무 기준으로 조회한다. media view-url 과 같은 정책으로
+     * 객체 실재는 검증하지 않는다 — 완료 전 지도면 다운로드가 404 로 실패할 뿐이다.
+     */
+    public MapViewResponse createViewUrls(UUID missionId, Duration ttl) {
+        Boolean missionExists = jdbc.queryForObject(
+                "SELECT EXISTS(SELECT 1 FROM missions WHERE id = ?)", Boolean.class, missionId);
+        if (!Boolean.TRUE.equals(missionExists)) {
+            throw new BusinessException(ErrorCode.MISSION_NOT_FOUND);
+        }
+        List<Object[]> rows = jdbc.query(
+                "SELECT id, s3_key_pgm, s3_key_yaml FROM maps WHERE mission_id = ? ORDER BY created_at LIMIT 1",
+                (rs, i) -> new Object[]{rs.getObject("id", UUID.class),
+                        rs.getString("s3_key_pgm"), rs.getString("s3_key_yaml")}, missionId);
+        if (rows.isEmpty()) {
+            throw new BusinessException(ErrorCode.MAP_NOT_FOUND);
+        }
+        Object[] map = rows.getFirst();
+        return new MapViewResponse((UUID) map[0],
+                presignGet((String) map[1], ttl), presignGet((String) map[2], ttl),
+                ttl.toSeconds());
+    }
+
     /** 29.6 스타일 결정적 key. 재시도에도 같은 위치에 덮어쓴다. */
     private String pgmKey(UUID missionId, UUID mapId) {
         return "missions/%s/maps/%s/map.pgm".formatted(missionId, mapId);
@@ -108,6 +135,18 @@ public class MapUploadService {
             throw new BusinessException(ErrorCode.MAP_UPLOAD_INCOMPLETE,
                     "스토리지에 객체가 없습니다: " + objectKey);
         }
+    }
+
+    private String presignGet(String objectKey, Duration ttl) {
+        GetObjectRequest get = GetObjectRequest.builder()
+                .bucket(props.bucket())
+                .key(objectKey)
+                .build();
+        GetObjectPresignRequest presignRequest = GetObjectPresignRequest.builder()
+                .signatureDuration(ttl)
+                .getObjectRequest(get)
+                .build();
+        return presigner.presignGetObject(presignRequest).url().toString();
     }
 
     private String presignPut(String objectKey, Duration ttl) {

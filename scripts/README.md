@@ -45,6 +45,7 @@
 # 데모 전체 스택. 개별 기능은 launch 인자로 끌 수 있다.
 ./scripts/demo_up.sh
 ./scripts/demo_up.sh enable_detector:=false
+./scripts/demo_up.sh enable_viz:=true        # Foxglove 시각화까지 (아래 참고)
 ```
 
 `start_sentinel.sh`는 센서·스트리밍 경로를 빠르게 확인하는 개발용 진입점이고,
@@ -70,6 +71,78 @@ sudo systemctl disable --now sentinel-demo
 서비스 로그는 `journalctl -u sentinel-demo -f`로 확인한다. 유닛의 `ExecStart`는
 `/home/orin/projects/S15P11A301`을 기준으로 하므로 저장소 경로가 다르면 설치
 전에 해당 줄을 맞춰야 한다.
+
+### 시각화(Foxglove) 켜기
+
+SLAM 지도·스캔·TF를 눈으로 보는 수단이다(S15P11A301-177). **기본은 꺼져 있고**
+켜는 방법이 두 가지다.
+
+```bash
+# 1) 스택을 처음 띄울 때 함께
+./scripts/demo_up.sh enable_viz:=true
+
+# 2) 이미 돌고 있는 스택에 붙일 때 — 이쪽은 스택을 재시작하지 않는다
+ros2 launch sentinel_bringup viz.launch.py
+```
+
+**2번을 우선 고려한다.** 스택을 재시작하면 그때까지 쌓은 SLAM 지도를 잃는다.
+지도는 메모리에만 있고 임무 종료 시점에 저장되므로(S15P11A301-171), 중간에
+재시작하면 처음부터 다시 그린다.
+
+노트북 Foxglove Studio에서 `ws://jetson.sentinel-ugv.xyz:8765`로 접속하고 연결
+유형은 **"Foxglove WebSocket"** 을 고른다. Rosbridge를 고르면 핸드셰이크가 깨지고
+서버 로그에 `Dropping client ...: handshake`가 남는다.
+
+#### enable_viz를 줬는데도 안 뜨면 재빌드부터 확인한다
+
+```text
+[launch.user]: [demo.launch] sentinel_bringup/viz.launch.py 가 없어 건너뛴다.
+```
+
+이 줄이 보이면 인자 문제가 아니라 **설치본에 launch 파일이 없는 것**이다.
+`--symlink-install`이라도 **새 파일은 다시 빌드해야 심링크가 생긴다.** 기존 파일
+수정만 즉시 반영된다.
+
+```bash
+colcon build --symlink-install --packages-select sentinel_bringup \
+  --base-paths jetson/ros2_ws/src \
+  --build-base jetson/ros2_ws/build --install-base jetson/ros2_ws/install
+```
+
+이 증상이 헷갈리는 이유는 `demo.launch.py`가 없는 파일을 만나면 로그만 남기고
+넘어가도록 만들어져 있어서다(S15P11A301-156의 장애 격리). **스택이 정상 기동하므로
+인자가 안 먹은 것처럼 보인다.** 브랜치를 옮긴 뒤에 재발할 수 있다.
+
+#### 8765는 인증이 없고 이 기기는 공인 IP에 있다
+
+작업이 끝나면 내린다.
+
+```bash
+pkill -f foxglove_bridge
+```
+
+이 기기는 NAT 뒤가 아니다. `jetson.sentinel-ugv.xyz`가 이 기기를 직접 가리키고
+임의 포트가 외부에서 닿는다(WHEP 8889가 그렇게 동작한다). 그런데
+`foxglove_bridge`의 기본 capability는 읽기만이 아니다.
+
+```text
+[clientPublish, parameters, parametersSubscribe, services, connectionGraph, assets]
+```
+
+**토픽 발행·서비스 호출·파라미터 변경이 되고 인증이 없다.** 켜 둔 동안은 누구나
+로봇을 조작할 수 있다는 뜻이다. `viz_address` 기본값도 `0.0.0.0`이다.
+
+포트를 열지 않고 쓰려면 localhost로 묶고 SSH 터널을 쓴다.
+
+```bash
+ros2 launch sentinel_bringup viz.launch.py viz_address:=127.0.0.1
+ssh -L 8765:localhost:8765 orin@jetson.sentinel-ugv.xyz   # 노트북에서
+# Foxglove 접속 주소는 ws://localhost:8765
+```
+
+`demo_up.sh`에 `enable_viz:=true`를 박아 두지 않는 이유가 이것이다. 이 스크립트는
+systemd가 부팅마다 부르는 진입점이므로(위 「부팅 자동 시작」), 박아 두면 무인
+상태로 이 포트가 상시 열린다.
 
 ### 센서는 카메라만이 아니다
 

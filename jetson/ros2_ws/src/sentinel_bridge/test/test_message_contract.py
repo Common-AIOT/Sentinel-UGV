@@ -1245,7 +1245,7 @@ def test_상태가_없거나_모르면_귀속시키지_않는다():
 
 
 def test_telemetry_봉투에_missionId가_실린다():
-    """robot_pose.mission_id가 NOT NULL이라 비면 INSERT가 실패한다."""
+    """비면 robot_pose.mission_id가 null이 되어 관제가 조회할 수 없다."""
     jsonschema = pytest.importorskip(
         "jsonschema", reason="jsonschema가 없으면 계약 검증을 건너뛴다"
     )

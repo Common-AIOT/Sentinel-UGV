@@ -733,11 +733,13 @@ class CloudBridgeNode(Node):
     def _publish_telemetry(self) -> None:
         if not self.mqtt.connected:
             return
-        # 봉투의 missionId가 백엔드에서 robot_pose.mission_id가 되고 그 컬럼은
-        # NOT NULL이다(S15P11A301-190). 즉 이 값이 비면 행이 mission_id 없이
-        # 쌓이는 것이 아니라 INSERT가 제약 위반으로 실패한다. MqttGateway가
-        # 예외를 흡수하므로 젯슨 쪽에서는 아무 징후도 보이지 않는다 — 임무
-        # 5개에서 telemetry가 0건인 것을 관제 API로 확인해야 알았다.
+        # 봉투의 missionId가 백엔드에서 robot_pose.mission_id가 된다
+        # (S15P11A301-190). 이 값이 비면 그 컬럼이 null인 행이 쌓이고,
+        # missionId로 조회하는 관제 API가 아무것도 못 찾는다.
+        #
+        # 젯슨 쪽에는 아무 징후도 없다. 발행은 성공하고 적재도 성공하며 서버
+        # 오류도 나지 않는다. 임무 5개에서 telemetry가 0건인 것을 관제 API로
+        # 조회해서야 알았다.
         mission_id = active_mission_id(
             self._mission_status if self._mission_manager_alive() else None
         )

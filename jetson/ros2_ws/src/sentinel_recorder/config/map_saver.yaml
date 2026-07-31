@@ -1,0 +1,26 @@
+# 지도 저장 설정 (S15P11A301-171, 명세 13.2·31-10)
+/**:
+  ros__parameters:
+    # mission_manager가 TRANSIENT_LOCAL로 발행한다. COMPLETED 전이를 보고 저장한다.
+    mission_status_topic: /mission/status
+
+    # 링 버퍼·pending과 같은 볼륨에 둔다. 31-10이 "업로드 대기 영상·지도"를
+    # 로컬 보존 대상으로 정했으므로 재부팅에도 남아야 한다(/tmp 금지).
+    map_directory: /var/lib/sentinel/maps
+
+    # slam_toolbox가 노출하는 서비스. 이 노드는 slam_toolbox가 떠 있을 때만
+    # 저장할 수 있다 — 없으면 경고를 남기고 넘어간다.
+    save_map_service: /slam_toolbox/save_map
+
+    # 저장 재시도 (실측 근거).
+    #
+    # slam_toolbox 내부 map_saver는 /map을 2초만 구독하고 기다립니다(nav2 map_io
+    # 기본값). 우리 /map은 slam_toolbox.yaml의 map_update_interval: 2.0 때문에
+    # 2초 주기로 발행되어 두 값이 정확히 맞물립니다. 실측에서 한 번은 잡히고 한
+    # 번은 "Failed to spin map subscription"으로 놓쳤습니다(result=255).
+    #
+    # 지연을 발행 주기보다 크게 둬서 다음 발행을 확실히 건너뜁니다.
+    # map_update_interval을 낮추는 방법도 있지만 SLAM의 CPU를 상시로 더 쓰고,
+    # 저장은 임무당 한 번뿐이라 재시도가 값이 쌉니다.
+    save_retry_limit: 4
+    save_retry_delay_seconds: 2.5

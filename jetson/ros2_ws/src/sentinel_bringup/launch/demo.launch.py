@@ -142,6 +142,11 @@ def generate_launch_description():
                  {'webrtc_encryption': LaunchConfiguration('webrtc_encryption')}),
         _include('sentinel_recorder', 'recorder.launch.py',
                  'enable_recorder', 8.0),
+        # 지도 저장 (S15P11A301-171). recorder와 같은 스위치를 쓴다 — 둘 다
+        # "산출물을 로컬에 남긴다"이고 따로 끌 이유가 없다. SLAM이 없으면
+        # 서비스가 없어 경고만 남기고 넘어간다.
+        _include('sentinel_recorder', 'map_saver.launch.py',
+                 'enable_recorder', 8.0),
         # media_uploader는 recorder.launch.py에 없어서 여기서 띄운다.
         # backend_base_url 기본값이 apex 도메인이라 API 호스트로 바로잡는다 —
         # 실물 검증(S15P11A301-140)에서 매번 손으로 넘기던 값이다.

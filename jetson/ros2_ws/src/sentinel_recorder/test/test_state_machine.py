@@ -740,3 +740,159 @@ def test_duplicate_recording_would_collide_on_the_object_key():
     assert first == second, (
         'mediaId가 달라도 key가 같다. 그래서 두 번째 업로드가 유니크 제약을 위반한다'
     )
+
+
+# ----------------------------------------------------------------------
+# 지도 저장 (S15P11A301-171)
+# ----------------------------------------------------------------------
+
+
+def test_map_store_paths_are_absolute_and_mission_scoped(tmp_path):
+    """`save_map`에 넘길 경로가 절대경로여야 한다.
+
+    상대경로를 주면 slam_toolbox가 노드의 작업 디렉터리에 쓴다. launch로 띄운
+    노드의 작업 디렉터리는 예측할 수 없어서 지도를 찾지 못한다.
+    """
+    from sentinel_recorder.map_store import MapStore
+
+    store = MapStore(tmp_path / 'maps')
+    mission = '4bde8ad1-c74b-4d42-bec3-9f71af94b41a'
+    basename = store.basename_for(mission)
+
+    assert basename.is_absolute()
+    assert mission in str(basename)
+    # slam_toolbox가 .pgm/.yaml을 붙이므로 확장자가 없어야 한다.
+    assert basename.suffix == ''
+
+
+def test_map_store_falls_back_when_mission_is_unknown(tmp_path):
+    """missionId가 없어도 파일은 남긴다.
+
+    개발 중에는 관제 없이 젯슨만 띄우는 일이 잦고 그때 만든 지도도 사람이
+    열어볼 값이 있다. 백엔드 maps 행은 만들 수 없지만(mission_id가 NOT NULL FK)
+    그것은 업로더가 판단할 일이다.
+    """
+    from sentinel_recorder.map_store import NO_MISSION_DIRNAME, MapStore
+
+    store = MapStore(tmp_path / 'maps')
+    assert NO_MISSION_DIRNAME in str(store.basename_for(None))
+
+
+def test_incomplete_map_is_not_reported_complete(tmp_path):
+    """pgm만 있고 yaml이 없으면 못 쓴다.
+
+    yaml에 해상도와 원점이 있어야 관제가 발견 좌표(S15P11A301-170)를 지도 위에
+    얹을 수 있다. 반쪽을 완료로 보면 업로더가 쓸 수 없는 것을 올린다.
+    """
+    from sentinel_recorder.map_store import MapStore
+
+    store = MapStore(tmp_path / 'maps')
+    directory = store.directory_for('m1')
+    directory.mkdir(parents=True)
+    (directory / 'map.pgm').write_bytes(b'\x00' * 100)
+
+    saved = store.scan('m1')
+    assert saved is not None
+    assert not saved.complete, 'yaml이 없으면 완료가 아니다'
+
+    (directory / 'map.yaml').write_text('resolution: 0.05\n')
+    assert store.scan('m1').complete
+
+
+def test_scan_returns_none_when_nothing_saved(tmp_path):
+    from sentinel_recorder.map_store import MapStore
+
+    assert MapStore(tmp_path / 'maps').scan('m1') is None
+
+
+def test_map_yaml_resolution_and_origin_are_parsed():
+    """slam_toolbox가 만드는 yaml에서 해상도와 원점을 꺼낸다.
+
+    실측 형식을 그대로 쓴다. `yaml` 모듈을 쓰지 않는 이유는 값 두 개를 위해
+    의존성을 더할 이유가 없기 때문이다.
+    """
+    import tempfile
+
+    from sentinel_recorder.map_store import read_map_yaml
+
+    with tempfile.NamedTemporaryFile('w', suffix='.yaml', delete=False) as handle:
+        handle.write(
+            'image: map.pgm\n'
+            'mode: trinary\n'
+            'resolution: 0.05\n'
+            'origin: [-7.36, -7.94, 0]\n'
+            'negate: 0\n'
+            'occupied_thresh: 0.65\n'
+            'free_thresh: 0.25\n'
+        )
+        path = Path(handle.name)
+
+    resolution, origin = read_map_yaml(path)
+    assert resolution == 0.05
+    assert origin == [-7.36, -7.94, 0.0]
+    path.unlink()
+
+
+def test_map_yaml_parse_failure_returns_none(tmp_path):
+    """형식이 바뀌면 None이다. 예외를 올려 저장을 실패시키지 않는다."""
+    from sentinel_recorder.map_store import read_map_yaml
+
+    broken = tmp_path / 'broken.yaml'
+    broken.write_text('resolution: not-a-number\n')
+    assert read_map_yaml(broken) == (None, None)
+    assert read_map_yaml(tmp_path / 'missing.yaml') == (None, None)
+
+
+def test_map_report_carries_what_the_maps_row_needs(tmp_path):
+    """보고서가 13.2의 maps 행과 업로드에 필요한 것을 담아야 한다.
+
+    업로더는 이 보고서만 읽고 발급 요청을 만들 수 있어야 한다 — yaml을 다시
+    파싱하게 하면 두 곳이 어긋난다.
+    """
+    from sentinel_recorder.map_store import (
+        UPLOAD_STATE_PENDING,
+        MapStore,
+        write_report,
+    )
+
+    store = MapStore(tmp_path / 'maps')
+    directory = store.directory_for('m1')
+    directory.mkdir(parents=True)
+    (directory / 'map.pgm').write_bytes(b'\x00' * 92364)
+    (directory / 'map.yaml').write_text('resolution: 0.05\n')
+
+    saved = store.scan('m1')
+    report = store.build_report(
+        mission_id='m1',
+        saved=saved,
+        saved_at='2026-07-30T09:00:00.000Z',
+        resolution=0.05,
+        origin=[-7.36, -7.94, 0.0],
+    )
+
+    assert report['missionId'] == 'm1'
+    assert report['uploadState'] == UPLOAD_STATE_PENDING
+    assert report['files']['pgmSizeBytes'] == 92364
+    assert report['resolution'] == 0.05
+    assert report['origin'] == [-7.36, -7.94, 0.0]
+
+    # 원자적으로 쓰이고 .tmp를 남기지 않는다.
+    write_report(directory / 'report.json', report)
+    assert (directory / 'report.json').exists()
+    assert not list(directory.glob('*.tmp'))
+
+
+def test_mission_status_schema_carries_mission_id():
+    """지도 저장이 `/mission/status`만 보고 임무를 알 수 있어야 한다.
+
+    없으면 각 노드가 `/mission/signal`의 MISSION_START를 따로 엿봐야 하고,
+    늦게 뜬 노드는 그 값을 영영 못 받는다.
+    """
+    repo_root = Path(__file__).resolve().parents[5]
+    schema = json.loads(
+        (repo_root / 'common' / 'schemas' / 'mission-status.schema.json').read_text(
+            encoding='utf-8'
+        )
+    )
+    assert 'missionId' in schema['properties']
+    assert 'null' in schema['properties']['missionId']['type']

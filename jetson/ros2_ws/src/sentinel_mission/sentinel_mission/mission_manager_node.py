@@ -488,6 +488,10 @@ class MissionManagerNode(Node):
             'previousState': previous.value if previous else None,
             'reason': reason or None,
             'encounterId': machine.encounter_id,
+            # 이 토픽만 보고 "지금 어느 임무인가"를 알 수 있어야 한다
+            # (S15P11A301-171). 없으면 구독자가 /mission/signal의 MISSION_START를
+            # 따로 엿봐야 하고, 늦게 뜬 노드는 그 값을 영영 못 받는다.
+            'missionId': machine.mission_id,
             'personCount': machine.person_count,
             # 26.4의 복구 판단은 checkpoint를 읽어야 하며 이 티켓 범위가 아니다.
             'recoveryRequired': False,

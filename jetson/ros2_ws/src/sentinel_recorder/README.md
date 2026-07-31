@@ -290,6 +290,66 @@ missions/{missionId}/encounters/{encounterId}/event.mp4
 만든 설계가 무너집니다. 500과 망 오류를 횟수로 구분할 수 없으므로 그 방향은 막힌
 길입니다.
 
+## 지도 저장 (S15P11A301-171)
+
+임무가 끝나면(`/mission/status`의 `COMPLETED`) SLAM 지도를 로컬에 남깁니다.
+
+```text
+/var/lib/sentinel/maps/<missionId>/map.pgm      점유격자
+                                  /map.yaml    해상도·원점
+                                  /report.json 업로드 대기 표시
+```
+
+31-10이 "업로드 대기 영상·**지도**"를 로컬 보존 대상으로 정했습니다. 망이 끊긴 채
+임무가 끝나도 지도를 잃지 않습니다.
+
+**업로드는 아직 하지 않습니다.** 지도 업로드 API가 백엔드에 없습니다(2026-07-30
+확인, Swagger에 maps 엔드포인트 0건). `report.json`의
+`uploadState: UPLOAD_PENDING`이 그 경계이고, API가 생기면 이 디렉터리를 훑는
+업로더만 붙이면 됩니다 — 저장 코드는 바뀌지 않습니다.
+
+`missionId`가 없으면 `no-mission/`에 저장합니다. 백엔드 `maps` 행은 만들 수 없지만
+(`mission_id`가 NOT NULL FK) 개발 중 관제 없이 젯슨만 띄운 지도도 사람이 열어볼
+값이 있습니다.
+
+### 저장이 실패하면 다시 부릅니다
+
+`save_map`은 slam_toolbox 안의 lifecycle map_saver가 처리하고, 그것은 `/map`을
+**2초만 기다립니다**(nav2 map_io 기본값). 우리 `/map`은
+`slam_toolbox.yaml`의 `map_update_interval: 2.0` 때문에 2초 주기라 두 값이 정확히
+맞물립니다. 실측에서 한 번은 잡히고 한 번은 놓쳤습니다.
+
+```text
+[map_saver]: Failed to spin map subscription    ← 놓친 경우, result=255
+```
+
+그래서 실패하면 2.5초 뒤 다시 부릅니다(최대 4회). 발행 주기를 한 번 건너뛰면
+잡힙니다. `map_update_interval`을 낮추는 방법도 있지만 SLAM의 CPU를 상시로 더 쓰고,
+저장은 임무당 한 번뿐이라 재시도가 값이 쌉니다.
+
+서비스 응답 코드만 믿지 않고 **파일을 직접 확인**합니다. 성공 코드가 왔는데 파일이
+없는 경우를 이벤트 썸네일에서 겪었습니다(S15P11A301-131).
+
+### 검증 (2026-07-31)
+
+관제 START → 탐사 → STOP 전 구간을 실제 임무·실제 백엔드로 돌렸습니다.
+
+```text
+missionId   4355aefb-78a6-4c3b-837e-f9ecea85f052 디렉터리에 저장
+파일        map.pgm 63,455B · map.yaml 121B · report.json 346B
+지도        244x260셀 = 12.2m x 13.0m, 해상도 0.05
+            점유 1.2% · 자유 14.9% · 미지 83.9%
+uploadState UPLOAD_PENDING
+```
+
+pgm을 열어 실제 복도 형상이 보이는 것까지 확인했습니다.
+
+첫 검증에서 `missionId`가 `no-mission`으로 저장됐습니다. `mission_state`의
+`MISSION_COMPLETED` 처리가 전이 **전에** `mission_id`를 지워(S15P11A301-143)
+발행되는 상태에 이미 null이 실렸기 때문입니다. 지우던 근거는
+`observe_candidates`가 이미 막고 있어(EXPLORING이 아니면 새 encounter를 만들지
+않음) 이중 방어가 정보만 잃는 셈이었으므로, 지우지 않도록 고쳤습니다.
+
 ## 부팅 복구
 
 `.partial`이 남아 있으면 지우고 `CORRUPT`로 표시합니다. **재다중화를 다시

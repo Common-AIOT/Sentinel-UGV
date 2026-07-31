@@ -87,6 +87,12 @@ class CloudBridgeNode(Node):
         self.declare_parameter('telemetry_period_seconds', 0.5)
         self.declare_parameter('camera_topic', '/camera/image_raw/compressed')
         self.declare_parameter('scan_topic', '/scan')
+        # 탐지 노드 생존 판정용. 값을 소비하지 않고 도착 시각만 본다
+        # (S15P11A301-192). encounter는 mission_manager가 만들어 보내므로
+        # 이 노드가 후보를 해석할 이유는 없다.
+        self.declare_parameter(
+            'candidates_topic', '/perception/person_candidates'
+        )
         # mission_manager가 발행하는 임무 상태(26.2). 이 노드는 읽기만 한다.
         self.declare_parameter('mission_status_topic', '/mission/status')
         # 관제 명령 경로 (S15P11A301-143). cmd/mission → 신호, 결과 → acks.
@@ -135,6 +141,7 @@ class CloudBridgeNode(Node):
         # 않으므로 콜백을 가볍게 유지한다.
         self._camera_last_seen: float | None = None
         self._scan_last_seen: float | None = None
+        self._candidates_last_seen: float | None = None
         # 마지막으로 받은 임무 상태. mission_manager가 상태 변경 시에만 발행하므로
         # 여기 들고 있다가 1초 heartbeat마다 관제로 내보낸다(31-4).
         self._mission_status: dict | None = None
@@ -166,6 +173,16 @@ class CloudBridgeNode(Node):
         )
         self.create_subscription(
             LaserScan, self._param('scan_topic'), self._on_scan, sensor_qos
+        )
+        # 탐지 노드 생존 (S15P11A301-192).
+        #
+        # 후보 토픽은 사람이 없어도 주기적으로 발행되므로(0.2초) heartbeat로 쓸 수
+        # 있다. 이 구독을 두는 이유는 탐지 노드가 죽어도 스택 나머지가 정상
+        # 기동하기 때문이다 — 화면상으로는 정상이고 로그를 뒤져야 안다.
+        # 실제로 그 상태로 여러 검증을 돌린 뒤에야 알아챘다.
+        self.create_subscription(
+            String, self._param('candidates_topic'),
+            self._on_candidates, sensor_qos,
         )
 
         # 임무 상태는 TRANSIENT_LOCAL로 구독한다. mission_manager가 같은 설정으로
@@ -287,6 +304,10 @@ class CloudBridgeNode(Node):
 
     def _on_scan(self, _message: LaserScan) -> None:
         self._scan_last_seen = self._now()
+
+    def _on_candidates(self, _message: String) -> None:
+        """탐지 노드가 살아 있다는 신호. 내용은 보지 않는다."""
+        self._candidates_last_seen = self._now()
 
     def _on_mission_status(self, message: String) -> None:
         """mission_manager의 임무 상태를 받아 둔다.
@@ -700,6 +721,9 @@ class CloudBridgeNode(Node):
             components={
                 'camera': bool(self._fresh(self._camera_last_seen)),
                 'lidar': bool(self._fresh(self._scan_last_seen)),
+                # 탐지 노드가 죽어도 스택 나머지는 정상 기동한다. 이 값이 없으면
+                # 관제 화면상 정상으로 보인다(S15P11A301-192).
+                'detector': bool(self._fresh(self._candidates_last_seen)),
                 # 관제가 "임무 상태가 왜 비어 있나"를 구분할 수 있게 한다.
                 'missionManager': alive,
             },

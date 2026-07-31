@@ -1285,6 +1285,12 @@ CI 검증) 변경이므로 백엔드 파싱·DB·프론트 표시·명세 33-6�
 재질문 1회나 CPU STT 지연이 겹치면 초과했다. 다만 예산 상향은 부차적이다 — 얼마로
 늘려도 초과는 언젠가 발생하므로 등급 보존이 본질이다.
 
+> **후속 수정.** 예산 기본값이 `ConversationMachine`과 `VoiceSessionRunner` 두 곳에
+> 복제되어 있어서, 상태머신만 180으로 올렸을 때 실행기가 120을 그대로 넘겨
+> **`pipeline`·`ros_node` 두 실기 경로에는 반영되지 않았다.** 지금은
+> `conversation.SESSION_TIMEOUT_SECONDS` 한 곳만 값을 갖는다. 실행기 기본값이
+> 상태머신과 어긋나면 깨지는 회귀 테스트를 함께 뒀다.
+
 > `ruleVersion`이 `voice-risk-v1.0` → `voice-risk-v1.1`로 올랐다. 같은 버전 문자열이
 > 서로 다른 계산을 뜻하면 보고서를 감사할 수 없다. 과거 보고서도 검증되도록
 > `common/schemas/interaction-report.schema.json`은 두 버전을 모두 허용한다.

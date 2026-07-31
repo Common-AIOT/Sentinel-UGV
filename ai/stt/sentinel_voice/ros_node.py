@@ -265,13 +265,10 @@ class VoiceSessionNode(Node):
         )
 
     def _announce_delivery(self, delivery: DeliveryResult) -> None:
-        """전송 상태에 맞는 안내를 재생한다.
+        """전송 상태에 맞는 안내를 재생한다. 실패는 기록만 하고 노드를 죽이지 않는다.
 
-        즉시 재개 정책(관제 전달 완료 = 다음 지역 탐사)이므로, 임무가 진행 중인
-        상태라면 탐사 문구를 함께 말한다. 이 시점에는 아직 DIALOGUE_ENDED를 보내지
-        않았으므로 재개를 관측할 수 없고, 대신 중단·정지·종료 상태가 아님을 확인한다.
-
-        재생 실패는 기록만 하고 노드를 죽이지 않는다.
+        아직 DIALOGUE_ENDED를 보내지 않아 재개를 관측할 수 없으므로, 탐사 문구는
+        임무 상태가 중단·정지·종료가 아님을 확인하고 쓴다.
         """
 
         code = delivery.guide_code

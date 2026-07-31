@@ -18,6 +18,7 @@ import com.sentinel.backend.mission.dto.CreateMissionRequest;
 import com.sentinel.backend.mission.dto.MissionDetailResponse;
 import com.sentinel.backend.mission.dto.MissionSummaryResponse;
 import com.sentinel.backend.mission.dto.TelemetryPointResponse;
+import com.sentinel.backend.mission.dto.TrajectoryResponse;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -65,6 +66,19 @@ public class MissionController {
     @GetMapping("/{missionId}")
     public ApiResponse<MissionDetailResponse> detail(@PathVariable UUID missionId) {
         return ApiResponse.success(missionService.findDetail(missionId));
+    }
+
+    /** 임무 궤적 (27.4). 지도 렌더링 화면이 지도 위에 주행 경로를 그릴 때 쓴다. */
+    @Operation(summary = "임무 궤적 조회",
+            description = "로봇이 지나간 경로를 시간순 좌표 목록으로 줍니다. 좌표는 지도와 같은 기준(map 좌표계, 미터)이라 "
+                    + "지도 위에 바로 그릴 수 있고, mapId 로 어느 지도와 같은 좌표계인지 확인합니다(지도 등록 전엔 null). "
+                    + "기본은 전 구간(0.5초 간격)이고, maxPoints 를 주면 균등 간격으로 줄여 줍니다 — 마지막 점은 항상 포함합니다.")
+    @GetMapping("/{missionId}/trajectory")
+    public ApiResponse<TrajectoryResponse> trajectory(
+            @PathVariable UUID missionId,
+            @Parameter(description = "최대 점 수(2 이상). 생략 시 전 구간")
+            @RequestParam(required = false) Integer maxPoints) {
+        return ApiResponse.success(missionService.findTrajectory(missionId, maxPoints));
     }
 
     /**

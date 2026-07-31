@@ -184,14 +184,6 @@ export const INITIAL_SENSORS: SensorReading = {
   timestamp: Date.now(),
 };
 
-export const DETECTION_LOCATIONS = [
-  "Sector A-3, Room 102",
-  "Corridor B, Junction 4",
-  "Sector C-1, Stairwell",
-  "Room 205, East Wing",
-  "Basement Level 1",
-  "Rooftop Access Shaft",
-];
 
 // Seeded PRNG so module-eval values are identical on server and client (avoids
 // Next.js hydration mismatches; the timestamps are pinned to the hour below).

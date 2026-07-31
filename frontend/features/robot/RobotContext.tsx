@@ -7,7 +7,6 @@ import {
   PATROL_PATH,
   GRID_SIZE,
   INITIAL_SENSORS,
-  DETECTION_LOCATIONS,
   EXPLORATION_LIMIT_SEC,
   BATTERY_ABORT_PCT,
   type SensorReading,
@@ -46,14 +45,11 @@ interface RobotContextValue {
   status: RobotStatus;
   // Sensors
   sensors: SensorReading;
-  // Detections
+  // Detections — 실 encounter 폴링이 채운다. 상단 배지의 출처다.
   detections: DetectionEvent[];
-  activeDetection: DetectionEvent | null;
-  dismissDetection: () => void;
   // Control
   sendControl: (x: number, y: number) => void;
   sendCommand: (type: string) => Promise<void>;
-  tagEvent: () => void;
   // Mission
   missionId: string | null;
   // Video
@@ -72,7 +68,6 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
   const [pathHistory, setPathHistory] = useState<RobotPos[]>([{ r: 10, c: 10, heading: 0 }]);
   const [sensors, setSensors] = useState<SensorReading>(INITIAL_SENSORS);
   const [detections, setDetections] = useState<DetectionEvent[]>([]);
-  const [activeDetection, setActiveDetection] = useState<DetectionEvent | null>(null);
   const [videoConnected, setVideoConnected] = useState(false);
   const [videoQuality, setVideoQuality] = useState<"1080p" | "720p">("1080p");
   const [wsConnected, setWsConnected] = useState(false);
@@ -232,66 +227,18 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
       });
     }, 2000);
 
-    // Random detection events.
-    // 명세 26.2의 encounter 시퀀스를 모의한다:
-    // EXPLORING → PERSON_APPROACHING → INTERACTING → POST_RECORDING → REPORTING → EXPLORING
-    // 관제 화면이 각 단계를 구분해 보여줄 수 있는지 확인하려면 단계가 실제로
-    // 흘러야 한다. 한 번에 EXPLORING으로 돌아오면 검증할 수 없다.
-    const encounterTimers: ReturnType<typeof setTimeout>[] = [];
-    const runEncounter = () => {
-      if (mockMission.current !== "EXPLORING") return;
-      const advance = (to: MissionState, delay: number) =>
-        encounterTimers.push(
-          setTimeout(() => {
-            // 도중에 E-Stop이나 수동 전환이 끼어들면 시퀀스를 포기한다.
-            const ms = mockMission.current;
-            const owned =
-              ms === "PERSON_APPROACHING" || ms === "INTERACTING" ||
-              ms === "POST_RECORDING" || ms === "REPORTING";
-            if (!owned) return;
-            mockMission.current = to;
-            setStatus(s => ({ ...s, missionState: to }));
-          }, delay),
-        );
-
-      mockMission.current = "PERSON_APPROACHING";
-      setStatus(s => ({ ...s, missionState: "PERSON_APPROACHING" }));
-      advance("INTERACTING", 4000);
-      advance("POST_RECORDING", 12000);
-      advance("REPORTING", 15000);
-      advance("EXPLORING", 17000);
-    };
-
-    const detectionTimer = setInterval(() => {
-      // 실 임무 중에는 가짜 탐지를 만들지 않는다 — 진짜 encounter 폴링이 대신한다.
-      if (missionIdRef.current) return;
-      if (Math.random() > 0.15) return;
-      const event: DetectionEvent = {
-        id: `det-${Date.now()}`,
-        timestamp: Date.now(),
-        confidence: +(0.72 + Math.random() * 0.26).toFixed(2),
-        gridR: Math.floor(10 + Math.random() * 80),
-        gridC: Math.floor(10 + Math.random() * 80),
-        thumbnailColor: `hsl(${Math.floor(Math.random() * 30)}, 60%, 30%)`,
-        location: DETECTION_LOCATIONS[Math.floor(Math.random() * DETECTION_LOCATIONS.length)],
-      };
-      setDetections(d => [event, ...d].slice(0, 20));
-      setActiveDetection(event);
-      setStatus(s => ({ ...s, warningCount: s.warningCount + 1 }));
-      runEncounter();
-    }, 8000);
+    // 가짜 탐지 생성기는 뺐다 (S15P11A301-196). 배지의 탐지 수는 실 임무의
+    // encounter 폴링(아래)만 채운다 — 목업 숫자가 섞이면 데모에서 실제 발견과
+    // 구분할 수 없다. PERSON_APPROACHING 같은 중간 상태도 서버가 아직 노출하지
+    // 않으므로(SERVER_MISSION_STATE 5종) 화면에 지어내지 않는다.
 
     return () => {
       clearTimeout(connectTimer);
       clearInterval(moveTimer);
       clearInterval(missionTimer);
       clearInterval(sensorTimer);
-      clearInterval(detectionTimer);
-      encounterTimers.forEach(clearTimeout);
     };
   }, []);
-
-  const dismissDetection = useCallback(() => setActiveDetection(null), []);
 
   const sendControl = useCallback((x: number, y: number) => {
     if (USE_MOCK) return; // mock: robot moves on its own
@@ -497,7 +444,9 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
               : "위치 미기록",
         }));
         setDetections(d => [...events, ...d].slice(0, 20));
-        if (!isFirst) setActiveDetection(events[0]);
+        // 팝업 없이 배지 강조만 한다 (S15P11A301-196). 첫 폴링(복구)과 새 발견의
+        // 구분은 배지 쪽 이전 값 비교가 담당하므로 여기서는 목록만 채운다.
+        void isFirst;
       } catch {
         // 다음 폴링에 맡긴다.
       }
@@ -505,26 +454,12 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
     return () => clearInterval(timer);
   }, [missionId]);
 
-  const tagEvent = useCallback(() => {
-    const evt: DetectionEvent = {
-      id: `tag-${Date.now()}`,
-      timestamp: Date.now(),
-      confidence: 1.0,
-      gridR: Math.round(robotPos.r),
-      gridC: Math.round(robotPos.c),
-      thumbnailColor: "hsl(220, 60%, 30%)",
-      location: "Manual Tag — Operator",
-    };
-    setDetections(d => [evt, ...d].slice(0, 20));
-    setStatus(s => ({ ...s, infoCount: s.infoCount + 1 }));
-  }, [robotPos]);
-
   return (
     <RobotCtx.Provider value={{
       grid, robotPos, pathHistory,
       status, sensors,
-      detections, activeDetection, dismissDetection,
-      sendControl, sendCommand, tagEvent,
+      detections,
+      sendControl, sendCommand,
       missionId,
       videoConnected, videoQuality, setVideoQuality,
       wsConnected,

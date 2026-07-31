@@ -12,9 +12,21 @@
 # 명세 목표는 Detect 상시 약 15FPS, Pose 조건부 약 2FPS다(25.6).
 
 detector:
-  # TensorRT 엔진으로 변환하면 여기를 .engine 경로로 바꾼다(ISSUE-06).
-  #   yolo export model=yolo26n.pt format=engine half=True device=0
-  # 모델 경로는 --model 인자로도 덮어쓸 수 있다.
+  # ⚠️ 기본값을 .engine으로 바꾸지 않는다.
+  #
+  # TensorRT 엔진은 기기·드라이버 종속이라 커밋되지 않는다(.gitignore). 여기에 .engine을
+  # 박으면 엔진을 굽지 않은 기기에서 clone 직후 실행이 깨진다. 엔진은 --model 인자로 넘긴다.
+  #
+  #   # 빌드 (Jetson에서 직접, 약 425초). PYTHONPATH 없으면 tensorrt 임포트 실패
+  #   PYTHONPATH=/usr/lib/python3.10/dist-packages \
+  #     .venv/bin/yolo export model=models/yolo26n.pt format=engine half=True device=0
+  #
+  #   # 실행
+  #   PYTHONPATH=/usr/lib/python3.10/dist-packages \
+  #     .venv/bin/python -m src.main --config configs/pipeline.jetson.yaml \
+  #     --model models/yolo26n.engine --source 0 --device 0
+  #
+  # 실측: 12.82 → 16.23 FPS (+26.6%), detect 72.4 → 52.5ms, 탐지력 손실 없음
   model: models/yolo26n.pt
   target_classes:
     - person
@@ -28,18 +40,17 @@ detector:
   # FPS가 부족하면 해상도보다 TensorRT를 먼저 시도한다.
   imgsz: 640
 
-  # ⚠️ FP16 — Jetson에서 반드시 실측 후 결정할 것
+  # FP16 — Jetson 실측 완료(2026-07-31, S15P11A301-98)
   #
-  # 개발 PC(x86 데스크톱 GPU) 실측에서는 FP16이 **오히려 4배 느렸다**.
-  #     FP32 19.69 FPS  vs  FP16 4.86 FPS
-  # 이 GPU에 빠른 FP16 경로가 없어서로 보이며, **Orin Nano에는 해당하지 않는다.**
-  # Jetson은 메모리 대역폭 제약이 커서 FP16이 통상 유리하다.
+  # .pt 경로에서는 detect 커널에 실질 영향이 없다. 켜도 꺼도 FPS가 같다(+0.7%, 잡음 수준).
+  #     FP32 12.45 FPS  vs  FP16 12.54 FPS   (런 간 편차가 ±3%)
+  # Pose만 5.2 → 2.8ms로 줄지만 Jetson에서 Pose 비중이 7%라 총 FPS에 안 잡힌다.
   #
-  # 즉 이 값은 "Jetson에서 유리할 것"이라는 통념에 따른 설정이며 **미검증이다.**
-  # Jetson에서 아래 두 조건으로 각각 재보고 느린 쪽을 제거한다.
-  #     quantize: 16   (FP16)
-  #     (줄 삭제)      (FP32)
-  # 개발 PC에서 이 프로파일을 돌릴 때는 반드시 이 줄을 지운다. 안 그러면 4배 느리다.
+  # TensorRT 엔진(.engine)에는 half=True로 FP16이 이미 구워져 있다.
+  # 따라서 --model로 엔진을 넘기면 이 값은 Pose에만 적용된다.
+  #
+  # ⚠️ 개발 PC(x86)에서 이 프로파일을 돌릴 때는 이 줄을 지운다. 거기서는 4배 느리다
+  #    (FP32 19.69 vs FP16 4.86 FPS). 이 현상은 Jetson에서 재현되지 않는다.
   quantize: 16
 
 # USB 카메라 (BRIO 100). 명세 PoC 실측: /dev/video0, 1280x720 MJPEG 약 29.93 FPS

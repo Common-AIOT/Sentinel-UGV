@@ -91,13 +91,9 @@ MISSION_ACTIVE_STATES = frozenset(
 
 
 def mission_resume_expected(state: Any) -> bool:
-    """보고 발신 후 다음 지역 탐사를 기대할 수 있는 임무 상태인지.
+    """"탐사를 계속하겠습니다"를 말해도 되는 임무 상태인지.
 
-    즉시 재개 정책(관제 전달 완료 = 다음 지역 탐사) 아래에서 "다른 지역 탐사를
-    시작합니다"를 말해도 되는지 판단한다.
-
-    중단·정지·종료 상태(ESTOP·ERROR·PAUSED·MANUAL·SAFE_IDLE·COMPLETED·RETURNING)에서는
-    재개를 약속하지 않는다. 상태를 한 번도 받지 못한 경우도 약속하지 않는다.
+    목록에 없는 상태와 상태를 한 번도 받지 못한 경우는 약속하지 않는다.
     """
 
     return isinstance(state, str) and state in MISSION_ACTIVE_STATES

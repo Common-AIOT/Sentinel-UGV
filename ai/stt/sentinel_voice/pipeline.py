@@ -46,12 +46,8 @@ guide_player = GuidePlayer(sd, ASSETS)
 def say(message: str) -> None:
     """진행 로그. 콘솔 인코딩 때문에 세션이 죽으면 안 된다.
 
-    Windows 기본 콘솔(cp949)은 이모지를 인코딩할 수 없어 `print`가
-    `UnicodeEncodeError`를 던진다. 실제로 이 예외가 젯슨 드라이런 도중 대화를
-    중단시킨 적이 있어 `session_runner.on_event`는 이미 예외를 삼키고 있는데,
-    보고 출력 경로에는 같은 보호가 없었다(S15P11A301-179).
-
-    인코딩할 수 없는 문자는 대체 문자로 낮춰서라도 출력한다.
+    cp949 콘솔은 이모지에서 `UnicodeEncodeError`를 던진다. 예외를 밖으로
+    흘리면 로그 한 줄이 대화를 중단시키므로, 대체 문자로 낮춰서라도 출력한다.
     """
     try:
         print(message)
@@ -152,9 +148,8 @@ def report_session(result: SessionResult, *, used_fallback: bool = False) -> dic
     """세션 결과를 33-6 보고값으로 정리해 전송 대기에 넣는다."""
     info = coerce_report(dict(result.fields))
     risk = risk_assessment(info)
-    # operatorReviewRequired는 안전 정책이 결정한다(보고 스키마 4항).
-    # 상태머신의 턴 단위 판정만으로 false가 되면, 위험도 규칙이 확인을 요구하는
-    # 보고서가 "확인 불필요"로 관제에 올라간다.
+    # 턴 단위 판정만으로 false가 되면, 위험도 규칙이 확인을 요구하는 보고서가
+    # "확인 불필요"로 관제에 올라간다. 둘 중 하나라도 true면 true다.
     info["operatorReviewRequired"] = bool(
         info.get("operatorReviewRequired") or risk["operatorReviewRequired"]
     )
@@ -178,8 +173,7 @@ def run(
     say(f"\n▶ 트리거: {source}")
     started = time.time()
 
-    # 0) 일반 인터넷이 아니라 실제 GMS 호스트 도달성을 확인한다.
-    #    실패하면 팀 결정에 따라 신규 녹음·STT 세션을 시작하지 않는다.
+    # 일반 인터넷이 아니라 GMS 호스트 도달성을 본다. 실패하면 세션을 시작하지 않는다.
     gate = gate_result or check_session_gate()
     if not gate.proceed:
         say(f"⚠️ 음성 세션 시작 차단: {gate.state.value}")

@@ -27,6 +27,7 @@ import numpy as np
 from . import config
 from .audio import normalize, rms
 from .conversation import (
+    SESSION_TIMEOUT_SECONDS,
     AudioObservation,
     ConversationMachine,
     QuestionCode,
@@ -97,7 +98,7 @@ class VoiceSessionRunner:
         deps: SessionDependencies,
         *,
         abort_requested: Callable[[], SessionState | None] = lambda: None,
-        timeout_seconds: float = 120,
+        timeout_seconds: float = SESSION_TIMEOUT_SECONDS,
         listen_seconds: dict[QuestionCode, float] | None = None,
         on_event: Callable[[str], None] = lambda message: None,
     ):

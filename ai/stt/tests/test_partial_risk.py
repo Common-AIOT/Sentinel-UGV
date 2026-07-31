@@ -10,14 +10,31 @@
 """
 
 import unittest
+from unittest.mock import patch
 
-from sentinel_voice.conversation import ConversationMachine
+from sentinel_voice.conversation import (
+    SESSION_TIMEOUT_SECONDS,
+    ConversationMachine,
+    SessionResult,
+)
 from sentinel_voice.safety import (
     COMPLETE_TERMINATIONS,
     RISK_RULE_VERSION,
     report_defaults,
     risk_assessment,
 )
+from sentinel_voice.session_runner import SessionDependencies, VoiceSessionRunner
+
+
+def _silent_dependencies():
+    """예산 배선만 확인하는 테스트용. 상태머신을 대역으로 바꾸므로 호출되지 않는다."""
+    return SessionDependencies(
+        record=lambda seconds: None,
+        has_speech=lambda wav: False,
+        transcribe=lambda wav: ("", 1.0),
+        extract=lambda text: None,
+        player=None,
+    )
 
 
 def observed(**overrides):
@@ -165,6 +182,29 @@ class SessionTimeoutBudgetTest(unittest.TestCase):
             timeout_seconds=5,
         )
         self.assertEqual(machine.timeout_seconds, 5)
+
+    def test_runner_does_not_shadow_the_budget(self):
+        """실기 경로가 쓰는 실행기의 예산이 상태머신까지 도달해야 한다.
+
+        179에서 상태머신만 180으로 올렸는데 VoiceSessionRunner가 자기 기본값
+        120을 그대로 넘겨, pipeline·ros_node 두 경로 모두 반영되지 않았다.
+        pipeline·ros_node는 timeout_seconds를 넘기지 않으므로 기본값이 그대로 쓰인다.
+        """
+        budgets = []
+
+        class Spy(ConversationMachine):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                budgets.append(self.timeout_seconds)
+
+            def run(self):
+                return SessionResult()
+
+        runner = VoiceSessionRunner(_silent_dependencies())
+        with patch("sentinel_voice.session_runner.ConversationMachine", Spy):
+            runner.run()
+
+        self.assertEqual(budgets, [SESSION_TIMEOUT_SECONDS])
 
 
 if __name__ == "__main__":

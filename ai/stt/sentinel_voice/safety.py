@@ -145,13 +145,12 @@ def strip_hallucinated(info, source_text):
 
 RISK_RULE_VERSION = "voice-risk-v1.1"
 
-# 관찰이 완료된 세션에서 등급 계산을 방해하지 않는 종료 사유.
-# 나머지는 "세션이 중간에 끝났다"는 부가 정보로만 기록한다.
+# 등급 계산을 방해하지 않는 종료 사유. 나머지는 부가 정보로만 기록한다.
 COMPLETE_TERMINATIONS = frozenset({"NORMAL", "UNKNOWN"})
 
 # 관찰 자체가 실패한 종료 사유. 무응답 판정의 근거로 쓰지 않는다.
-# 스키마 계약상 이 경우 anyResponseDetected는 null이어야 하지만, 상위 계층 결함으로
-# false가 함께 오면 "시스템 실패 = 요구조자 무응답"이 되어 안전 정책을 위반한다.
+# 계약상 이때 anyResponseDetected는 null이지만, false가 새어 들어오면
+# "시스템 실패 = 요구조자 무응답"이 되므로 이 가드를 죽은 코드로 보고 빼면 안 된다.
 SYSTEM_FAILURE_TERMINATIONS = frozenset(
     {"AUDIO_DEVICE_ERROR", "GMS_UNAVAILABLE"}
 )
@@ -160,18 +159,11 @@ SYSTEM_FAILURE_TERMINATIONS = frozenset(
 def risk_assessment(info):
     """관제 우선 확인용 위험 신호와 적용 근거를 반환한다.
 
-    종료 사유는 **게이트가 아니라 부가 정보**다. 관찰이 완료됐다면 수집한 값으로
-    등급을 계산하고, 세션이 중간에 끝났다는 사실은 근거에 덧붙인다.
+    종료 사유는 게이트가 아니라 부가 정보다. 관찰이 완료됐다면 수집한 값으로
+    등급을 계산하고, 미완료 사실은 근거에 덧붙인다. 관찰 자체를 못 한 경우
+    (`anyResponseDetected`가 null)에만 `UNKNOWN`으로 단락한다.
 
-    v1.0은 `terminationReason`이 `NORMAL`이 아니면 즉시 `UNKNOWN`을 반환했다.
-    그래서 네 질문에 모두 답을 받고 마지막 안내만 남은 세션이 제한 시간을 1초
-    넘기면, `urgentConditionReported=YES`가 이미 잡혀 있어도 `riskLevel`이
-    `UNKNOWN`이 됐다. `riskLevel`은 관제가 우선순위를 정렬하는 필드이므로 이는
-    보수적 처리가 아니라 **알고 있던 정보를 버려서 늦어지는 것**이다.
-    `ABORTED_SAFETY`에서 특히 위험하다 — 위험해서 대피한 상황의 정보가 사라진다.
-
-    구분 기준은 이미 보고값 안에 있다. `anyResponseDetected`가 `null`이면 관찰
-    자체를 못 한 것이고, 그 경우에만 `UNKNOWN`으로 단락한다(S15P11A301-179).
+    규칙표와 v1.0에서 바뀐 이유는 docs/README.md 2-2, 11-2.
     """
     report = coerce_report(info)
     termination = report["terminationReason"]

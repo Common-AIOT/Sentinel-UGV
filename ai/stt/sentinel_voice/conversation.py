@@ -45,9 +45,13 @@ PROMPTS = {
     QuestionCode.COUNT: GUIDE_ASSETS[GuideCode.ASK_COUNT].text,
     QuestionCode.MOBILITY: GUIDE_ASSETS[GuideCode.ASK_MOBILITY].text,
     QuestionCode.URGENT: GUIDE_ASSETS[GuideCode.ASK_URGENT].text,
-    # S15P11A301-116에서 전송 성공 이벤트가 연결되기 전에는 완료 표현을 금지한다.
+    # ACK 연결(182) 전이므로 진행형 문구를 쓴다. 완료 표현은 발신 후에만 쓴다.
     QuestionCode.CLOSING: GUIDE_ASSETS[GuideCode.REPORT_PENDING].text,
 }
+
+# 세션 전체 예산(초). 기본값은 여기 한 곳에만 둔다 — 두 곳에 복제했더니
+# 실기 경로에 반영되지 않은 사고가 있었다. 산정 근거는 docs/README.md 11-2.
+SESSION_TIMEOUT_SECONDS = 180.0
 
 FIELD_BY_QUESTION = {
     QuestionCode.INTRO: "anyResponseDetected",
@@ -108,9 +112,7 @@ class ConversationMachine:
         listen: Callable[[QuestionCode, int], AudioObservation],
         interpret: Callable[[QuestionCode, str], Any | None],
         abort_requested: Callable[[], SessionState | None] = lambda: None,
-        # 실측 최대 세션이 111.2초여서 120초는 마진이 9초뿐이었다. 재질문 1회나
-        # CPU STT 지연이 겹치면 초과한다(S15P11A301-179).
-        timeout_seconds: float = 180,
+        timeout_seconds: float = SESSION_TIMEOUT_SECONDS,
         clock: Callable[[], float] = monotonic,
     ):
         self.prompt = prompt

@@ -1263,3 +1263,45 @@ def test_telemetry_봉투에_missionId가_실린다():
         ).iter_errors(envelope)
     )
     assert not errors, [error.message for error in errors]
+
+
+# ----------------------------------------------------------------------
+# 탐지 노드 생존을 관제에 알린다 (S15P11A301-192)
+# ----------------------------------------------------------------------
+
+
+def test_state의_components에_detector가_실린다():
+    """탐지 노드가 죽어도 스택 나머지는 정상 기동한다.
+
+    이 값이 없으면 관제 화면상 정상으로 보인다. 실제로 그 상태로 여러 검증을
+    돌린 뒤에야 알아챘다.
+    """
+    jsonschema = pytest.importorskip(
+        "jsonschema", reason="jsonschema가 없으면 계약 검증을 건너뛴다"
+    )
+    mapper = MessageMapper('SENTINEL-01')
+    envelope = mapper.state(
+        mission_state='EXPLORING',
+        control_mode='AUTO',
+        safety_state='RUNNING',
+        active_mission_id=None,
+        components={'camera': True, 'lidar': True, 'detector': False},
+    )
+    assert envelope['data']['components']['detector'] is False
+    errors = list(
+        jsonschema.Draft202012Validator(
+            _load_schema('state.schema.json')
+        ).iter_errors(envelope['data'])
+    )
+    assert not errors, [error.message for error in errors]
+
+
+def test_components는_불리언_맵이라_스키마_변경이_필요없다():
+    """state.schema.json의 components는 additionalProperties가 boolean이다.
+
+    health와 다르다 — 그쪽은 additionalProperties: false라서 필드를 늘리려면
+    스키마를 함께 고쳐야 한다. detector를 components에 둔 이유다.
+    """
+    schema = _load_schema('state.schema.json')
+    components = schema['properties']['components']
+    assert components['additionalProperties'] == {'type': 'boolean'}

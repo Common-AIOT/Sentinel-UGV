@@ -15,7 +15,14 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, ExecuteProcess
+from launch.actions import (
+    DeclareLaunchArgument,
+    ExecuteProcess,
+    LogInfo,
+    RegisterEventHandler,
+    TimerAction,
+)
+from launch.event_handlers import OnProcessExit
 from launch.substitutions import LaunchConfiguration
 
 
@@ -50,6 +57,79 @@ def generate_launch_description() -> LaunchDescription:
     detection_dir = os.path.join(root, 'ai', 'detection')
     default_python = os.path.join(root, '.venv', 'bin', 'python')
 
+    def make_process() -> ExecuteProcess:
+        """탐지 프로세스 하나. 재기동마다 새로 만든다.
+
+        launch 액션은 한 번만 실행되므로 같은 인스턴스를 다시 쓸 수 없다.
+        """
+        return ExecuteProcess(
+            cmd=[
+                LaunchConfiguration('python_executable'),
+                '-m',
+                'src.ros_main',
+                '--config',
+                LaunchConfiguration('config'),
+                '--topic',
+                LaunchConfiguration('camera_topic'),
+                '--device',
+                LaunchConfiguration('device'),
+                '--output',
+                LaunchConfiguration('output'),
+            ],
+            cwd=detection_dir,
+            name='ai_detection_wrapper',
+            output='screen',
+        )
+
+    # 재기동 횟수. dict로 두는 것은 클로저에서 갱신하기 위해서다.
+    attempts = {'count': 0}
+
+    def on_exit(event, context):
+        """비정상 종료면 상한까지 다시 띄운다 (S15P11A301-192).
+
+        `ExecuteProcess`는 `respawn`을 지원하지 않는다 — 그것은 launch_ros의
+        `Node` 기능이다. 그래서 종료 이벤트를 받아 직접 다시 만든다. 덕분에
+        32-3의 "무한 재시작 금지"를 상한으로 지킬 수 있다.
+
+        탐지 노드가 죽으면 스택 나머지는 정상 기동하므로 화면상 정상으로
+        보인다. 실제로 그 상태로 여러 검증을 돌린 뒤에야 알아챘다. 재기동과
+        별개로 cloud_bridge가 `components.detector`를 관제에 보낸다.
+        """
+        if event.returncode == 0:
+            return None
+
+        limit = int(LaunchConfiguration('respawn_limit').perform(context))
+        attempts['count'] += 1
+        if attempts['count'] > limit:
+            return [
+                LogInfo(
+                    msg=(
+                        f'[detection] 탐지 노드가 {attempts["count"]}회 비정상 '
+                        f'종료했다(exit {event.returncode}). 상한 {limit}회를 '
+                        '넘겨 재기동을 멈춘다. 원인을 보려면 위 로그에서 '
+                        'CUDA·메모리 오류를 확인한다. 관제에는 '
+                        'components.detector=false로 나간다.'
+                    )
+                )
+            ]
+
+        delay = float(LaunchConfiguration('respawn_delay').perform(context))
+        following = make_process()
+        return [
+            LogInfo(
+                msg=(
+                    f'[detection] 탐지 노드가 종료됐다(exit {event.returncode}). '
+                    f'{delay:.0f}초 후 재기동 {attempts["count"]}/{limit}.'
+                )
+            ),
+            TimerAction(period=delay, actions=[following]),
+            RegisterEventHandler(
+                OnProcessExit(target_action=following, on_exit=on_exit)
+            ),
+        ]
+
+    first = make_process()
+
     return LaunchDescription(
         [
             DeclareLaunchArgument(
@@ -77,23 +157,19 @@ def generate_launch_description() -> LaunchDescription:
                 default_value='runs/ros2',
                 description='events.jsonl 출력 디렉터리 (ai/detection 기준 상대 경로)',
             ),
-            ExecuteProcess(
-                cmd=[
-                    LaunchConfiguration('python_executable'),
-                    '-m',
-                    'src.ros_main',
-                    '--config',
-                    LaunchConfiguration('config'),
-                    '--topic',
-                    LaunchConfiguration('camera_topic'),
-                    '--device',
-                    LaunchConfiguration('device'),
-                    '--output',
-                    LaunchConfiguration('output'),
-                ],
-                cwd=detection_dir,
-                name='ai_detection_wrapper',
-                output='screen',
+            DeclareLaunchArgument(
+                'respawn_limit',
+                default_value='3',
+                description='비정상 종료 시 재기동 횟수 상한 (0이면 재기동 없음)',
+            ),
+            DeclareLaunchArgument(
+                'respawn_delay',
+                default_value='8.0',
+                description='재기동 대기 초. 자원 압박이 풀릴 시간을 준다',
+            ),
+            first,
+            RegisterEventHandler(
+                OnProcessExit(target_action=first, on_exit=on_exit)
             ),
         ]
     )

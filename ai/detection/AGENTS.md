@@ -446,12 +446,12 @@ python -m src.main --source 0 --config configs/pipeline.jetson.yaml --output run
 | JetPack / L4T | 6.x / R36.4.7 |
 | Python / torch | 3.10.12 / 2.8.0 (`cuda.is_available()` True) |
 | ultralytics / opencv / lap | 8.4.107 / 4.11.0 / 0.5.13 |
-| **처리량 (직접 오픈)** | **9.45 FPS** — 사람 4명 상시, Pose 활성 잦음, 스트리밍 동시 구동 |
+| **처리량 (직접 오픈)** | **9.45 FPS** — 사람 4명 상시, 스트리밍 동시 구동, **Pose 예산 수정 전** |
 | 처리량 (토픽 구독) | 11.15~11.31 FPS, 디코딩 실패 0 |
 | 후보 발행 | 5.02Hz, 133 스키마 위반 0건 |
 
-**성능이 목표 미달이다.** 명세 목표는 Detect 상시 약 15FPS인데 9.45FPS다.
-숨기지 말고 ISSUE-06(imgsz 축소 → TensorRT 변환)으로 다룬다(§35 11번).
+**2차 실측(2026-07-31)에서 TensorRT로 16.23 FPS까지 올렸다.** 상세는 아래 §7.3.
+다만 이는 **AI 단독** 수치이며 통합 상태 재측정 전까지 목표 달성으로 보지 않는다.
 
 **실기기에서 드러난 제약 3가지**
 - 표준 JetPack에 `lap`이 없다 → `pip install lap` (aarch64 wheel 있음)
@@ -459,10 +459,10 @@ python -m src.main --source 0 --config configs/pipeline.jetson.yaml --output run
 - 스트리밍 스택 구동 중에는 `usb_cam`이 `/dev/video0`을 점유해 `src.main`이 카메라를 못 연다
   → 이때는 `src.ros_main`(토픽 구독)을 쓴다. 이것이 최종 통합 구조다
 
-**여전히 미검증 — 값을 지어내지 않는다(§31).**
-- `quantize: 16`(FP16)은 개발 PC에서 오히려 4배 느렸다. **Jetson에서의 효과는 아직 미측정이다.**
+**참고**
 - `requirements-jetson.txt`는 만들지 않았다. JetPack의 torch는 NVIDIA 배포판을 써야 하므로
-  pip 핀으로 고정할 대상이 아니다. 설치 절차는 Runbook 1장을 따른다.
+  pip 핀으로 고정할 대상이 아니다. 설치 절차는 04 25.7 "전제 조건"을 따른다.
+- 전원 모드는 **15W가 Orin Nano 8GB의 상한**이다. 상향으로 얻을 여유가 없다.
 
 ### 7.2 성능 최적화 절차 (ISSUE-06)
 
@@ -490,27 +490,52 @@ python scripts/bench_jetson.py --source <기준영상> \
 | `detections` 1% 이상 감소 | **기각.** FPS 이득과 상쇄되지 않는다(§23) |
 | `detections` 유지 + FPS 상승 | 채택 후보 |
 
-해상도 축소(`imgsz` 640 → 512 → 416)는 명세 25.5가 허용한 범위지만
-**정확도를 깎지 않는 수단(TensorRT, FP16)을 모두 소진한 뒤에 손댄다.**
+**런 간 편차는 약 ±3%다.** 그보다 작은 차이를 개선으로 보고하지 않는다.
 
-**TensorRT 엔진**은 Jetson에서 직접 구워야 한다(크로스 빌드 불가, 장치·드라이버 버전 종속).
+## 7.3 Jetson 성능 실측 결론 (2026-07-31, S15P11A301-98)
+
+전문은 `../../docs/04-자율주행-AI.md` 25.7. **여기 결론을 추측으로 뒤집지 않는다.**
+
+| 축 | 결론 |
+|---|---|
+| **TensorRT `.engine`** | **채택.** 12.82 → **16.23 FPS**(+26.6%), detect 72.4 → 52.5ms, 탐지력 손실 없음 |
+| FP16 (`quantize`) | **효과 없음.** `.pt` 경로에서 detect 커널에 영향을 주지 못한다(+0.7%, 잡음) |
+| 전원 모드 | **조정 불가.** 15W가 Orin Nano 8GB 상한 |
+| Pose 예산 | 이미 명세 하한. Jetson 비중이 7%뿐이라 여지 없음 |
+| 해상도 축소 | 미착수. 위로 부족할 때만 |
+
+**단계별 비중이 개발 PC와 다르다.**
+
+| | Detect | Pose | post |
+|---|---|---|---|
+| 개발 PC | 81% | 18% | 0.4% |
+| **Jetson** | **93%** | 7% | 0.5% |
+
+Jetson은 Detect 편중이 더 심하다. **Pose 쪽을 손봐서 얻을 게 거의 없다.**
+
+### TensorRT 취급 규칙
+
+**엔진은 Jetson에서 직접 굽는다**(크로스 빌드 불가, 장치·드라이버 종속).
+`.gitignore`의 `*.engine`이 막고 있으므로 **커밋하지 않는다.**
+
+**`PYTHONPATH` 전제가 필수다.** TensorRT는 JetPack에 설치돼 있지만 `.venv`가
+`include-system-site-packages = false`로 차단한다. **venv 설정을 바꾸지 않는다**
+— numpy 등이 시스템 패키지와 섞인다. 경로만 빌린다.
+
 ```bash
-yolo export model=models/yolo26n.pt format=engine half=True device=0
+PYTHONPATH=/usr/lib/python3.10/dist-packages \
+  .venv/bin/yolo export model=models/yolo26n.pt format=engine half=True device=0
 ```
-`ObjectDetector`가 `YOLO(model_path)`를 그대로 쓰므로 **설정에서 경로만 바꾸면 된다.**
-엔진 파일은 `.gitignore`의 `*.engine`이 이미 막고 있다. 커밋하지 않는다.
 
-**개발 PC 계측 예시 (2026-07-30, 사람 약 4명, ReID 켬)**
+**설정 기본값은 `.pt`를 유지하고 엔진은 `--model` 인자로 넘긴다.**
+`pipeline.jetson.yaml`에 `.engine`을 박으면 엔진을 굽지 않은 기기에서
+clone 직후 실행이 깨진다. 배포 이미지가 고정되면 그때 기본값으로 올린다.
 
-| 단계 | 프레임당 | 비중 |
-|---|---|---|
-| Detect | 296.6 ms | **81%** |
-| Pose | 15.1 ms | 18% |
-| post(판정·로깅·저장) | 0.9 ms | 0.4% |
+### 아직 목표 달성이 아니다
 
-**Detect가 지배적이다.** 이 비율이 Jetson에서도 유지된다면 Pose 쪽 조정보다
-Detect의 TensorRT 변환이 압도적으로 큰 지렛대다. 다만 이 수치는 개발 PC 값이므로
-Jetson에서 같은 계측을 다시 해서 확인한다.
+16.23 FPS는 **AI 단독** 수치다. 실제로는 스트리밍(x264enc, CPU 74%)·SLAM·녹화와
+자원을 나눠 쓰며, S15P11A301-131에서 그 경합으로 오디오 38%를 잃은 전례가 있다.
+**통합 상태 재측정 전까지 "15FPS 달성"으로 보고하지 않는다**(§22).
 
 ---
 
@@ -1801,9 +1826,11 @@ AI-Hub 데이터가 끝내 확보되지 않아도 아래는 반드시 충족한�
 | 18 | `schemas.py`의 `build_encounter_data()`가 여전히 encounter를 만든다. **encounter 발급 권한은 Mission Manager 단독**(명세 26.1) | **중복 소지** | 에이전트 + Mission 담당 | §10, §17 |
 | 19 | `src.main` 경로는 로봇에서 카메라를 열 수 없다(`usb_cam` 점유). 단독 검증 전용임을 코드가 강제하지 않는다 | 오용 위험 | 에이전트 | §10 |
 | 20 | Jetson 가용 RAM 700MB 이하에서 `CUBLAS_STATUS_ALLOC_FAILED` 재현 | 운영 제약 | Jetson 담당 | Runbook 13장 |
-| 21 | **기준 벤치 영상이 저장소에 없다.** Jetson 검증에 쓴 "보행자 4명 600프레임" 영상 소재 불명 | **A/B 재현 차단** | Jetson 담당 | §7.2 |
-| 22 | 전원 모드 15W 상향 여부 미결. SLAM·Nav2·스트리밍 공유 자원이라 AI 단독 결정 불가 | 팀 결정 | 팀 | §7.2 |
-| 23 | 파인튜닝(ISSUE-05)과 TensorRT 변환(ISSUE-06)의 순서 미정. 가중치가 바뀌면 엔진을 다시 구워야 한다 | 재작업 방지 | 사용자 | §26 |
+| 21 | ~~기준 벤치 영상 부재~~ → **2026-07-31 해결: JetPack 영상 기반 결정적 재생성 절차**(04 25.7) | 해결됨 | — | §7.3 |
+| 22 | ~~전원 모드 상향 미결~~ → **해결: 15W가 상한이라 조정 대상이 아님** | 해결됨 | — | §7.1 |
+| 23 | 파인튜닝(ISSUE-05)과 TensorRT 변환의 순서 미정. **가중치가 바뀌면 엔진을 다시 구워야 한다**(약 425초) | 재작업 방지 | 사용자 | §7.3, §26 |
+| 24 | **통합 상태 성능 미측정.** 16.23FPS는 AI 단독. 스트리밍·SLAM·녹화 경합 시 수치 불명 | **목표 달성 판정 차단** | Jetson 담당(A4 리허설) | §7.3 |
+| 25 | `.engine`을 설정 기본값으로 올릴 시점 미정. 현재는 `--model` 인자 방식 | 배포 정책 | 팀 | §7.3 |
 
 **1번과 2번은 ISSUE-03·04·05만 막는다.** §26의 순서 변경에 따라 ISSUE-01·02·07·08·09·10은
 데이터 없이 진행 가능하며, 이것이 이번 스프린트의 Must 산출물이다(§30).

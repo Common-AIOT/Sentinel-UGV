@@ -810,6 +810,10 @@ WAV 재청취 시 음성 식별 가능. RMS는 환경·거리에 따라 달라�
 # 단독 CLI (수동 트리거)
 SENTINEL_DEVICE=cpu python -u -m sentinel_voice.pipeline 2>&1 | tee ~/voice_test.log
 
+# 진단이 필요할 때만 — 세션 기록과 청취 원본을 남긴다 (§11-6)
+SENTINEL_DEVICE=cpu SENTINEL_SESSION_LOG_DIR=~/sessions \
+  python -u -m sentinel_voice.pipeline 2>&1 | tee ~/voice_test.log
+
 # ROS 2 노드 (실제 비전 트리거)
 ./scripts/demo_up.sh
 ros2 topic echo /interaction/report std_msgs/msg/String
@@ -832,6 +836,7 @@ ros2 topic echo /mission/signal    std_msgs/msg/String
 | `SENTINEL_GMS_MAX_ATTEMPTS` | `2` | 최초 호출 포함 최대 호출 수 |
 | `SENTINEL_GMS_RETRY_DELAY` | `0.5` | 재시도 전 대기(초) |
 | `SENTINEL_GMS_PROBE_TIMEOUT` | `2` | 세션 시작 전 TCP 확인(초) |
+| `SENTINEL_SESSION_LOG_DIR` | — | **비활성 기본.** 지정하면 세션 기록·청취 원본을 저장한다(§11-6). 개인 음성이 남으므로 필요할 때만 켠다 |
 
 고정 파라미터: `SILENCE_RMS=0.005` · `NORM_TARGET_RMS=0.08` ·
 VAD `threshold=0.5, min_speech_duration_ms=150, min_silence_duration_ms=500, speech_pad_ms=300` ·
@@ -1316,7 +1321,8 @@ CI 검증) 변경이므로 백엔드 파싱·DB·프론트 표시·명세 33-6�
 
 **수정 방향** — `is_valid_stt`에 `guide_audio.GUIDE_BY_TEXT`(승인 문구 10개) 대조 추가 ·
 재생과 청취 사이 주입 가능한 지연(기본 300ms) · **유선 출력으로 C 재시험**(A2DP 지연을
-변수에서 제거) · 진단용 원본 오디오 보존.
+변수에서 제거) · ~~진단용 원본 오디오 보존~~ → **178에서 완료(§11-6). 이제 `rawRms`와
+청취 원본으로 에코인지 육성인지 대조할 수 있다.**
 
 ### 11-4. 무응답인데도 남은 질문을 계속 한다
 
@@ -1343,37 +1349,67 @@ VAD 미검출 + rms 충분 + 지속시간 ≥ N ms      → 발화 있음 (STT �
 ⚠️ **순서 주의.** 감도를 올리면 에코·잡음도 더 들어오므로 §11-3의 echo 가드를 **먼저**
 넣어야 한다. 두 작업은 서로 반대 방향으로 당긴다.
 
-### 11-6. 대화 내역이 어디에도 저장되지 않는다
+### 11-6. ✅ 대화 내역 저장 — 해결됨 (S15P11A301-178)
 
-`sentinel_voice/`에 파일 쓰기가 한 줄도 없다. 보고서는 `print()`와 ROS 토픽 발행으로만
-나가고, 청취 원본 오디오와 STT 원문은 콘솔 로그 외에 남지 않는다.
+**이전 상태.** `sentinel_voice/`에 파일 쓰기가 한 줄도 없었다. 보고서는 `print()`와 ROS
+토픽 발행으로만 나가고, 청취 원본과 STT 원문은 콘솔 로그 외에 남지 않았다.
+**이것이 C 원인 규명 실패의 직접 원인이다** — "무슨 소리가 마이크로 들어왔는지"를
+사후에 확인할 방법이 없어 코드 결함인지 주변 잡음인지 판정할 수 없었다.
 
-**이것이 C 원인 규명 실패의 직접 원인이다.** "무슨 소리가 마이크로 들어왔는지"를 사후에
-확인할 방법이 없어 코드 결함인지 주변 잡음인지 판정할 수 없었다.
-
-**부수 효과** — 저장이 붙으면 ① §11-1의 정보 소실을 완화하고 ② Jira 120(STT WER)의
-"테스트 wav가 개발 PC에 있어서 못 함" 제약이 풀리고(실제 육성 녹음이 코퍼스가 된다)
-③ 현장 증적이 생긴다.
-
-**설계 방향**
+**저장 형식** (`sentinel_voice/session_log.py`)
 
 ```text
-sessions/<timestamp>/
-  session.jsonl      턴별: question, response_class, stt_text, no_speech_prob,
-                     extraction_source, 확정 필드값, 타임스탬프
-  report.json        33-6 9필드 + 위험도
-  turn_01_INTRO.wav  청취 원본 (정규화 전)
+<SENTINEL_SESSION_LOG_DIR>/<YYYYmmdd-HHMMSS>/
+  session.jsonl              session_start · turn × N · session_end
+  report.json                33-6 보고값과 위험도 (관제로 나간 것과 같은 본문)
+  turn_01_INTRO_a1.wav       청취 원본 (정규화 전, PCM 16-bit)
+  turn_02_INTRO_a2.wav       재질문 2차 — 1차를 덮지 않는다
 ```
 
-⚠️ **제약** — 기본 비활성, 환경변수로 경로가 주어질 때만 저장 · 개인 음성은 민감정보이므로
-**저장소 커밋 금지** · 보관 기간·삭제 책임을 문서에 명시 · 세션 디렉터리를 `.gitignore` 등록.
+`turn` 한 줄에 `question` · `attempt` · `responseClass` · `rawRms` · `sttText` ·
+`noSpeechProb` · `sttInvalidReason` · `extractionSource` · `extraction` ·
+`playback` · `audio`가 들어간다.
+
+**설계 결정 세 가지**
+
+**① 정규화 전 원본만 저장한다.** 정규화는 `NORM_TARGET_RMS`(0.08)를 목표로 음량을
+끌어올리므로, 정규화 후만 남기면 **"큰 목소리가 들어왔다"와 "작은 에코가 증폭됐다"를
+구분할 수 없다.** 정규화 결과는 원본의 결정적 함수(`scale = 0.08 / rms(원본)`)라서
+필요하면 언제든 재생성할 수 있고, `session_start` 줄에 그때 쓰인 `normTargetRms`와
+`silenceRms`를 함께 남겨 판정을 재현할 수 있게 했다.
+
+**② 무음·VAD 미검출 경로에서도 저장한다.** 그 경로가 바로 무응답 오판을 진단하는
+대상이다. 여기서 조건을 걸면 계측이 무의미해진다.
+
+**③ `(질문, 시도)` 단위로 기록한다.** `TurnDiagnostics`가 질문별로 하나만 유지하던
+동안에는 INTRO 재질문의 2차 관찰이 1차를 덮어썼다. **하필 시나리오 C가 그 경로다** —
+165의 에코 가설을 검증하려면 1차·2차 오디오가 둘 다 필요하다.
+
+**용량** — 실측 5턴 세션에서 약 **210KB**(오디오 5개 208KB + 기록 3KB). 실제 청취
+시간(5·6·6·8초)을 적용하면 세션당 **약 0.8~1MB**다. 16kHz mono PCM 16-bit 기준
+초당 32KB.
+
+⚠️ **개인정보 취급**
+
+- **기본 비활성.** `SENTINEL_SESSION_LOG_DIR`가 주어질 때만 저장한다. 현장 로봇이
+  요구조자 음성을 기본으로 쌓으면 안 된다.
+- `ai/stt/.gitignore`에 `sessions/`를 등록했다. 저장 위치를 저장소 안으로 지정하는
+  경우를 대비한 방어선이다. **개인 음성은 어떤 경우에도 커밋하지 않는다.**
+- **보관 기간: 진단이 끝나는 즉시 삭제한다.** 시험을 수행한 사람이 삭제 책임을 진다.
+  프로젝트 종료 시 남은 세션 디렉터리가 없어야 한다.
+- 저장 실패는 경고만 남기고 세션을 계속한다. 계측이 임무를 멈추면 안 된다.
+
+**부수 효과** — ① §11-1의 정보 소실을 완화한다(질문이 요구한 필드 외 추출값도 `extraction`에
+남으므로, 사람이 읽어 만회할 수 있다) ② Jira 120(STT WER)의 "테스트 wav가 개발 PC에
+있어서 못 함" 제약이 풀린다 — 실제 육성 녹음이 코퍼스가 된다 ③ 183 종료 안내가 실제로
+재생됐는지 `playback`으로 확인할 수 있다.
 
 ### 11-7. 그 밖의 한계
 
 | # | 한계 | 비고 |
 |---|---|---|
 | 1 | **CLI 단독 실행에서만 안내가 두 번 들린다** | `pipeline.py`는 전송 어댑터가 없어 `PENDING`이므로 CLOSING과 종료 안내가 모두 `REPORT_PENDING`이다. **ROS 경로는 183에서 해소됨** — CLOSING(진행형) 다음에 완료+탐사 안내가 나온다 |
-| 2 | **질문 1개 = 필드 1개** | "저 혼자고 다리 못 움직여요"도 COUNT만 채우고 MOBILITY를 또 묻는다. GMS가 뽑은 나머지 필드는 `_extractions`에 모이지만 **아무도 읽지 않는다** → 148이 저렴하다는 뜻 |
+| 2 | **질문 1개 = 필드 1개** | "저 혼자고 다리 못 움직여요"도 COUNT만 채우고 MOBILITY를 또 묻는다. GMS가 뽑은 나머지 필드는 보고에 반영되지 않는다(178에서 기록에는 남기므로 사람이 읽을 수는 있다) → 148이 저렴하다는 뜻 |
 | 3 | **문구가 구버전** | 자연스러움 개편(146~149) 전. 어색하다는 피드백은 인지된 사항 |
 | 4 | `operatorReviewRequired`가 항상 `true` | `risk_assessment()`가 모든 분기에서 `True`를 반환. 안전 기본값이며 결함 아님 |
 | 5 | `countConfidence`가 항상 `null` | 신뢰도 측정 미구현 |
@@ -1382,13 +1418,15 @@ sessions/<timestamp>/
 ### 11-8. 후속 작업 순서
 
 ```text
-[대화 내역 저장]  ← 계측. 없으면 나머지가 재현 안 됨 (§11-6)
+[178 대화 내역 저장] ✅ 완료 (§11-6)
       │
-      ├──> [165 echo 가드 + C 재검증] ──> [VAD 보조 게이트] (§11-3 → §11-5, 순서 강제)
+      ├──> [165 echo 가드 + C 재검증] ──> [180 VAD 보조 게이트] (§11-3 → §11-5, 순서 강제)
       │
-      └──> [타임아웃 결과 보존] ✅ 완료 (§11-2)
+      ├──> [120 STT WER 측정]  ← 실제 육성이 코퍼스가 되어 제약이 풀렸다
+      │
+      └──> [179 타임아웃 결과 보존] ✅ 완료 (§11-2)
 
-[116 관제 ACK·재개 연결]           ← 별도 트랙
+[182 관제 ACK·재개 연결]           ← 별도 트랙, 백엔드 필요
 [149 스키마] → [148 적응형 흐름]    ← 팀 합의 필요, MVP 이후
 ```
 

@@ -37,6 +37,7 @@ from .llm import extract_with_status
 from .report_delivery import queue_report
 from .safety import coerce_report, risk_assessment
 from .session_gate import SessionGateResult, check_session_gate
+from .session_log import SessionLog
 from .session_runner import SessionDependencies, VoiceSessionRunner
 
 ASSETS = config.STT_ROOT / "assets"
@@ -144,7 +145,12 @@ def queue_and_announce(info: dict):
     return delivery
 
 
-def report_session(result: SessionResult, *, used_fallback: bool = False) -> dict:
+def report_session(
+    result: SessionResult,
+    *,
+    used_fallback: bool = False,
+    session_log: SessionLog | None = None,
+) -> dict:
     """세션 결과를 33-6 보고값으로 정리해 전송 대기에 넣는다."""
     info = coerce_report(dict(result.fields))
     risk = risk_assessment(info)
@@ -158,6 +164,8 @@ def report_session(result: SessionResult, *, used_fallback: bool = False) -> dic
     say(f"🧭 종료 상태: {result.state.value} / 사유: {result.termination_reason}")
     if used_fallback:
         say("ℹ️ 일부 응답은 33-8 키워드 폴백으로 구조화됨")
+    if session_log is not None:
+        session_log.report({"report": info, "risk": risk})
     queue_and_announce(info)
     return info
 
@@ -185,13 +193,17 @@ def run(
         dependencies or build_dependencies(),
         on_event=say,
     )
-    result = runner.run()
+    result = runner.run(source=source)
 
     if result.state == SessionState.FAILED_AUDIO:
         # 오디오 장치 오류는 요구조자 상태가 아니므로 관찰 실패로만 보고한다.
         say("⚠️ 오디오 장치 오류로 세션 종료 — 관제 확인 필요")
 
-    report_session(result, used_fallback=runner.used_fallback)
+    report_session(
+        result,
+        used_fallback=runner.used_fallback,
+        session_log=runner.session_log,
+    )
     say(f"⏱ E2E: {time.time() - started:.1f}s")
     return result
 

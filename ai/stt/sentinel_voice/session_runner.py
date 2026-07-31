@@ -36,6 +36,7 @@ from .conversation import (
 )
 from .guide_audio import GuidePlayer, PlaybackResult
 from .safety import is_valid_stt
+from .session_log import SessionLog, open_session_log
 
 # 질문이 채우는 33-6 추출 필드. INTRO는 발화 존재 자체가 답이므로 제외한다.
 EXTRACTION_FIELD_BY_QUESTION: dict[QuestionCode, str] = {
@@ -79,15 +80,24 @@ class SessionDependencies:
 
 @dataclass
 class TurnDiagnostics:
-    """세션 후 로깅·보고 판단에 쓰는 부수 관찰값."""
+    """세션 후 로깅·보고 판단에 쓰는 부수 관찰값.
+
+    ``attempt``까지 키로 쓴다. 질문별로 하나만 두면 INTRO 재질문의 2차 관찰이 1차를
+    덮어써, 무응답 진단에 필요한 1차 청취 기록이 사라진다(S15P11A301-178).
+    """
 
     question: QuestionCode
+    attempt: int = 1
     raw_rms: float = 0.0
     stt_text: str | None = None
     no_speech_prob: float | None = None
     stt_invalid_reason: str | None = None
     extraction_source: str | None = None
+    # GMS가 뽑은 전체 추출값. 질문이 요구한 필드 외에는 보고 스키마에 담을 자리가
+    # 없어 버려지는데(11-1), 기록에는 남겨 사람이 원문을 읽고 만회할 수 있게 한다.
+    extraction: dict[str, Any] | None = None
     playback: PlaybackResult | None = None
+    audio_file: str | None = None
 
 
 class VoiceSessionRunner:
@@ -101,14 +111,31 @@ class VoiceSessionRunner:
         timeout_seconds: float = SESSION_TIMEOUT_SECONDS,
         listen_seconds: dict[QuestionCode, float] | None = None,
         on_event: Callable[[str], None] = lambda message: None,
+        session_log: SessionLog | None = None,
     ):
         self.deps = deps
         self.abort_requested = abort_requested
         self.timeout_seconds = timeout_seconds
         self.listen_seconds = listen_seconds or LISTEN_SECONDS
         self._on_event = on_event
+        # 저장 위치가 지정되지 않으면 비활성 로그가 온다. 호출부는 분기하지 않는다.
+        self.session_log = session_log or open_session_log(on_event=self.on_event)
         self.diagnostics: list[TurnDiagnostics] = []
         self._extractions: list[dict[str, Any]] = []
+        self._attempts: dict[QuestionCode, int] = {}
+        self._turn_index = 0
+
+    def _log(self, method: str, *args: Any, **kwargs: Any) -> Any:
+        """세션 기록 호출을 감싼다. 계측 실패가 대화를 중단시키면 안 된다.
+
+        `SessionLog` 자체도 IO 오류를 삼키지만, 주입된 구현이 무엇이든 여기서
+        한 번 더 막는다. 진단 목적의 코드가 임무를 멈추는 것이 최악이다.
+        """
+        try:
+            return getattr(self.session_log, method)(*args, **kwargs)
+        except Exception as error:
+            self.on_event(f"[LOG] {method} 실패: {type(error).__name__}")
+            return None
 
     def on_event(self, message: str) -> None:
         """진행 로그. 출력 실패가 대화 세션을 중단시키면 안 된다.
@@ -123,9 +150,15 @@ class VoiceSessionRunner:
 
     # ── 주입 대상 세 개 ────────────────────────────────────────────
     def prompt(self, question: QuestionCode, text: str) -> None:
-        """승인된 문구만 재생한다. 실패는 세션을 중단시키지 않고 기록만 한다."""
+        """승인된 문구만 재생한다. 실패는 세션을 중단시키지 않고 기록만 한다.
+
+        상태머신은 재질문 때 같은 질문으로 다시 호출한다. 그 호출이 곧 다음 시도의
+        시작이므로 여기서 시도 번호를 올린다.
+        """
+        attempt = self._attempts.get(question, 0) + 1
+        self._attempts[question] = attempt
         result = self.deps.player.play_text(text)
-        self._diagnostic(question).playback = result
+        self._diagnostic(question, attempt).playback = result
         if result.ok:
             self.on_event(f"[PLAY] {question.value}: {text}")
         else:
@@ -137,13 +170,20 @@ class VoiceSessionRunner:
 
     def listen(self, question: QuestionCode, attempt: int) -> AudioObservation:
         """녹음→무음판정→정규화→VAD→STT→환각가드를 한 관찰값으로 만든다."""
-        diagnostic = self._diagnostic(question)
+        diagnostic = self._diagnostic(question, attempt)
         seconds = self.listen_seconds.get(question, 6.0)
         try:
             wav = self.deps.record(seconds)
         except Exception as exc:  # 마이크 분리·점유 등 장치 오류
             self.on_event(f"[FAIL] {question.value}: 오디오 장치 오류 {exc}")
             return AudioObservation(False, None, audio_error=True)
+
+        # 무음·VAD 미검출로 빠지는 경로에서도 원본을 남긴다. 그 경로가 무응답
+        # 오판을 진단하는 대상이므로, 여기서 조건을 걸면 계측이 무의미해진다.
+        self._turn_index += 1
+        diagnostic.audio_file = self._log(
+            "audio", question.value, attempt, self._turn_index, wav
+        )
 
         raw_rms = rms(wav)
         diagnostic.raw_rms = raw_rms
@@ -184,6 +224,7 @@ class VoiceSessionRunner:
         extraction = getattr(result, "extraction", result) or {}
         source = getattr(result, "source", None)
         self._diagnostic(question).extraction_source = source
+        self._diagnostic(question).extraction = dict(extraction)
         self._extractions.append(dict(extraction))
         if source and source != "GMS":
             self.on_event(f"[LLM] {question.value}: 추출 경로 {source}")
@@ -192,7 +233,7 @@ class VoiceSessionRunner:
         return None if value in _UNDETERMINED else value
 
     # ── 실행 ──────────────────────────────────────────────────────
-    def run(self) -> SessionResult:
+    def run(self, *, source: str = "VISION") -> SessionResult:
         machine = ConversationMachine(
             prompt=self.prompt,
             listen=self.listen,
@@ -200,7 +241,58 @@ class VoiceSessionRunner:
             abort_requested=self.abort_requested,
             timeout_seconds=self.timeout_seconds,
         )
-        return machine.run()
+        self._log("start", source=source, timeout_seconds=self.timeout_seconds)
+        try:
+            result = machine.run()
+        except BaseException:
+            # 중단·예외로 끝나도 그때까지 관찰한 것은 남긴다. 진단이 필요한 상황이
+            # 바로 이쪽이다.
+            self._write_transcript(None)
+            raise
+        self._write_transcript(result)
+        return result
+
+    def _write_transcript(self, result: SessionResult | None) -> None:
+        """턴별 관찰과 세션 종료를 기록한다. 실패해도 세션에 영향을 주지 않는다."""
+        turns = list(result.turns) if result is not None else []
+        # 상태머신의 턴 결과와 실행기의 관찰값을 (질문, 시도)로 맞춘다.
+        by_key = {(turn.question, turn.attempt): turn for turn in turns}
+        for diagnostic in self.diagnostics:
+            turn = by_key.get((diagnostic.question, diagnostic.attempt))
+            self._log(
+                "turn",
+                {
+                    "question": diagnostic.question.value,
+                    "attempt": diagnostic.attempt,
+                    "responseClass": (
+                        turn.response_class.value if turn is not None else None
+                    ),
+                    "value": turn.value if turn is not None else None,
+                    "rawRms": round(diagnostic.raw_rms, 6),
+                    "sttText": diagnostic.stt_text,
+                    "noSpeechProb": diagnostic.no_speech_prob,
+                    "sttInvalidReason": diagnostic.stt_invalid_reason,
+                    "extractionSource": diagnostic.extraction_source,
+                    "extraction": diagnostic.extraction,
+                    "playback": (
+                        diagnostic.playback.status.value
+                        if diagnostic.playback is not None
+                        else None
+                    ),
+                    "audio": diagnostic.audio_file,
+                }
+            )
+        self._log(
+            "finish",
+            {
+                "state": result.state.value if result is not None else None,
+                "terminationReason": (
+                    result.termination_reason if result is not None else "UNKNOWN"
+                ),
+                "fields": dict(result.fields) if result is not None else None,
+                "usedFallback": self.used_fallback,
+            }
+        )
 
     @property
     def used_fallback(self) -> bool:
@@ -210,10 +302,15 @@ class VoiceSessionRunner:
             for diagnostic in self.diagnostics
         )
 
-    def _diagnostic(self, question: QuestionCode) -> TurnDiagnostics:
+    def _diagnostic(
+        self, question: QuestionCode, attempt: int | None = None
+    ) -> TurnDiagnostics:
+        """(질문, 시도) 단위 관찰값을 돌려준다. attempt 생략 시 진행 중인 시도."""
+        if attempt is None:
+            attempt = self._attempts.get(question, 1)
         for diagnostic in self.diagnostics:
-            if diagnostic.question == question:
+            if diagnostic.question == question and diagnostic.attempt == attempt:
                 return diagnostic
-        diagnostic = TurnDiagnostics(question=question)
+        diagnostic = TurnDiagnostics(question=question, attempt=attempt)
         self.diagnostics.append(diagnostic)
         return diagnostic

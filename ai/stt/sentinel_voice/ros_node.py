@@ -53,6 +53,7 @@ from .integration import (
 )
 from .report_delivery import DeliveryResult, queue_report
 from .safety import report_defaults
+from .session_log import SessionLog
 
 
 class VoiceSessionNode(Node):
@@ -176,6 +177,7 @@ class VoiceSessionNode(Node):
     def _run_session(self, context: EncounterContext) -> None:
         started_at = utc_now_iso()
         used_fallback = False
+        session_log = SessionLog(None)
         try:
             # 무거운 오디오·Whisper 의존성은 실제 encounter가 시작될 때 로딩한다.
             from .pipeline import build_dependencies, guide_player
@@ -200,8 +202,9 @@ class VoiceSessionNode(Node):
                     abort_requested=self._requested_abort,
                     on_event=self.get_logger().info,
                 )
-                result = runner.run()
+                result = runner.run(source="VISION")
                 used_fallback = runner.used_fallback
+                session_log = runner.session_log
         except Exception as error:  # 장치·모델 초기화 오류도 ROS 노드를 죽이지 않는다.
             self.get_logger().error(
                 f"음성 세션 실행 실패: {type(error).__name__}: {error}"
@@ -241,8 +244,11 @@ class VoiceSessionNode(Node):
             )
         except ValueError as error:
             self.get_logger().warn(str(error))
+            session_log.report({"error": str(error)})
             delivery = queue_report({}, lambda _report: False)
         else:
+            # 관제로 나간 것과 같은 본문을 남긴다. 발신 실패 시 대조에 쓴다.
+            session_log.report(payload)
             delivery = queue_report(payload, self._publish_report)
 
         self.get_logger().info(

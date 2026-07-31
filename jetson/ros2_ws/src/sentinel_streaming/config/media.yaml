@@ -11,31 +11,51 @@
     decoder: nvv4l2decoder
     decoder_fallback: jpegdec
 
-    # 인코딩 출력 프레임레이트 (S15P11A301-186).
+    # 인코딩 출력 프레임레이트 (S15P11A301-186에서 도입, -191에서 30으로 되돌림).
     #
-    # 캡처는 30FPS 그대로 받고 인코딩 직전에 15FPS로 내린다. 명세가 요구하는
-    # 값이다 — 25.5는 "관제 영상 캡처 29.93FPS·인코딩 출력 15FPS 목표(CPU 부하 시
-    # 15FPS 우선)", R-04의 부하 대응은 "720p 15FPS, 단일 인코딩"이다.
+    # **기본은 캡처와 같은 30이다. 내리는 것은 CPU 포화가 관측됐을 때만 한다.**
     #
-    # 30FPS로 인코딩하던 것은 요구되지 않은 두 배의 일이었고, 그 몫이 AI 추론을
-    # 깎고 있었다. 186 실측에서 전체 스택 구동 시 AI가 16.49 → 13.33 FPS로
-    # 떨어졌고(목표 15 미달), 그 열화의 45%가 x264enc였다.
+    # 186에서 이 값을 15로 내렸다가 되돌렸다. 근거로 든 명세 항목을 잘못 읽었다.
+    # 25.5에 "인코딩 출력 15FPS 목표"가 있지만 바로 뒤에 "(CPU 부하 시 15FPS
+    # 우선)"이라는 조건절이 붙는다. 나머지 두 근거는 아예 표의 성격을 잘못 봤다 —
+    # R-04(01:446)는 「18. 위험 관리와 대체안」의 *대응·대체안* 열이고,
+    # 05:1421은 「장애 / 즉시 동작 / 복구·대체」의 *복구책* 열이다. 둘 다 포화
+    # 상황의 대응이며 기본 설계가 아니다.
     #
-    # 이벤트 녹화도 같이 15FPS가 된다. tee가 인코더 뒤에 있어 단일 인코딩을
-    # 공유하기 때문이며, 이것이 R-04가 의도한 구성이다. 32-5의 "프레임 폐기
-    # 금지"는 큐 정책(leaky=no) 항목이라 인코딩 레이트와 다른 사안이다.
-    encode_framerate: 15
+    # 같은 표가 오히려 반대를 가리킨다. CPU가 부족할 때 먼저 줄이라고 지목하는
+    # 대상은 스트리밍이 아니라 추론이다.
+    #
+    #   AI branch 지연        → 입력 해상도·추론 FPS 감소
+    #   HW MJPEG 디코딩 실패  → CPU 여유 부족 시 AI 추론 FPS 우선 감소
+    #   녹화 branch 지연      → 스트리밍 비트레이트 우선 감소
+    #
+    # 스트리밍을 손대는 것은 그보다 뒤이고, 그때도 프레임레이트가 아니라
+    # 비트레이트가 먼저다.
+    #
+    # 실측도 15로 내릴 이유가 되지 못했다. x264enc CPU를 85.7%에서 47.5%로
+    # 27%p 풀어줘도 추론은 13.33에서 13.82 FPS로 +0.49밖에 오르지 않는다.
+    # 병목이 CPU 사이클이 아니라 LPDDR5 대역폭이기 때문이다(186 참고).
+    #
+    # 내려야 할 때가 오면(Nav2가 올라와 실제로 포화되면) 이 값과 아래
+    # encoder_key_int_max를 **함께** 내린다. 하나만 내리면 링 조각이 깨진다.
+    # videorate 요소는 30에서 실질 무동작이므로 남겨 두었다 — 그때 설정값만
+    # 바꾸면 된다.
+    encode_framerate: 30
 
     # H.264 인코딩 — Orin Nano에 NVENC가 없어 x264enc(CPU)를 쓴다.
     # PoC-B 3차에서 이 설정으로 30.020 fps를 확인했다.
     encoder_bitrate_kbps: 2500
     encoder_speed_preset: ultrafast
     encoder_tune: zerolatency
-    # encode_framerate와 같게 둔다. 링 버퍼가 이 값에 의존한다 — ring_buffer.py는
-    # send-keyframe-requests를 false로 두면서 "key-int-max가 이미 1초마다 IDR을
-    # 만든다"를 근거로 삼는다. 30으로 두고 encode_framerate만 15로 내리면 IDR이
-    # 2초마다 나와 1초 조각이 2초가 되고, 사전 영상 3초의 granularity가 무너진다.
-    encoder_key_int_max: 15
+    # **encode_framerate와 항상 같게 둔다.** 링 버퍼가 이 값에 의존한다 —
+    # ring_buffer.py는 send-keyframe-requests를 false로 두면서 "key-int-max가 이미
+    # 1초마다 IDR을 만든다"를 근거로 삼는다. 한쪽만 바꾸면 IDR 간격이 1초가
+    # 아니게 되고, 그러면 splitmuxsink가 max-size-time에 도달해도 쪼갤 IDR이 없어
+    # 1초 조각이 길어진다. 사전 영상 3초의 granularity가 무너지고
+    # ring_stall_timeout_seconds 여유도 줄어든다.
+    #
+    # 어긋나면 stream_pipeline_node가 경고를 남긴다(_check_keyframe_interval).
+    encoder_key_int_max: 30
     encoder_bframes: 0
 
     # MediaMTX 발행

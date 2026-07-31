@@ -20,6 +20,8 @@
     설치 방법은 README의 의존성 절을 본다.
   -->
   <exec_depend>python3-requests</exec_depend>
+  <!-- 지도 저장 서비스(S15P11A301-171). SaveMap.srv 를 쓴다. -->
+  <exec_depend>slam_toolbox</exec_depend>
 
   <export><build_type>ament_python</build_type></export>
 </package>

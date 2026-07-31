@@ -589,7 +589,6 @@ class MissionStateMachine:
         if self.state is MissionState.COMPLETED:
             return self._ignore('이미 COMPLETED 상태다')
         self._clear_encounter()
-        self.mission_id = None
         return self._to(MissionState.COMPLETED, f'MISSION_COMPLETED {detail}'.strip())
 
     def _safe_pose_reached(self, now: datetime, detail: str) -> Transition:

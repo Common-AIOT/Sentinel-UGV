@@ -667,24 +667,30 @@ def _interacting() -> MissionStateMachine:
     return machine
 
 
-def test_stop_drops_the_in_flight_encounter_and_mission_id():
-    """STOP 시 진행 중 encounter와 missionId를 버린다.
+def test_stop_drops_the_in_flight_encounter_but_keeps_the_mission_id():
+    """STOP 시 진행 중 encounter는 버리고 missionId는 남긴다.
 
-    상호작용이 끝나지 않은 상태로 임무가 끝나므로, 그 발견을 완결된 것으로
-    보고하면 잘못된 기록이 된다. missionId를 남기면 이후 encounter가 종료된 임무에
-    붙는데 백엔드는 그것을 MISSION_ALREADY_ENDED로 거부한다.
+    encounter를 버리는 이유: 상호작용이 끝나지 않은 상태로 임무가 끝나므로 그
+    발견을 완결된 것으로 보고하면 잘못된 기록이 된다.
+
+    **missionId를 남기는 이유는 S15P11A301-171에서 바뀌었다.** 전에는 지웠는데,
+    COMPLETED 상태 메시지 자체가 "어느 임무가 끝났는가"를 실어야 한다 — 지도
+    저장이 그 값으로 임무별 디렉터리와 maps 행을 만든다. 지우면 발행되는 상태에
+    이미 null이 실려 지도가 `no-mission`에 저장된다(실기기에서 겪었다).
+
+    지웠던 근거("이후 encounter가 종료된 임무에 붙는다")는
+    `observe_candidates`가 이미 막는다 — 아래 시험이 그것을 고정한다.
     """
     machine = MissionStateMachine()
-    machine.handle_signal(
-        Signal.MISSION_START, now=T0, mission_id='4bde8ad1-c74b-4d42-bec3-9f71af94b41a'
-    )
+    mission = '4bde8ad1-c74b-4d42-bec3-9f71af94b41a'
+    machine.handle_signal(Signal.MISSION_START, now=T0, mission_id=mission)
     confirm(machine)
     assert machine.encounter is not None
     assert machine.mission_id is not None
 
     machine.handle_signal(Signal.MISSION_COMPLETED, now=at(30))
     assert machine.encounter is None
-    assert machine.mission_id is None
+    assert machine.mission_id == mission
 
 
 def test_stop_is_rejected_in_estop_with_a_reason_code():
@@ -925,3 +931,45 @@ def test_early_signal_for_a_different_encounter_is_not_remembered():
         '남의 encounter 신호로 REPORTING을 건너뛰면 보고 완료 전에 탐사를 재개한다'
     )
     assert result.changed
+
+
+def test_completed_status_still_carries_the_mission_id():
+    """COMPLETED 상태가 어느 임무였는지 실어야 한다 (S15P11A301-171).
+
+    지도 저장이 `/mission/status`의 COMPLETED를 보고 임무별 디렉터리와 maps 행을
+    만든다. 전이 전에 `mission_id`를 지우면 발행되는 상태에 이미 null이 실려
+    지도가 `no-mission`에 저장된다 — 실기기에서 겪었다.
+
+    종료된 임무에 새 encounter가 붙는 것은 `observe_candidates`가 막는다
+    (EXPLORING이 아니면 새 encounter를 만들지 않는다). 아래에서 함께 고정한다.
+    """
+    machine = MissionStateMachine()
+    machine.handle_signal(
+        Signal.MISSION_START, now=T0,
+        mission_id='4bde8ad1-c74b-4d42-bec3-9f71af94b41a',
+    )
+    result = machine.handle_signal(Signal.MISSION_COMPLETED, now=at(60))
+
+    assert result.changed
+    assert machine.state is MissionState.COMPLETED
+    assert machine.mission_id == '4bde8ad1-c74b-4d42-bec3-9f71af94b41a', (
+        'COMPLETED 상태 메시지가 어느 임무였는지 알려야 한다'
+    )
+
+
+def test_completed_does_not_accept_new_encounters():
+    """종료 후에는 새 encounter를 만들지 않는다.
+
+    `mission_id`를 유지해도 안전한 근거다. 이것이 깨지면 종료된 임무에 발견이
+    붙어 백엔드가 거부하는 encounter가 발행된다.
+    """
+    machine = MissionStateMachine()
+    machine.handle_signal(Signal.MISSION_START, now=T0, mission_id='m1')
+    machine.handle_signal(Signal.MISSION_COMPLETED, now=at(10))
+
+    result = machine.observe_candidates(
+        now=at(20), track_ids={1}, confidence=0.9, new_encounter_id=EID
+    )
+    assert not result.changed
+    assert machine.encounter is None
+    assert machine.state is MissionState.COMPLETED

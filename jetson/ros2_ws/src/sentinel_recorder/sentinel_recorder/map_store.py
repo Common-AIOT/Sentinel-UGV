@@ -121,6 +121,40 @@ class MapStore:
             upload_state=upload_state,
         )
 
+    def read_report(self, mission_id: str | None) -> dict[str, Any] | None:
+        """보고서를 읽는다. 없거나 깨졌으면 None.
+
+        깨진 보고서를 None으로 돌리는 것은 업로더가 "보고서 없음"과 같게
+        취급하게 하려는 것이다 — 그쪽이 다시 올리는 쪽으로 기운다. 이미 올라간
+        지도를 한 번 더 올리는 것보다 못 올리는 것이 나쁘다.
+        """
+        path = self.directory_for(mission_id) / REPORT_NAME
+        try:
+            payload = json.loads(path.read_text(encoding='utf-8'))
+        except (OSError, json.JSONDecodeError):
+            return None
+        return payload if isinstance(payload, dict) else None
+
+    def iter_missions(self) -> list[str]:
+        """지도가 저장된 임무 ID들. 업로드 대상 후보다.
+
+        `no-mission`은 제외한다. 백엔드 maps.mission_id가 NOT NULL FK이므로
+        임무 없이 만든 지도는 등록할 수 없다. 파일은 남겨 두고 사람이 열어볼 수
+        있게만 한다.
+
+        디렉터리 이름이 곧 missionId다. UUID 형식을 검사하지는 않는다 — 검사해
+        걸러내면 형식이 바뀌었을 때 조용히 아무것도 안 올린다. 잘못된 값은
+        발급 요청이 4xx로 되돌려주고, 그것은 재시도하지 않는 실패로 기록된다.
+        """
+        if not self.root.exists():
+            return []
+        names = []
+        for entry in sorted(self.root.iterdir()):
+            if not entry.is_dir() or entry.name == NO_MISSION_DIRNAME:
+                continue
+            names.append(entry.name)
+        return names
+
     def build_report(
         self,
         *,

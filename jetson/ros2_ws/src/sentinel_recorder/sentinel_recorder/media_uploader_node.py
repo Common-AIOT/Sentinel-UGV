@@ -41,7 +41,14 @@ class MediaUploaderNode(Node):
         )
         # 백엔드 주소. EC2에 배포된 Spring Boot다. 자격증명을 젯슨에 두지 않고
         # Presigned URL을 받아 쓰는 것이 31-7의 요지다.
-        self.declare_parameter('backend_base_url', 'https://sentinel-ugv.xyz')
+        #
+        # apex 도메인이 아니라 API 호스트다. sentinel-ugv.xyz는 Vercel 프론트이고
+        # 모든 API 요청이 404가 된다 — 프론트가 200을 주므로 망 문제로 보이지도
+        # 않는다. demo.launch.py가 이 값을 손으로 덮어쓰던 것을 기본값으로
+        # 올렸다(S15P11A301-171에서 지도 업로더가 같은 함정을 밟았다).
+        self.declare_parameter(
+            'backend_base_url', 'https://api.sentinel-ugv.xyz'
+        )
         self.declare_parameter('auth_token', '')
         self.declare_parameter('robot_id', 'SENTINEL-01')
         self.declare_parameter('poll_period_seconds', 10.0)

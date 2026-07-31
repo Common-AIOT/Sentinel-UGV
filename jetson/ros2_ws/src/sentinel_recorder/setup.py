@@ -27,6 +27,7 @@ setup(
             'trigger_encounter = sentinel_recorder.trigger_encounter:main',
             'media_uploader = sentinel_recorder.media_uploader_node:main',
             'map_saver = sentinel_recorder.map_saver_node:main',
+            'map_uploader = sentinel_recorder.map_uploader_node:main',
         ],
     },
 )

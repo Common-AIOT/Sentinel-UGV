@@ -140,10 +140,14 @@ class StreamPipelineNode(Node):
         self.declare_parameter('input_width', 1280)
         self.declare_parameter('input_height', 720)
         self.declare_parameter('input_framerate', 30)
-        # 인코딩 출력 프레임레이트. 캡처(input_framerate)와 다르다 —
-        # 명세 25.5는 "캡처 29.93FPS·인코딩 출력 15FPS 목표"이고 R-04의 부하
-        # 대응도 "720p 15FPS, 단일 인코딩"이다(S15P11A301-186).
-        self.declare_parameter('encode_framerate', 15)
+        # 인코딩 출력 프레임레이트. 캡처(input_framerate)와 따로 둘 수 있게
+        # 만들었지만 **기본은 캡처와 같다**(S15P11A301-191).
+        #
+        # 내리는 것은 CPU 포화가 관측됐을 때의 대응책이다. 186에서 이 값을 15로
+        # 두었다가 되돌렸다 — 명세의 조건절("CPU 부하 시")을 무조건절로 읽었고,
+        # 실측에서도 CPU를 27%p 풀어줘야 추론이 +0.49밖에 오르지 않았다.
+        # 자세한 근거는 config/media.yaml 주석에 있다.
+        self.declare_parameter('encode_framerate', 30)
         self.declare_parameter('decoder', 'nvv4l2decoder')
         self.declare_parameter('decoder_fallback', 'jpegdec')
         self.declare_parameter('encoder_bitrate_kbps', 2500)
@@ -153,7 +157,7 @@ class StreamPipelineNode(Node):
         # false로 두면서 "key-int-max가 이미 1초마다 IDR을 만든다"를 근거로 삼는다.
         # 따라서 encode_framerate와 같아야 한다 — _check_keyframe_interval()이
         # 어긋나면 경고한다.
-        self.declare_parameter('encoder_key_int_max', 15)
+        self.declare_parameter('encoder_key_int_max', 30)
         self.declare_parameter('encoder_bframes', 0)
         self.declare_parameter('publish_mode', 'rtsp')
         self.declare_parameter('rtsp_url', 'rtsp://127.0.0.1:8554/sentinel')

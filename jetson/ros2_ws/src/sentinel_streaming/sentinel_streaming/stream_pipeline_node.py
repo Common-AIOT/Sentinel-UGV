@@ -36,6 +36,10 @@ from rclpy.qos import (  # noqa: E402
 from sensor_msgs.msg import CompressedImage  # noqa: E402
 from std_msgs.msg import String  # noqa: E402
 
+from .pipeline_spec import (  # noqa: E402
+    downscale_precedes_decode,
+    keyframe_interval_seconds,
+)
 from .ring_buffer import RingBufferWriter, is_audio_element  # noqa: E402
 
 
@@ -136,12 +140,20 @@ class StreamPipelineNode(Node):
         self.declare_parameter('input_width', 1280)
         self.declare_parameter('input_height', 720)
         self.declare_parameter('input_framerate', 30)
+        # 인코딩 출력 프레임레이트. 캡처(input_framerate)와 다르다 —
+        # 명세 25.5는 "캡처 29.93FPS·인코딩 출력 15FPS 목표"이고 R-04의 부하
+        # 대응도 "720p 15FPS, 단일 인코딩"이다(S15P11A301-186).
+        self.declare_parameter('encode_framerate', 15)
         self.declare_parameter('decoder', 'nvv4l2decoder')
         self.declare_parameter('decoder_fallback', 'jpegdec')
         self.declare_parameter('encoder_bitrate_kbps', 2500)
         self.declare_parameter('encoder_speed_preset', 'ultrafast')
         self.declare_parameter('encoder_tune', 'zerolatency')
-        self.declare_parameter('encoder_key_int_max', 30)
+        # 링 버퍼가 이 값에 의존한다. ring_buffer.py는 send-keyframe-requests를
+        # false로 두면서 "key-int-max가 이미 1초마다 IDR을 만든다"를 근거로 삼는다.
+        # 따라서 encode_framerate와 같아야 한다 — _check_keyframe_interval()이
+        # 어긋나면 경고한다.
+        self.declare_parameter('encoder_key_int_max', 15)
         self.declare_parameter('encoder_bframes', 0)
         self.declare_parameter('publish_mode', 'rtsp')
         self.declare_parameter('rtsp_url', 'rtsp://127.0.0.1:8554/sentinel')
@@ -238,8 +250,32 @@ class StreamPipelineNode(Node):
             f'location={self._param("rtsp_url")}'
         )
 
+    def _check_keyframe_interval(self, encode_fps: int) -> None:
+        """IDR 간격이 1초가 아니면 경고한다.
+
+        링 버퍼는 `send-keyframe-requests=false`로 두고 인코더가 1초마다 IDR을
+        만든다는 전제에 기댄다(ring_buffer.py의 주석). key-int-max가
+        encode_framerate와 어긋나면 splitmuxsink가 `max-size-time`(1초)에
+        도달해도 쪼갤 IDR이 없어 조각이 길어진다. 그러면 사전 영상 3초의
+        granularity가 무너지고 ring_stall_timeout_seconds 여유도 줄어든다.
+
+        파이프라인을 세우지는 못하게 막지 않는다. 스트리밍은 정상 동작하고
+        영향은 조각 길이에 국한되므로, 32장의 장애 격리 원칙대로 경고만 남긴다.
+        """
+        key_int = int(self._param('encoder_key_int_max'))
+        interval = keyframe_interval_seconds(key_int, encode_fps)
+        if interval == 1.0:
+            return
+        self.get_logger().warning(
+            f'encoder_key_int_max({key_int})가 encode_framerate({encode_fps})와 '
+            f'다르다. IDR이 {interval:.1f}초마다 나오므로 링 조각이 '
+            f'segment_seconds보다 길어진다. 두 값을 같게 두면 1초마다 IDR이 나온다.'
+        )
+
     def _pipeline_description(self) -> str:
         fps = int(self._param('input_framerate'))
+        encode_fps = max(1, int(self._param('encode_framerate')))
+        self._check_keyframe_interval(encode_fps)
         decoder = self._decoder_description()
         publish_sink = self._publish_sink_description()
 
@@ -259,6 +295,23 @@ class StreamPipelineNode(Node):
             f'appsrc name=src is-live=true do-timestamp=false format=time '
             f'  caps=image/jpeg,framerate={fps}/1 '
             f'! jpegparse '
+            # 캡처 30FPS를 encode_framerate로 내린다(S15P11A301-186).
+            #
+            # **디코더 앞에** 둔다. 처음에 디코더 뒤(인코더 직전)에 두었더니
+            # x264enc CPU는 85.7%에서 58.9%로 내려갔는데 AI 추론은 13.33 FPS
+            # 그대로였다. 버릴 프레임을 디코딩한 뒤에 버렸기 때문이다.
+            #
+            # Orin Nano는 CPU와 GPU가 LPDDR5 대역폭을 공유하고, 720p MJPEG
+            # 디코딩이 그 대역폭의 큰 소비자다. 부하 시 load average가 4.10
+            # (6코어)으로 CPU가 포화가 아니었는데도 추론이 19% 느려진 것은
+            # 경합 대상이 사이클이 아니라 대역폭이라는 뜻이다. 압축 상태로
+            # 버리면 디코딩과 인코딩을 함께 줄인다.
+            #
+            # drop-only=true를 준다. 기본값은 부족한 프레임을 복제해 목표
+            # 레이트를 맞추는데, 카메라가 30FPS 아래로 떨어졌을 때 없는 화면을
+            # 만들어 부하만 쓰게 된다. 증빙 영상에 복제 프레임이 섞이는 것도 피한다.
+            f'! videorate drop-only=true '
+            f'! image/jpeg,framerate={encode_fps}/1 '
             f'! {decoder} '
             f'! video/x-raw,format=I420 '
             f'! x264enc name=enc '
@@ -280,6 +333,16 @@ class StreamPipelineNode(Node):
     def _build_pipeline(self) -> None:
         description = self._pipeline_description()
         self.get_logger().info(f'파이프라인: {description}')
+
+        # 레이트 축소가 디코딩보다 앞서야 한다(S15P11A301-186). 뒤에 두면 CPU
+        # 사용률은 내려가지만 추론 FPS가 회복되지 않는다 — 성공처럼 보이는
+        # 회귀라 런타임에서도 짚어준다. 자세한 근거는 pipeline_spec.py에 있다.
+        if not downscale_precedes_decode(description, self._decoder_description()):
+            self.get_logger().warning(
+                'videorate가 디코더보다 뒤에 있다. 버릴 프레임을 디코딩한 뒤에 '
+                '버리므로 LPDDR5 대역폭 경합이 그대로 남고 추론 FPS가 회복되지 '
+                '않는다. 인코딩 CPU만 내려가 고친 것처럼 보인다.'
+            )
 
         self.pipeline = Gst.parse_launch(description)
         self.appsrc = self.pipeline.get_by_name('src')

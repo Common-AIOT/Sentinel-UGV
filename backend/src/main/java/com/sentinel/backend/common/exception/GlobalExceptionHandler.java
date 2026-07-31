@@ -7,9 +7,12 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 /**
  * 프로젝트 전역에서 발생하는 예외를 한 곳에서 처리하여
@@ -55,6 +58,36 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiResponse<?>> handleHttpMessageNotReadable(HttpMessageNotReadableException e) {
         log.warn("요청 본문 파싱 실패: {}", e.getMessage());
         ErrorCode errorCode = ErrorCode.INVALID_INPUT_VALUE;
+        return ResponseEntity.status(errorCode.getHttpStatus())
+                .body(ApiResponse.error(errorCode.getCode(), errorCode.getMessage()));
+    }
+
+    // 1-2. 경로 변수 타입 불일치 (400). UUID 자리에 "abc" 같은 값이 오는 경우로,
+    //      클라이언트의 요청 실수가 500 으로 보이면 안 된다(S15P11A301-184).
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ApiResponse<?>> handleTypeMismatch(MethodArgumentTypeMismatchException e) {
+        log.warn("경로 변수 타입 불일치: {}={}", e.getName(), e.getValue());
+        ErrorCode errorCode = ErrorCode.INVALID_INPUT_VALUE;
+        return ResponseEntity.status(errorCode.getHttpStatus())
+                .body(ApiResponse.error(errorCode.getCode(),
+                        "%s 값의 형식이 올바르지 않습니다: %s".formatted(e.getName(), e.getValue())));
+    }
+
+    // 1-3. 지원하지 않는 HTTP 메서드 (405). COMMON-003 이 정의만 있고 안 쓰이던 것을 연결한다.
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<ApiResponse<?>> handleMethodNotSupported(HttpRequestMethodNotSupportedException e) {
+        log.warn("지원하지 않는 HTTP 메서드: {}", e.getMethod());
+        ErrorCode errorCode = ErrorCode.METHOD_NOT_ALLOWED;
+        return ResponseEntity.status(errorCode.getHttpStatus())
+                .body(ApiResponse.error(errorCode.getCode(), errorCode.getMessage()));
+    }
+
+    // 1-4. 존재하지 않는 URL (404). 핸들러가 없으면 정적 리소스 해석까지 실패한 뒤
+    //      NoResourceFoundException 이 오는데, catch-all 로 흐르면 오타 URL 이 500 이 된다.
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<ApiResponse<?>> handleNoResourceFound(NoResourceFoundException e) {
+        log.warn("존재하지 않는 URL: /{}", e.getResourcePath());
+        ErrorCode errorCode = ErrorCode.URL_NOT_FOUND;
         return ResponseEntity.status(errorCode.getHttpStatus())
                 .body(ApiResponse.error(errorCode.getCode(), errorCode.getMessage()));
     }

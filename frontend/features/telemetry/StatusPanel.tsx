@@ -204,19 +204,14 @@ export default function StatusPanel() {
       </div>
       )}
 
-      <div className="grid grid-cols-2 gap-2">
-        <div className="border border-border rounded px-2.5 py-2 bg-secondary/30">
-          <p className="text-[11px] text-muted-foreground mb-0.5">속도</p>
-          <p className="font-mono text-base font-semibold text-foreground tabular-nums">
-            {status.speed.toFixed(2)}
-            <span className="text-[11px] text-muted-foreground font-normal"> m/s</span>
-          </p>
-        </div>
-        <div className="border border-border rounded px-2.5 py-2 bg-secondary/30">
-          <p className="text-[11px] text-muted-foreground mb-0.5">방위각</p>
-          <p className="font-mono text-base text-foreground tabular-nums">{status.heading}°</p>
-        </div>
-      </div>
+      {/* 속도·방위각 타일을 뺐다 (S15P11A301-200).
+          둘 다 실데이터 출처가 없다. 속도는 telemetry의 motion인데
+          cloud_bridge가 motion=None으로 보내고(엔코더·ESP32 대기, S15P11A301-174),
+          방위각은 pose.yaw에 실값이 있지만 그것을 읽는 조회 API가 없다.
+          화면에 있던 값은 프론트가 만든 난수였다.
+          미니맵 화살표가 방향과 이동을 이미 보여주므로 숫자 타일은 중복이기도
+          했다. 실데이터가 오면 큰 타일이 아니라 영상 좌측 상단 오버레이 줄에
+          한 줄로 넣는다 — 그쪽이 "관측값" 형식이다. */}
 
       {/* 구성요소.
           정상일 때 초록 점 4개를 늘어놓는 것은 정보가 아니라 소음이다. 다 정상이면

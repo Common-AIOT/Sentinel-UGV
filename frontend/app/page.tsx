@@ -1,13 +1,15 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Archive, Radio, User } from "lucide-react";
+import { Archive, Radio } from "lucide-react";
 import LidarMap from "@/features/mapping/LidarMap";
 import VideoPanel from "@/features/streaming/VideoPanel";
 import StatusPanel from "@/features/telemetry/StatusPanel";
 import SensorDashboard from "@/features/telemetry/SensorDashboard";
+import ModeRow from "@/features/telemetry/ModeRow";
+import { OverlayLine, OverlayStack } from "@/features/telemetry/PanelOverlay";
 import { useRobot } from "@/features/robot/RobotContext";
 
 function NavLink({ to, children }: { to: string; children: React.ReactNode }) {
@@ -27,56 +29,6 @@ function NavLink({ to, children }: { to: string; children: React.ReactNode }) {
   );
 }
 
-/**
- * 탐지 카운터.
- *
- * 팝업(ActiveDetectionPopup)을 대체한다 (S15P11A301-196). 팝업은 발견 순간의
- * 영상 — 가장 봐야 할 화면 — 을 가렸다. 대신 숫자가 오를 때 배지를 잠깐
- * 강조해서 주변시로 알아챌 수 있게 한다. 조용히 숫자만 바뀌면 발표 중에
- * 아무도 못 본다.
- *
- * 상세 확인은 임무 이력(/blackbox)에서 한다 — 발견 목록·위치·이벤트 영상이
- * 전부 그쪽에 있다.
- */
-function DetectionBadge() {
-  const { detections } = useRobot();
-  const [flash, setFlash] = useState(false);
-  // 첫 렌더의 0 → N (새로고침 복구)에는 강조하지 않도록 이전 값을 기억한다.
-  const prev = useRef(0);
-
-  useEffect(() => {
-    if (detections.length > prev.current && prev.current > 0) {
-      setFlash(true);
-      const timer = setTimeout(() => setFlash(false), 2500);
-      prev.current = detections.length;
-      return () => clearTimeout(timer);
-    }
-    prev.current = detections.length;
-  }, [detections.length]);
-
-  return (
-    <div
-      className={`flex items-center gap-1.5 text-xs font-medium border rounded px-2.5 py-1 transition-colors ${
-        flash
-          ? "border-accent bg-accent/20 text-accent animate-pulse"
-          : "border-border text-muted-foreground"
-      }`}
-    >
-      <User size={11} />
-      탐지
-      <span
-        className={`font-mono text-[9px] px-1 rounded-full ${
-          detections.length > 0
-            ? "bg-accent/80 text-accent-foreground"
-            : "bg-muted text-muted-foreground"
-        }`}
-      >
-        {detections.length}
-      </span>
-    </div>
-  );
-}
-
 function TopBar() {
   const { wsConnected } = useRobot();
   // 시계는 클라이언트에서만 렌더한다. 서버 렌더와 클라이언트 렌더 사이에
@@ -92,14 +44,15 @@ function TopBar() {
 
   return (
     <div className="h-10 flex-shrink-0 flex items-center justify-between px-4 border-b border-border bg-card/60 backdrop-blur z-10">
-      {/* 왼쪽: 로고 + 탐지 카운터 + 페이지 링크 */}
+      {/* 왼쪽: 로고 + 페이지 링크 */}
       <div className="flex items-center gap-3">
         <div className="flex items-center gap-2">
           <Radio size={13} className="text-primary" />
           <span className="font-mono text-sm text-primary font-semibold tracking-wider">GCS</span>
         </div>
         <div className="w-px h-4 bg-border" />
-        <DetectionBadge />
+        {/* 탐지 수는 영상 오버레이로 옮겼다 (S15P11A301-200). 링크와 같은 모양의
+            배지가 나란히 있어서 서로 다른 내용인 것이 읽히지 않았다. */}
         <NavLink to="/blackbox">
           <Archive size={11} />
           임무 이력
@@ -117,13 +70,25 @@ function TopBar() {
   );
 }
 
+/**
+ * 미니맵 슬롯.
+ *
+ * 라벨을 영상 오버레이와 같은 형식으로 맞췄다 (S15P11A301-200).
+ *
+ * 격자는 아직 목업이다(mockData.buildMockGrid). 실시간 SLAM 지도로 대체하려면
+ * 점유격자를 관제까지 보내는 경로가 필요한데 계약·발행·조회가 모두 없다 —
+ * telemetry 스키마에 격자 필드가 없고, 백엔드 map API는 임무 종료 후 PGM뿐이다.
+ * 그 대체는 별 작업으로 다룬다.
+ */
 function SmallLidarSlot() {
   return (
     <div className="relative bg-[#12171f] border-b border-border flex-shrink-0 overflow-hidden" style={{ height: 148 }}>
       <LidarMap compact />
-      <div className="absolute top-1.5 left-1.5">
-        <span className="font-mono text-[11px] text-primary/80 bg-black/60 px-1.5 py-0.5 rounded">LiDAR</span>
-      </div>
+      <OverlayStack>
+        <OverlayLine kind="LIDAR" tone="idle" title="점유격자는 아직 목업이다. 실시간 SLAM 지도 연동은 별 작업이다.">
+          목업
+        </OverlayLine>
+      </OverlayStack>
     </div>
   );
 }
@@ -135,9 +100,10 @@ export default function GCSPage() {
   // 상황을 파악하는 데는 영상이 낫고(명세 1.1의 임무 절정도 영상·음성 사건이다),
   // 지도는 위치 확인과 Frontier 실패 시 목표 지정에 쓰는 참조 화면이다.
   //
-  // 수동 조종 UI(모드 토글·조이스틱)는 뺐다 (S15P11A301-196). 젯슨이
-  // cmd/drive를 구독하지 않아(S15P11A301-143 범위 외) 동작하지 않는 UI였다.
-  // 조이스틱 연동(S15P11A301-39)이 들어오면 features/control과 함께 되살린다.
+  // 조이스틱과 하단 조종 바는 뺐다 (S15P11A301-196·197). 조종 수단이 모바일
+  // 앱으로 정해져 관제 웹에 조종 입력이 없고, 하단 바가 세로 140px을 고정으로
+  // 차지해 object-cover 영상이 잘렸다(720p가 깨져 보인 원인). 모드 전환만
+  // 우측 패널 한 줄(ModeRow)로 남긴다 — 영상 높이를 건드리지 않는다.
   const [mainView, setMainView] = useState<MainView>("video");
 
   const videoMain = mainView === "video";
@@ -161,6 +127,7 @@ export default function GCSPage() {
           ) : (
             <VideoPanel onSwap={() => setMainView("video")} />
           )}
+          <ModeRow />
           <StatusPanel />
           <SensorDashboard />
         </div>

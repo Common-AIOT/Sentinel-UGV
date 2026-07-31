@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   Maximize2,
@@ -10,6 +10,8 @@ import {
   Signal,
 } from "lucide-react";
 
+import { useRobot } from "@/features/robot/RobotContext";
+import { OverlayLine, OverlayStack } from "@/features/telemetry/PanelOverlay";
 import { useStreaming } from "./StreamingContext";
 import { isPathConfigured } from "./useWhepStream";
 import type { StreamPath, StreamState, WhepStatus } from "./useWhepStream";
@@ -30,12 +32,12 @@ const STATE_LABEL: Record<StreamState, string> = {
 };
 
 /** LIVE만 초록, DEGRADED는 경고색, 나머지는 위험색으로 구분한다. */
-const STATE_DOT: Record<StreamState, string> = {
-  CONNECTING: "bg-muted-foreground animate-pulse",
-  LIVE: "bg-primary animate-pulse",
-  DEGRADED: "bg-accent animate-pulse",
-  RECONNECTING: "bg-accent animate-pulse",
-  OFFLINE: "bg-destructive",
+const STATE_TONE: Record<StreamState, "ok" | "warn" | "bad" | "idle"> = {
+  CONNECTING: "idle",
+  LIVE: "ok",
+  DEGRADED: "warn",
+  RECONNECTING: "warn",
+  OFFLINE: "bad",
 };
 
 /**
@@ -80,6 +82,49 @@ function statsTooltip(status: WhepStatus): string {
     "수신 지연은 네트워크 편도와 브라우저의 수신~디코딩 처리 시간을 합한 값이다. Jetson 쪽 카메라 노출과 인코딩은 브라우저가 알 수 없어 빠져 있으므로, 실제 glass-to-glass 지연은 이보다 크다. VID-01은 타임코드 촬영으로 측정한다.",
   );
   return lines.join("\n");
+}
+
+/**
+ * 탐지 수 오버레이 줄 (S15P11A301-200).
+ *
+ * 상단 바 배지에서 옮겼다. 그쪽에는 "임무 이력" 링크와 같은 모양의 배지가
+ * 나란히 있어서 서로 다른 내용이라는 것이 읽히지 않았다. 관측값이므로 영상
+ * 위, 스트림 통계 바로 아래가 제자리다.
+ *
+ * 새 발견이 오면 2.5초 강조한다. 팝업(제거됨, S15P11A301-196)처럼 영상을
+ * 가리지 않으면서, 조용히 숫자만 바뀌어 발표 중 아무도 못 보는 것도 막는다.
+ * 첫 렌더의 0에서 N으로 뛰는 것(새로고침 복구)은 강조하지 않는다.
+ *
+ * 값의 출처는 실 임무의 encounter 폴링뿐이다 — 목업 탐지는 없앴다.
+ */
+function DetectionLine() {
+  const { detections } = useRobot();
+  const [flash, setFlash] = useState(false);
+  const prev = useRef(0);
+
+  useEffect(() => {
+    if (detections.length > prev.current && prev.current > 0) {
+      setFlash(true);
+      const timer = setTimeout(() => setFlash(false), 2500);
+      prev.current = detections.length;
+      return () => clearTimeout(timer);
+    }
+    prev.current = detections.length;
+  }, [detections.length]);
+
+  const latest = detections[0];
+  return (
+    <OverlayLine
+      kind="탐지"
+      tone={detections.length > 0 ? "warn" : "idle"}
+      flash={flash}
+      title="임무 중 확정된 발견 수. 상세는 임무 이력에서 본다."
+    >
+      {detections.length === 0
+        ? "없음"
+        : `${detections.length}명 · 최근 ${new Date(latest.timestamp).toLocaleTimeString("ko-KR", { hour12: false })}`}
+    </OverlayLine>
+  );
 }
 
 interface VideoPanelProps {
@@ -141,17 +186,18 @@ export default function VideoPanel({ isMain = false, onSwap }: VideoPanelProps) 
         </div>
       )}
 
-      {/* 하단 지표.
+      {/* 좌측 상단 오버레이 (S15P11A301-200).
+          하단에 있던 것을 올렸다 — 아래쪽은 사람·바닥이 찍히는 영역이라 정보가
+          영상을 가렸다. 미니맵 라벨과 같은 형식(OverlayLine)을 쓴다.
+
           LIVE일 때는 상태 문자열을 빼고 실제 수치를 보여준다. 점 색이 이미
-          상태를 말하고, 정지·재연결은 배너와 중앙 오버레이가 알리므로
-          "실시간"은 자리만 차지한다.
-          지연은 "버퍼"로 라벨을 명시한다. jitter buffer + RTT/2이며 카메라
-          노출·인코딩·디코딩·표시 지연이 빠져 있어 실제 체감 지연보다 작다.
-          그냥 "ms"로 적으면 VID-01 기준을 통과했다고 오해한다. */}
-      <div className="absolute bottom-1.5 left-1.5 flex items-center gap-1.5">
-        <div className={`w-1.5 h-1.5 rounded-full ${STATE_DOT[status.state]}`} />
-        <span
-          className="font-mono text-[9px] text-muted-foreground bg-black/50 px-1.5 py-0.5 rounded"
+          상태를 말하고, 정지·재연결은 배너와 중앙 오버레이가 알린다.
+          지연은 수신 지연이며 카메라 노출·인코딩이 빠져 있어 체감보다 작다 —
+          자세한 것은 툴팁에 있다. VID-01은 타임코드 촬영으로 측정한다. */}
+      <OverlayStack>
+        <OverlayLine
+          kind="STREAM"
+          tone={STATE_TONE[status.state]}
           title={statsTooltip(status)}
         >
           {showVideo ? (
@@ -169,8 +215,9 @@ export default function VideoPanel({ isMain = false, onSwap }: VideoPanelProps) 
           ) : (
             `${STATE_LABEL[status.state]} · ${path}`
           )}
-        </span>
-      </div>
+        </OverlayLine>
+        {isMain && <DetectionLine />}
+      </OverlayStack>
 
       {/* 버튼은 항상 보이되 hover에서 선명해진다. hover에만 나타나면
           전환 기능이 있다는 것을 알기 어렵다. */}

@@ -4,6 +4,11 @@
 *.onnx.json
 models/
 
+# 대화 세션 기록 (S15P11A301-178)
+# 요구조자와 시험자의 실제 음성이 들어간다. 개인정보이므로 커밋 금지.
+# SENTINEL_SESSION_LOG_DIR를 저장소 안으로 지정하는 경우를 대비한 방어선이다.
+sessions/
+
 # 런타임 산출물
 _tts.wav
 *.mp3

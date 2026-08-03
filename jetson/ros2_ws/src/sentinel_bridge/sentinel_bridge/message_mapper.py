@@ -4,10 +4,13 @@
 `common/schemas`로 검증할 수 있다. 발행은 `mqtt_client`가, 수집은
 `cloud_bridge_node`가 담당한다.
 
-**미확보 필드는 null로 보낸다.** ESP32 연동(S15P11A301-84~86)이 끝나기 전에는
-`environment`, `battery`, `motion`, `health.mcuConnected`가 null이다. 필드를
-나중에 추가하면 백엔드 파싱과 DB 스키마, 프런트엔드 표시를 다시 건드려야 하므로
-처음부터 31-6 전체 형태를 보낸다.
+**미확보 필드는 null로 보낸다.** 필드를 나중에 추가하면 백엔드 파싱과 DB 스키마,
+프런트엔드 표시를 다시 건드려야 하므로 처음부터 31-6 전체 형태를 보낸다.
+
+ESP32 연동(S15P11A301-174)으로 `environment`, `motion`, `health.mcuConnected`는
+실측값이 붙었다(S15P11A301-213). `battery`는 여전히 null이다 — 174에 전압 계측이
+없고 `FAULT_UNDERVOLTAGE` 플래그만 있다. 관제 화면에서 배터리 카드를 뺀 판단
+(S15P11A301-200)이 그것과 같은 사실을 반영한 것이다.
 
 `null`과 `false`는 다르다. `health.mcuConnected`가 `false`면 확인했고 끊긴
 것이고, `null`이면 확인할 수단 자체가 없는 것이다. 관제 화면이 "연결 끊김"과
@@ -128,6 +131,77 @@ def active_mission_id(status: dict | None) -> str | None:
         return None
     mission_id = status.get("missionId")
     return str(mission_id) if mission_id else None
+
+
+def finite_or_none(value: Any) -> float | None:
+    """NaN·무한대·비수치를 None으로 바꾼다 (S15P11A301-213).
+
+    DHT11 읽기 실패는 NaN으로 올라올 수 있고, `json.dumps`는 그것을 `NaN`
+    리터럴로 직렬화한다. 그것은 유효한 JSON이 아니므로 백엔드 파서가 거부한다 —
+    **값 하나가 비는 것이 아니라 그 telemetry 봉투 전체가 버려진다.** 값을
+    잃는 것보다 조용히 전부 잃는 쪽이 문제이므로 여기서 막는다.
+
+    bool을 먼저 걸러내는 이유는 파이썬에서 bool이 int의 하위형이라
+    `isinstance(True, int)`가 참이고, True가 1.0으로 새어 들어가면 속도가
+    1m/s로 보이기 때문이다.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if math.isfinite(number) else None
+
+
+def environment_payload(
+    temperature_c: Any, humidity_ratio: Any
+) -> dict[str, float] | None:
+    """DHT11 값을 31-6 `environment` 형태로 바꾼다 (S15P11A301-213).
+
+    `sensor_msgs/RelativeHumidity`는 ROS 규약상 **0~1 비율**이고 스키마의
+    `humidityPercent`는 **0~100**이다. 100을 곱하지 않으면 습도가 늘 0.65처럼
+    보이는데 스키마 범위(0~100) 안이라 검증도 통과한다 — 화면에는 뜨고 값만
+    틀리므로 계약 검증으로는 잡히지 않는다. 그래서 이 변환을 노드가 아니라
+    시험 가능한 함수에 둔다.
+
+    둘 중 하나라도 없으면 객체를 만들지 않는다. 스키마가 두 필드를 모두
+    required로 두었고, 반쪽 객체는 "온도는 아는데 습도는 모른다"를 표현하지
+    못한다.
+    """
+    temperature = finite_or_none(temperature_c)
+    ratio = finite_or_none(humidity_ratio)
+    if temperature is None or ratio is None:
+        return None
+    # 스키마가 0~100을 강제하므로 벗어난 값을 그대로 보내면 봉투 전체가
+    # 거부된다. 센서 잡음으로 100.4가 나오는 것 때문에 온습도가 통째로 사라지는
+    # 쪽이 손해가 크므로 잘라 낸다. 지속적인 이상값은 펌웨어의
+    # DHT_FAULT_STREAK_THRESHOLD가 판단할 몫이다.
+    percent = min(100.0, max(0.0, ratio * 100.0))
+    # 소수 1자리로 맞춘다. DHT11의 분해능이 0.1이고(펌웨어가 deci-percent로
+    # 보낸다), 0.651 * 100 이 65.10000000000001이 되는 부동소수 잔여값을 그대로
+    # 보낼 이유가 없다. `_pose`가 좌표를 반올림하는 것과 같은 이유다.
+    return {
+        "temperatureC": round(temperature, 1),
+        "humidityPercent": round(percent, 1),
+    }
+
+
+def motion_payload(
+    linear_mps: Any, angular_radps: Any
+) -> dict[str, float] | None:
+    """엔코더 오도메트리를 31-6 `motion` 형태로 바꾼다 (S15P11A301-213).
+
+    `nav_msgs/Odometry`의 `twist.twist.linear.x`와 `twist.twist.angular.z`다.
+    차동 구동이라 나머지 축은 항상 0이고 스키마에도 자리가 없다.
+    """
+    linear = finite_or_none(linear_mps)
+    angular = finite_or_none(angular_radps)
+    if linear is None or angular is None:
+        return None
+    # 소수 3자리는 mm/s 단위다. 엔코더 분해능보다 잘게 보낼 이유가 없고,
+    # 2Hz로 계속 적재되는 값이라 자릿수가 그대로 저장 용량이 된다.
+    return {
+        "linearVelocityMps": round(linear, 3),
+        "angularVelocityRadps": round(angular, 3),
+    }
 
 
 def yaw_from_quaternion(x: float, y: float, z: float, w: float) -> float:

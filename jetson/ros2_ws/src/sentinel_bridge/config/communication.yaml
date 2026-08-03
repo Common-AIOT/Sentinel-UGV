@@ -53,6 +53,14 @@
     camera_topic: /camera/image_raw/compressed
     scan_topic: /scan
 
+    # ESP32 실측값 (S15P11A301-213). esp32_bridge.yaml 의 발행 토픽과 같아야
+    # 합니다. 어긋나면 구독이 조용히 비어 있고 telemetry 의 environment/motion 이
+    # 계속 null 이라서, 연동이 안 된 것과 아직 구현하지 않은 것을 구분할 수
+    # 없습니다.
+    odometry_topic: /wheel/odometry
+    temperature_topic: /environment/temperature
+    relative_humidity_topic: /environment/relative_humidity
+
     # 관제 명령 경로 (S15P11A301-143).
     #
     # cmd/mission 으로 온 MQTT 명령을 mission_signal_topic 의 신호로 바꿔 넣고,

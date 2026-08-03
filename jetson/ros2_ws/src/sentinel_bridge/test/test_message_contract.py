@@ -264,6 +264,50 @@ def test_telemetry_with_real_values_passes_schema():
     _validate(message)
 
 
+def test_telemetry_with_esp32_converted_values_passes_schema():
+    """변환 함수의 출력이 그대로 스키마를 통과하는지 본다 (S15P11A301-213).
+
+    위 시험은 본문을 손으로 적어 넣으므로, 실제로 전송되는 값(변환 함수의 출력)이
+    스키마에 맞는지는 확인하지 않는다. 습도 단위를 틀리거나 NaN이 새는 것은
+    변환 쪽에서 생기는 일이라 이 경로로 붙잡아야 한다.
+    """
+    from sentinel_bridge.message_mapper import (  # noqa: E402
+        environment_payload,
+        motion_payload,
+    )
+
+    message = MessageMapper("SENTINEL-01").telemetry(
+        # DHT11이 보내는 비율과 엔코더가 보내는 twist 값을 그대로 넣는다.
+        environment=environment_payload(28.2, 0.651),
+        motion=motion_payload(0.32, -0.15),
+        health={"mcuConnected": True, "lidarOk": True, "cameraOk": True},
+    )
+    _validate(message)
+
+    data = message["data"]
+    assert data["environment"]["humidityPercent"] == 65.1
+    assert data["motion"]["linearVelocityMps"] == 0.32
+    # NaN이 섞이면 표준 JSON으로 직렬화되지 않는다. MQTT로 나가는 형태로 확인한다.
+    assert json.dumps(message, allow_nan=False)
+
+
+def test_telemetry_drops_esp32_values_when_sensor_reads_fail():
+    """DHT11 읽기 실패(NaN)가 봉투 전체를 깨뜨리지 않아야 한다.
+
+    변환이 None을 돌려주면 필드가 null로 남고, 스키마가 null을 허용하므로
+    봉투는 유효하다. 값 하나 때문에 telemetry가 통째로 버려지면 임무 궤적에
+    구멍이 생긴다.
+    """
+    from sentinel_bridge.message_mapper import environment_payload  # noqa: E402
+
+    message = MessageMapper("SENTINEL-01").telemetry(
+        environment=environment_payload(float("nan"), 0.651),
+    )
+    _validate(message)
+    assert message["data"]["environment"] is None
+    assert json.dumps(message, allow_nan=False)
+
+
 def test_sequence_increases_per_publisher():
     mapper = MessageMapper("SENTINEL-01")
     first = mapper.presence_online()["sequence"]

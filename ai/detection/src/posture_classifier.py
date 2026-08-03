@@ -16,7 +16,7 @@
   1. torso_angle_deg       : 상체 기울기. 좌우(2D)와 앞뒤(단축률) 중 큰 값   [관절 필요]
   2. vertical_extent_ratio : 어깨-엉덩이 y 차이를 사람 크기로 정규화         [관절 필요]
   3. bbox_aspect_ratio     : bbox 가로/세로 비                              [관절 불필요]
-  4. inactivity            : 정지 지속 시간 (MotionTracker)                 [관절 불필요]
+  4. inactivity            : 정지 지속 시간 (MotionTracker). **배수로 적용**    [관절 불필요]
 
 **관절이 안 잡혀도 3·4번이 남는다.** 문헌은 누운 자세가 원근 단축 왜곡과 가림 때문에
 pose 추정이 가장 안 되는 구간이라고 지적한다. 즉 관절에만 의존하면 가장 필요한
@@ -77,7 +77,7 @@ class PostureClassifier:
         weight_torso_angle: float = 1.0,
         weight_vertical_extent: float = 1.0,
         weight_bbox_aspect: float = 0.8,
-        weight_inactivity: float = 0.4,
+        inactivity_boost: float = 0.4,
         width_torso_angle: float = 12.0,
         width_vertical_extent: float = 0.08,
         width_bbox_aspect: float = 0.25,
@@ -95,12 +95,13 @@ class PostureClassifier:
 
         # 가중 평균 점수가 이 값 이상이면 FALLEN.
         self.fallen_threshold = fallen_threshold
-        # 신호별 가중치. inactivity는 낮게 둔다 — 가만히 서 있는 사람도 부동이라
-        # 단독으로 임계값을 넘으면 안 된다(아래 _assert 없이 설계로 보장).
+        # 자세·형상 신호의 가중치. 부동은 여기 없다(아래 배수로 적용).
         self.weight_torso_angle = weight_torso_angle
         self.weight_vertical_extent = weight_vertical_extent
         self.weight_bbox_aspect = weight_bbox_aspect
-        self.weight_inactivity = weight_inactivity
+        # 부동은 가중치가 아니라 **배수 상한**이다. 부동이 1.0일 때 점수가
+        # (1 + 이 값)배가 된다. 자세·형상 점수가 0이면 곱해도 0이다.
+        self.inactivity_boost = inactivity_boost
         # 시그모이드 폭. 작을수록 예전 이산 판정에 가깝다.
         self.width_torso_angle = width_torso_angle
         self.width_vertical_extent = width_vertical_extent
@@ -180,11 +181,9 @@ class PostureClassifier:
         scored.append((s_aspect, self.weight_bbox_aspect))
 
         # --- 신호 4: 부동 (관절 불필요) ---
-        # 가만히 서 있는 사람도 부동이므로 가중치를 낮게 두어 단독으로는
-        # 임계값을 넘지 못하게 한다. 형상이 수평일 때 확신을 올리는 보조다.
+        # 독립 항이 아니라 **배수**로 적용한다(아래). 여기서는 값만 기록한다.
         if inactivity is not None:
             signals["inactivity"] = round(inactivity, 3)
-            scored.append((inactivity, self.weight_inactivity))
 
         # --- 관절 기반 신호 2개 ---
         reason = ""
@@ -207,16 +206,34 @@ class PostureClassifier:
             scored.append((s_extent, self.weight_vertical_extent))
 
         total_weight = sum(w for _, w in scored)
-        score = sum(v * w for v, w in scored) / total_weight if total_weight > 0 else 0.0
+        base = sum(v * w for v, w in scored) / total_weight if total_weight > 0 else 0.0
+        signals["score_base"] = round(base, 3)
+
+        # 부동은 자세·형상 점수에 **곱한다.** 독립 항으로 더하면 가중 평균의
+        # 일정 비율을 무조건 채우게 되어, 형상이 애매할 때 부동이 대신 점수를
+        # 밀어 올린다. 실측(2026-08-03)에서 부동이 1.0일 때 FALLEN이 되는 가로비가
+        # 1.47에서 0.93으로 떨어졌다. 0.93은 거의 정사각형이라 상반신만 잡힌
+        # 앉은 사람도 걸린다.
+        #
+        # 곱셈이면 자세·형상이 낮을 때 부동이 아무리 커도 결과가 낮게 유지된다.
+        # 문헌의 "최종 몸 방향 + 바닥에 머문 시간" 조합이 이 형태다.
+        multiplier = 1.0
+        signal_count = len(scored)
+        if inactivity is not None:
+            multiplier = 1.0 + inactivity * self.inactivity_boost
+            signals["inactivity_multiplier"] = round(multiplier, 3)
+            signal_count += 1
+
+        score = min(1.0, base * multiplier)
 
         status = POSTURE_FALLEN if score >= self.fallen_threshold else POSTURE_NORMAL
         if not reason:
-            reason = f"점수 {score:.2f} (신호 {len(scored)}개)"
+            reason = f"점수 {score:.2f} (기본 {base:.2f} × 부동 {multiplier:.2f})"
 
         return PostureResult(
             status=status,
             fallen_score=score,
-            signal_count=len(scored),
+            signal_count=signal_count,
             signals=signals,
             reason=reason,
         )

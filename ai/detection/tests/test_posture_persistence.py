@@ -162,6 +162,36 @@ def test_inactivity_alone_never_makes_fallen() -> None:
     with_pose = clf.classify(_det(80, 400), _standing_pose(), inactivity=1.0)
     assert with_pose.status == POSTURE_NORMAL, with_pose
 
+    # 세로가 더 길거나 정사각인 bbox는 부동이 최대여도 뒤집히면 안 된다.
+    #
+    # 실측(2026-08-03)에서 부동을 독립 항으로 **더했을 때** 문턱이 가로비 0.93까지
+    # 내려가, 상반신만 잡힌 앉은 사람(세로가 더 긴 박스)도 FALLEN이 됐다.
+    # 배수로 바꾼 뒤 문턱이 1.05로 올라가 이 경우가 막힌다.
+    #
+    # 가로가 세로보다 긴 박스(>1.0)는 형상 자체가 수평을 가리키므로 여기서
+    # 막지 않는다. 그것까지 막으면 누운 사람을 놓친다.
+    for w, h in [(80, 100), (95, 100), (100, 100)]:
+        near_square = clf.classify(_det(w, h), None, inactivity=1.0)
+        assert near_square.status == POSTURE_NORMAL, (
+            f"가로비 {w/h:.2f}(세로가 더 김)인데 부동만으로 FALLEN: {near_square}"
+        )
+
+
+def test_inactivity_cannot_flip_taller_than_wide_boxes() -> None:
+    """부동이 낮출 수 있는 문턱의 하한을 고정한다.
+
+    부동 배수가 커지면 다시 정사각 이하까지 문턱이 내려간다. 그 회귀를 막는다.
+    """
+    clf = PostureClassifier()
+    lo, hi = 0.3, 4.0
+    for _ in range(60):
+        mid = (lo + hi) / 2
+        if clf.classify(_det(mid * 100, 100), None, inactivity=1.0).status == POSTURE_FALLEN:
+            hi = mid
+        else:
+            lo = mid
+    assert hi >= 1.0, f"부동만으로 세로가 더 긴 박스가 FALLEN이 된다 (문턱 가로비 {hi:.3f})"
+
 
 def test_inactivity_raises_score_when_shape_is_horizontal() -> None:
     """수평 형상에서는 부동이 확신을 올린다."""

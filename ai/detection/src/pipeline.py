@@ -198,7 +198,7 @@ class InferencePipeline:
             weight_torso_angle=posture_cfg.get("weight_torso_angle", 1.0),
             weight_vertical_extent=posture_cfg.get("weight_vertical_extent", 1.0),
             weight_bbox_aspect=posture_cfg.get("weight_bbox_aspect", 0.8),
-            weight_inactivity=posture_cfg.get("weight_inactivity", 0.4),
+            inactivity_boost=posture_cfg.get("inactivity_boost", 0.4),
             width_torso_angle=posture_cfg.get("width_torso_angle", 12.0),
             width_vertical_extent=posture_cfg.get("width_vertical_extent", 0.08),
             width_bbox_aspect=posture_cfg.get("width_bbox_aspect", 0.25),

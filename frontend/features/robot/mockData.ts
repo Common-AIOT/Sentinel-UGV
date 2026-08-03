@@ -149,9 +149,6 @@ export interface ComponentHealth {
   cameraOk: boolean | null;
 }
 
-/** 기본 탐사 제한 시간. 명세 23.4에서 기본 7분, 5~10분 범위로 설정 가능하다. */
-export const EXPLORATION_LIMIT_SEC = 7 * 60;
-
 /** 탐사를 종료시키는 배터리 임계값(명세 23.4). */
 export const BATTERY_ABORT_PCT = 20;
 
@@ -164,13 +161,6 @@ export interface RobotStatus {
   speed: number;
   heading: number;
   uptime: number;
-  /**
-   * 탐사 경과 시간. 잔여 시간은 EXPLORATION_LIMIT_SEC에서 빼서 화면에서 구한다.
-   * 로봇이 잔여 시간을 직접 보내지는 않으므로(스키마에 필드가 없다) 관제가
-   * 파생시키는 값이다.
-   */
-  explorationElapsedSec: number;
-  explorationLimitSec: number;
   errorCount: number;
   warningCount: number;
   infoCount: number;

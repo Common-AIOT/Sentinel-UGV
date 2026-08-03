@@ -198,6 +198,11 @@ test:frontend:
   script:
     - cd frontend
     - npm ci
+    # 단위 시험(vitest)은 S15P11A301-223에서 붙였습니다. tsc 와 next build 는
+    # 타입과 빌드만 보므로, 지도 좌표 변환처럼 **틀려도 화면이 정상으로 보이는**
+    # 로직은 아무것도 잡지 못합니다. 시험을 앞에 두는 이유는 훨씬 빨라 실패를
+    # 먼저 알리기 때문입니다.
+    - npm test
     - npx tsc --noEmit
     - npx next build
 

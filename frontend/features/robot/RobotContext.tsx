@@ -7,7 +7,6 @@ import {
   PATROL_PATH,
   GRID_SIZE,
   INITIAL_SENSORS,
-  EXPLORATION_LIMIT_SEC,
   BATTERY_ABORT_PCT,
   type SensorReading,
   type DetectionEvent,
@@ -81,8 +80,6 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
     speed: 0,
     heading: 0,
     uptime: 0,
-    explorationElapsedSec: 0,
-    explorationLimitSec: EXPLORATION_LIMIT_SEC,
     errorCount: 0,
     warningCount: 2,
     infoCount: 7,
@@ -92,9 +89,6 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
   const waypointIdx = useRef(0);
   const mockMission = useRef<MissionState>("SAFE_IDLE");
   const startTime = useRef(Date.now());
-  const exploreStart = useRef<number | null>(null);
-  // 탐사 경과는 "탐사 계열 상태였던 초"의 누적이다 — 일시정지 동안은 흐르지 않는다.
-  const exploreElapsedSec = useRef(0);
 
   // 실 임무 상태. missionId 가 있으면 임무 상태는 서버 폴링이 결정하고,
   // 목 시뮬레이션의 가짜 탐지·자동 전이는 멈춘다(지도 주행 애니메이션만 유지).
@@ -177,36 +171,15 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
       });
     }, 100);
 
-    // 탐사 경과·종료 조건 — 1Hz.
-    // 명세 23.4의 두 종료 조건(제한 시간, 배터리 20%)을 모의한다.
-    const missionTimer = setInterval(() => {
-      setStatus(s => {
-        if (exploreStart.current === null) return s;
-        // 탐사 계열 상태에서만 1초씩 누적한다. PAUSED·MANUAL·RETURNING 은 흐르지 않는다.
-        const exploring =
-          mockMission.current === "EXPLORING" ||
-          mockMission.current === "PERSON_APPROACHING";
-        if (exploring) exploreElapsedSec.current += 1;
-        const elapsed = exploreElapsedSec.current;
-        if (exploring && elapsed >= s.explorationLimitSec && !missionIdRef.current) {
-          // 실 임무 중에는 종료 조건도 서버·로봇의 판단을 따른다.
-          mockMission.current = "RETURNING";
-          return { ...s, explorationElapsedSec: elapsed, missionState: "RETURNING" };
-        }
-        // 주행하지 않는 단계에서는 속도가 0으로 읽혀야 한다. 명세 26.2는
-        // INTERACTING을 "피해자 음성 확인, 정지"로 규정한다. 마지막 주행 속도가
-        // 남아 있으면 정지한 로봇이 움직이는 것으로 보인다.
-        const moving =
-          mockMission.current === "EXPLORING" ||
-          mockMission.current === "RETURNING" ||
-          mockMission.current === "PERSON_APPROACHING";
-        return {
-          ...s,
-          explorationElapsedSec: elapsed,
-          speed: moving ? s.speed : 0,
-        };
-      });
-    }, 1000);
+    // 1Hz 탐사 타이머를 걷어냈다 (S15P11A301-223).
+    //
+    // 잔여 탐사 시간 게이지가 사라졌고, 그 타이머가 하던 나머지 일도 남길
+    // 이유가 없었다. 제한 시간에 도달하면 임무 상태를 스스로 RETURNING 으로
+    // 바꾸는 로직이 들어 있었는데, 서버에 없는 프런트엔드 상수(7분)를 근거로
+    // 화면이 상태를 만들어 내는 것이었다. 실제로 "탐사 중"인데 잔여 시간
+    // 00:00 에 게이지가 꽉 찬 화면이 나왔다.
+    //
+    // 종료 조건 판단은 로봇이 한다(명세 23.4). 화면은 결과를 받는다.
 
     // Sensor updates — 2s
     const sensorTimer = setInterval(() => {
@@ -235,7 +208,6 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
     return () => {
       clearTimeout(connectTimer);
       clearInterval(moveTimer);
-      clearInterval(missionTimer);
       clearInterval(sensorTimer);
     };
   }, []);
@@ -302,10 +274,6 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
           if (from === "SAFE_IDLE" || from === "PAUSED" || from === "COMPLETED") {
             missionState = "EXPLORING";
             controlMode = "AUTO";
-            if (exploreStart.current === null) {
-              exploreStart.current = Date.now();
-              exploreElapsedSec.current = 0; // 새 임무의 탐사 시계는 0부터
-            }
           }
           break;
 
@@ -375,13 +343,6 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
           mockMission.current = mapped;
           setStatus(s => ({ ...s, missionState: mapped }));
         }
-        // 잔여 탐사 시간 게이지도 서버의 실제 시작 시각으로 복원한다.
-        // 서버는 일시정지 구간을 기록하지 않으므로 벽시계 근사값이다.
-        if (active.startedAt) {
-          exploreStart.current = Date.parse(active.startedAt);
-          exploreElapsedSec.current = Math.max(
-            0, Math.floor((Date.now() - Date.parse(active.startedAt)) / 1000));
-        }
       } catch {
         // 서버에 못 붙으면 목 초기 상태로 남는다. 폴링이 아니므로 재시도하지 않는다.
       }
@@ -406,15 +367,11 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
         setStatus(s => ({
           ...s,
           missionState: mapped,
-          // 완료된 임무의 탐사 시계가 계속 돌면 안 된다 — 게이지를 내린다.
-          ...(mapped === "COMPLETED" ? { explorationElapsedSec: 0 } : {}),
         }));
         if (m.status === "COMPLETED") {
-          // 다음 explore 가 새 임무를 만들 수 있게 활성 임무를 비우고 탐사 시계도 끈다.
+          // 다음 explore 가 새 임무를 만들 수 있게 활성 임무를 비운다.
           missionIdRef.current = null;
           setMissionId(null);
-          exploreStart.current = null;
-          exploreElapsedSec.current = 0;
         }
       } catch {
         // 일시적 네트워크 오류는 다음 폴링에 맡긴다.

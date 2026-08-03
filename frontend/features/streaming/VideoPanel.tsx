@@ -6,15 +6,13 @@ import {
   Maximize2,
   Minimize2,
   RefreshCw,
-  Settings,
   Signal,
 } from "lucide-react";
 
 import { useRobot } from "@/features/robot/RobotContext";
 import { OverlayLine, OverlayStack } from "@/features/telemetry/PanelOverlay";
 import { useStreaming } from "./StreamingContext";
-import { isPathConfigured } from "./useWhepStream";
-import type { StreamPath, StreamState, WhepStatus } from "./useWhepStream";
+import type { StreamState, WhepStatus } from "./useWhepStream";
 
 /**
  * 관제 영상 패널 (S15P11A301-107).
@@ -133,8 +131,17 @@ interface VideoPanelProps {
 }
 
 export default function VideoPanel({ isMain = false, onSwap }: VideoPanelProps) {
-  const { attachVideo, status, path, setPath, reconnectNow } = useStreaming();
-  const [showSettings, setShowSettings] = useState(false);
+  // 스트림 경로 설정(톱니 버튼과 로컬/원격 팝오버)을 뺐다 (S15P11A301-223).
+  //
+  // 선택지가 실질적으로 하나였다. NEXT_PUBLIC_REMOTE_STREAM_URL 이 배포 환경에
+  // 없어 원격은 항상 "(미설정)"으로 비활성이었고, 고를 수 없는 항목을 위해
+  // 버튼이 영상 위 자리를 차지했다. 작은 화면에서는 그 버튼들이 가려지는 문제도
+  // 있었다(S15P11A301-210).
+  //
+  // 명세도 같은 판단이다 — 원격 중계는 선택 기능이고 기능 축소 순서에서 가장
+  // 먼저 버리는 항목이다(요약표 12행, 32-4). 필요해지면 StreamingContext 의
+  // setPath 가 그대로 있으므로 되살릴 수 있다.
+  const { attachVideo, status, path, reconnectNow } = useStreaming();
 
   const showVideo = status.state === "LIVE" || status.state === "DEGRADED";
 
@@ -248,13 +255,6 @@ export default function VideoPanel({ isMain = false, onSwap }: VideoPanelProps) 
           <RefreshCw size={11} />
         </button>
         <button
-          onClick={() => setShowSettings((s) => !s)}
-          className="p-1 bg-black/70 hover:bg-black/90 rounded text-muted-foreground hover:text-primary transition-colors"
-          title="스트림 경로 설정"
-        >
-          <Settings size={11} />
-        </button>
-        <button
           onClick={onSwap}
           className="p-1 bg-black/70 hover:bg-black/90 rounded text-muted-foreground hover:text-primary transition-colors"
           title={isMain ? "사이드바로 축소" : "메인 화면으로 확대"}
@@ -263,49 +263,6 @@ export default function VideoPanel({ isMain = false, onSwap }: VideoPanelProps) 
         </button>
       </div>
 
-      {showSettings && (
-        <div className="absolute top-8 right-1.5 bg-card border border-border rounded p-2 z-10 space-y-1 min-w-[150px]">
-          <p className="font-mono text-[9px] text-muted-foreground uppercase tracking-wider mb-1.5">
-            스트림 경로
-          </p>
-          {(
-            [
-              ["LOCAL", "로컬 (필수)"],
-              ["REMOTE", "원격 (선택)"],
-            ] as [StreamPath, string][]
-          ).map(([value, label]) => {
-            // 엔드포인트가 없는 경로는 고를 수 없게 한다. 고르면 무조건
-            // OFFLINE이 되므로 선택지로 두면 오해만 만든다.
-            const configured = isPathConfigured(value);
-            return (
-              <button
-                key={value}
-                disabled={!configured}
-                onClick={() => {
-                  setPath(value);
-                  setShowSettings(false);
-                }}
-                title={configured ? undefined : "엔드포인트 환경변수가 설정되지 않았다"}
-                className={`w-full text-left font-mono text-[10px] px-2 py-1 rounded transition-colors ${
-                  !configured
-                    ? "text-muted-foreground/35 cursor-not-allowed"
-                    : path === value
-                      ? "bg-primary/10 text-primary"
-                      : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
-                }`}
-              >
-                {label}
-                {path === value && " ✓"}
-                {!configured && " (미설정)"}
-              </button>
-            );
-          })}
-          <p className="font-mono text-[8px] text-muted-foreground pt-1 leading-relaxed">
-            자동 전환은 지연이 갑자기 달라져 조작 판단을 흐리므로 지원하지
-            않는다.
-          </p>
-        </div>
-      )}
     </div>
   );
 }

@@ -2,7 +2,7 @@
 
 import { Navigation, CornerUpLeft, ShieldAlert, Pause } from "lucide-react";
 import { useRobot } from "@/features/robot/RobotContext";
-import type { MissionState, SafetyState } from "@/features/robot/mockData";
+import type { MissionState } from "@/features/robot/mockData";
 import { toast } from "sonner";
 
 /**
@@ -52,64 +52,12 @@ const ENCOUNTER_PHASES: MissionState[] = [
   "REPORTING",
 ];
 
-const SAFETY_LABEL: Record<Exclude<SafetyState, null>, string> = {
-  SAFE_IDLE: "안전 대기",
-  READY: "준비됨",
-  RUNNING: "주행 중",
-  STOPPED: "정지",
-  ESTOP: "비상 정지",
-  FAULT: "결함",
-};
-
-function mmss(totalSec: number) {
-  const m = Math.floor(totalSec / 60).toString().padStart(2, "0");
-  const s = Math.floor(totalSec % 60).toString().padStart(2, "0");
-  return `${m}:${s}`;
-}
-
-/**
- * 구성요소 표시등. true/false/null을 모두 다르게 보여준다.
- * telemetry.schema.json이 못 박은 대로 false(끊김)와 null(확인 수단 없음)은
- * 다른 사실이므로 같은 회색으로 뭉개면 안 된다.
- */
-function HealthDot({ label, ok }: { label: string; ok: boolean | null }) {
-  const tone =
-    ok === true
-      ? { dot: "bg-primary", text: "text-muted-foreground", title: `${label} 정상` }
-      : ok === false
-        ? { dot: "bg-destructive", text: "text-destructive", title: `${label} 끊김` }
-        : { dot: "bg-muted-foreground/40", text: "text-muted-foreground/60", title: `${label} 확인 불가` };
-
-  return (
-    <div className="flex items-center gap-1.5" title={tone.title}>
-      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${tone.dot}`} />
-      <span className={`text-[11px] ${tone.text}`}>{label}</span>
-    </div>
-  );
-}
-
 export default function StatusPanel() {
   const { status, wsConnected, sendCommand } = useRobot();
-  const { missionState, controlMode, safetyState, health } = status;
+  const { missionState, controlMode } = status;
 
-  const remainingSec = Math.max(0, status.explorationLimitSec - status.explorationElapsedSec);
-  const elapsedPct = Math.min(
-    100,
-    (status.explorationElapsedSec / status.explorationLimitSec) * 100,
-  );
-  const explorationStarted = status.explorationElapsedSec > 0;
   const inEncounter = ENCOUNTER_PHASES.includes(missionState);
   const danger = missionState === "ESTOP" || missionState === "ERROR";
-
-  const components = (() => {
-    const all = [
-      { label: "Jetson", ok: wsConnected },
-      { label: "카메라", ok: health.cameraOk },
-      { label: "LiDAR", ok: health.lidarOk },
-      { label: "MCU", ok: health.mcuConnected },
-    ];
-    return { total: all.length, problems: all.filter(c => c.ok !== true) };
-  })();
 
   const handleCommand = async (type: string, label: string) => {
     try {
@@ -181,28 +129,27 @@ export default function StatusPanel() {
         </div>
       )}
 
-      {/* 잔여 탐사 시간 — 목적지가 미정인 임무에서 유일하게 상한이 있는 진행률.
-          출발 전에는 "--:--"만 보여주므로 자리만 차지한다. 그 자리는 출발 전
-          점검(구성요소)이 쓰는 게 낫다. */}
-      {explorationStarted && (
-      <div className="border border-border rounded px-2.5 py-2 bg-secondary/30">
-        <div className="flex items-baseline justify-between mb-1.5">
-          <span className="text-[11px] text-muted-foreground">
-            잔여 탐사 시간
-            <span className="text-muted-foreground/60"> / 제한 {mmss(status.explorationLimitSec)}</span>
-          </span>
-          <span className="font-mono text-lg font-semibold text-foreground tabular-nums leading-none">
-            {explorationStarted ? mmss(remainingSec) : "--:--"}
-          </span>
-        </div>
-        <div className="h-1.5 bg-muted rounded-full overflow-hidden">
-          <div
-            className="h-full rounded-full bg-primary transition-all duration-1000"
-            style={{ width: `${elapsedPct}%` }}
-          />
-        </div>
-      </div>
-      )}
+      {/* 잔여 탐사 시간 게이지를 뺐다 (S15P11A301-223).
+
+          서버에 대응하는 값이 없었다. 제한 시간은 프런트엔드 상수
+          (EXPLORATION_LIMIT_SEC = 7분)였고 임무 조회 응답에는 그런 필드가 없다.
+          즉 화면의 숫자와 게이지가 전부 프런트가 만든 것이었다.
+
+          딸린 부작용이 더 나빴다. RobotContext 에 제한 시간에 도달하면 임무
+          상태를 스스로 RETURNING 으로 바꾸는 1Hz 타이머가 있었고, 실제로
+          "탐사 중"인데 잔여 시간 00:00 에 게이지가 꽉 찬 화면을 목격했다.
+          설명할 수 없는 표시라 타이머까지 함께 걷어냈다.
+
+          제한 시간으로 탐사를 끝내는 것은 명세 23.4 그대로 유효하다. 그 판단은
+          로봇이 하고 화면은 결과(종료 사유)를 받는다 — 프런트가 시계를 따로
+          돌리는 것과는 다른 일이다. */}
+
+      {/* 구성요소 블록도 뺐다 (S15P11A301-223).
+          Jetson·카메라·LiDAR·MCU 네 표시등이었다. 연결 여부는 이 패널 상단의
+          점 하나가 이미 말하고, 나머지 셋은 관제자가 그것을 보고 내릴 판단이
+          없다 — 카메라가 끊기면 영상 패널이 직접 알리고, LiDAR 는 지도가,
+          MCU 는 주행이 멈추는 것으로 드러난다. health·safetyState 는 서버가
+          보내는 값이므로 데이터 모델은 남겨 두었다. */}
 
       {/* 속도·방위각 타일을 뺐다 (S15P11A301-200).
           둘 다 실데이터 출처가 없다. 속도는 telemetry의 motion인데
@@ -212,40 +159,6 @@ export default function StatusPanel() {
           미니맵 화살표가 방향과 이동을 이미 보여주므로 숫자 타일은 중복이기도
           했다. 실데이터가 오면 큰 타일이 아니라 영상 좌측 상단 오버레이 줄에
           한 줄로 넣는다 — 그쪽이 "관측값" 형식이다. */}
-
-      {/* 구성요소.
-          정상일 때 초록 점 4개를 늘어놓는 것은 정보가 아니라 소음이다. 다 정상이면
-          한 줄로 줄이고, 출발 전(SAFE_IDLE)에만 점검 결과로 보여준다. 무엇이든
-          정상이 아니면 그 항목만 펼친다(시연 시나리오 1번).
-          E-Stop은 표시만 한다. 소프트웨어 발동·해제는 임베디드 담당 리뷰와
-          실장비 검증이 필요하므로 이 패널에 조작을 두지 않는다. */}
-      {(components.problems.length > 0 || missionState === "SAFE_IDLE") && (
-        <div className="border border-border rounded px-2.5 py-2 bg-secondary/20 space-y-1.5">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] font-medium text-muted-foreground">구성요소</span>
-            <span
-              className={`font-mono text-[10px] ${
-                safetyState === "ESTOP" || safetyState === "FAULT"
-                  ? "text-destructive"
-                  : "text-muted-foreground"
-              }`}
-            >
-              {safetyState ? SAFETY_LABEL[safetyState] : "확인 불가"}
-            </span>
-          </div>
-          {components.problems.length === 0 ? (
-            <p className="text-[11px] text-primary">
-              {components.total}개 항목 정상 · 출발 가능
-            </p>
-          ) : (
-            <div className="space-y-1">
-              {components.problems.map(c => (
-                <HealthDot key={c.label} label={c.label} ok={c.ok} />
-              ))}
-            </div>
-          )}
-        </div>
-      )}
 
       <div className="space-y-1.5">
         <button

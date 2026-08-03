@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Map as MapIcon } from "lucide-react";
 import { COLOR_FREE, COLOR_OCCUPIED, COLOR_UNKNOWN } from "./palette";
+import { worldToPixel, type GridGeometry as Meta } from "@/lib/gridGeometry";
 import {
   api,
   ApiError,
@@ -37,11 +38,6 @@ interface Pgm {
   pixels: Uint8Array;
 }
 
-interface Meta {
-  resolution: number;
-  originX: number;
-  originY: number;
-}
 
 /** P5 헤더는 토큰 4개(P5·width·height·maxval). 길이를 상수로 박지 않고 # 주석을 허용한다. */
 export function parsePgm(buf: ArrayBuffer): Pgm {
@@ -98,27 +94,10 @@ export function cellColor(v: number): readonly number[] {
   return v === 0 ? COLOR_OCCUPIED : v === 254 ? COLOR_FREE : COLOR_UNKNOWN;
 }
 
-/**
- * map 좌표(미터) → PGM 픽셀 좌표 (S15P11A301-223 에서 시험용으로 노출).
- *
- * **y 를 뒤집는다.** nav2 에서 origin 은 격자의 좌하단 셀이고 PGM 은 첫 행이
- * 위다. 뒤집지 않으면 궤적이 지도 위에 그려지기는 하는데 위아래가 반대가 된다 —
- * 벽을 통과한 것처럼 보일 뿐 그림이 깨지지 않아 눈으로 알기 어렵다.
- * 실측 99.5% 일치로 확정된 규칙이다(S15P11A301-171).
- *
- * 그리기용 연속 좌표이므로 정수로 자르지 않는다.
- */
-export function worldToPixel(
-  x: number,
-  y: number,
-  meta: Meta,
-  pgmHeight: number,
-): { col: number; row: number } {
-  return {
-    col: (x - meta.originX) / meta.resolution,
-    row: pgmHeight - (y - meta.originY) / meta.resolution,
-  };
-}
+// 좌표 변환은 실시간 SLAM 지도와 공유한다(S15P11A301-227). 규칙이 갈라지면 두
+// 화면의 로봇 위치가 서로 반대로 찍힌다. 기존 호출부와 시험이 여기서 가져가고
+// 있어 다시 내보낸다.
+export { worldToPixel } from "@/lib/gridGeometry";
 
 const MAX_DISPLAY_HEIGHT = 420;
 const MAX_ZOOM = 8;

@@ -1,70 +1,9 @@
-// Mock data generators — swap out useMock flag in RobotContext to connect real backend
-
-export const GRID_SIZE = 120;
-
-// Build a static occupancy grid: 0=free, 1=occupied, -1=unknown
-export function buildMockGrid(): number[][] {
-  const grid: number[][] = Array.from({ length: GRID_SIZE }, () =>
-    Array(GRID_SIZE).fill(-1)
-  );
-
-  // Outer walls
-  for (let i = 0; i < GRID_SIZE; i++) {
-    grid[0][i] = 1;
-    grid[GRID_SIZE - 1][i] = 1;
-    grid[i][0] = 1;
-    grid[i][GRID_SIZE - 1] = 1;
-  }
-
-  // Internal walls — room layout
-  const walls = [
-    [20, 0, 20, 60],
-    [20, 60, 60, 60],
-    [60, 20, 60, 60],
-    [60, 20, 100, 20],
-    [100, 20, 100, 80],
-    [40, 60, 40, 100],
-    [40, 100, 90, 100],
-    [90, 80, 90, 100],
-    [80, 0, 80, 20],
-  ];
-
-  walls.forEach(([r1, c1, r2, c2]) => {
-    if (r1 === r2) {
-      for (let c = Math.min(c1, c2); c <= Math.max(c1, c2); c++) {
-        if (r1 < GRID_SIZE && c < GRID_SIZE) grid[r1][c] = 1;
-      }
-    } else {
-      for (let r = Math.min(r1, r2); r <= Math.max(r1, r2); r++) {
-        if (r < GRID_SIZE && c1 < GRID_SIZE) grid[r][c1] = 1;
-      }
-    }
-  });
-
-  // Scatter debris
-  const rand = mulberry32(42);
-  for (let i = 0; i < 60; i++) {
-    const r = Math.floor(rand() * (GRID_SIZE - 2)) + 1;
-    const c = Math.floor(rand() * (GRID_SIZE - 2)) + 1;
-    if (grid[r][c] === -1) grid[r][c] = 1;
-  }
-
-  // Reveal initial scanned area near start
-  revealArea(grid, 10, 10, 18);
-
-  return grid;
-}
-
-export function revealArea(grid: number[][], centerR: number, centerC: number, radius: number) {
-  for (let r = Math.max(0, centerR - radius); r <= Math.min(GRID_SIZE - 1, centerR + radius); r++) {
-    for (let c = Math.max(0, centerC - radius); c <= Math.min(GRID_SIZE - 1, centerC + radius); c++) {
-      const dist = Math.sqrt((r - centerR) ** 2 + (c - centerC) ** 2);
-      if (dist <= radius && grid[r][c] === -1) {
-        grid[r][c] = 0;
-      }
-    }
-  }
-}
+// 목 데이터 생성기 — RobotContext 의 USE_MOCK 을 끄면 실 백엔드를 쓴다.
+//
+// 목업 점유 격자(buildMockGrid·revealArea·GRID_SIZE)와 순찰 경로(PATROL_PATH)를
+// 뺐다 (S15P11A301-227). 메인 지도가 실시간 SLAM 지도로 바뀌어 읽는 곳이
+// 없어졌다. DetectionEvent 의 gridR·gridC 도 같이 뺐다 — 목업 격자 인덱스라
+// 실제 map 좌표(mapX·mapY)와 단위가 달랐다.
 
 // Deterministic PRNG
 function mulberry32(seed: number) {
@@ -75,18 +14,6 @@ function mulberry32(seed: number) {
     return ((t ^ t >>> 14) >>> 0) / 4294967296;
   };
 }
-
-// Robot patrol waypoints (grid coords)
-export const PATROL_PATH = [
-  { r: 10, c: 10 },
-  { r: 10, c: 50 },
-  { r: 30, c: 50 },
-  { r: 30, c: 10 },
-  { r: 55, c: 10 },
-  { r: 55, c: 55 },
-  { r: 30, c: 55 },
-  { r: 10, c: 55 },
-];
 
 export interface SensorReading {
   temperature: number;
@@ -100,8 +27,6 @@ export interface DetectionEvent {
   id: string;
   timestamp: number;
   confidence: number;
-  gridR: number;
-  gridC: number;
   thumbnailColor: string;
   location: string;
 }

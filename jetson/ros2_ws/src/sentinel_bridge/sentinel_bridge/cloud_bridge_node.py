@@ -40,14 +40,22 @@ import rclpy
 import tf2_ros
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
-from sensor_msgs.msg import CompressedImage, LaserScan
+from nav_msgs.msg import Odometry
+from sensor_msgs.msg import (
+    CompressedImage,
+    LaserScan,
+    RelativeHumidity,
+    Temperature,
+)
 from std_msgs.msg import String
 
 from .command_relay import CommandRelay
 from .message_mapper import (
     SAFETY_STATE_BY_MISSION_STATE,
     active_mission_id,
+    environment_payload,
     MessageMapper,
+    motion_payload,
     utc_now_iso,
     yaw_from_quaternion,
 )
@@ -57,7 +65,21 @@ from .system_metrics import ComputeMetrics
 
 # 센서가 살아 있다고 볼 최대 무소식 시간. 카메라는 30fps, 라이다는 약 11Hz이므로
 # 2초는 넉넉하다. 너무 짧으면 순간 지연을 장애로 오판한다.
+#
+# 엔코더 오도메트리도 이 기준을 쓴다. ESP32가 50Hz로 보내므로
+# (SENSOR_TASK_INTERVAL_MS = 20) 여유가 크다.
 SENSOR_STALE_SECONDS = 2.0
+
+# 온습도만 기준이 다르다 (S15P11A301-213).
+#
+# DHT11은 2초 주기다(펌웨어 DHT_INTERVAL_MS = 2000). SENSOR_STALE_SECONDS와
+# **정확히 같으므로** 그 상수를 그대로 쓰면 시리얼 지연과 스케줄링 지터가 얹힐
+# 때마다 경계를 넘나들어 온습도가 값과 null 사이에서 깜빡인다. 화면에서는
+# 원인을 알 수 없는 깜빡임으로만 보인다.
+#
+# 주기의 3배로 둔다. 지터와 DHT 재시도(DHT_FAULT_STREAK_THRESHOLD = 3)를
+# 견디면서, ESP32가 빠지면 6초 안에 null이 된다.
+ENVIRONMENT_STALE_SECONDS = 6.0
 
 
 class CloudBridgeNode(Node):
@@ -86,6 +108,14 @@ class CloudBridgeNode(Node):
         self.declare_parameter('telemetry_period_seconds', 0.5)
         self.declare_parameter('camera_topic', '/camera/image_raw/compressed')
         self.declare_parameter('scan_topic', '/scan')
+        # ESP32 실측값 (S15P11A301-213). 기본값은 esp32_bridge.yaml의
+        # 발행 토픽과 같아야 한다 — 다르면 구독이 조용히 비어 있고
+        # environment/motion이 계속 null이라 미구현과 구분되지 않는다.
+        self.declare_parameter('odometry_topic', '/wheel/odometry')
+        self.declare_parameter('temperature_topic', '/environment/temperature')
+        self.declare_parameter(
+            'relative_humidity_topic', '/environment/relative_humidity'
+        )
         # 탐지 노드 생존 판정용. 값을 소비하지 않고 도착 시각만 본다
         # (S15P11A301-192). encounter는 mission_manager가 만들어 보내므로
         # 이 노드가 후보를 해석할 이유는 없다.
@@ -146,6 +176,20 @@ class CloudBridgeNode(Node):
         self._camera_last_seen: float | None = None
         self._scan_last_seen: float | None = None
         self._candidates_last_seen: float | None = None
+
+        # ESP32 실측값 (S15P11A301-213). 여기는 생존이 아니라 값을 쓰므로
+        # 마지막 값과 수신 시각을 함께 들고 있는다.
+        #
+        # **오래된 값은 유지하지 않고 null로 보낸다.** 마지막 값을 계속 보내면
+        # ESP32를 뽑아도 관제 화면의 온습도가 그대로 남아, 죽은 센서를 살아
+        # 있는 것으로 보여준다. null과 값을 구분하는 것이 이 스키마의 규약이다.
+        self._temperature_c: float | None = None
+        self._temperature_last_seen: float | None = None
+        self._humidity_ratio: float | None = None
+        self._humidity_last_seen: float | None = None
+        self._linear_mps: float | None = None
+        self._angular_radps: float | None = None
+        self._odometry_last_seen: float | None = None
         # 마지막으로 받은 임무 상태. mission_manager가 상태 변경 시에만 발행하므로
         # 여기 들고 있다가 1초 heartbeat마다 관제로 내보낸다(31-4).
         self._mission_status: dict | None = None
@@ -191,6 +235,30 @@ class CloudBridgeNode(Node):
         self.create_subscription(
             String, self._param('candidates_topic'),
             self._on_candidates, sensor_qos,
+        )
+
+        # ESP32 실측값 (S15P11A301-213).
+        #
+        # 발행 쪽(esp32_sensor_bridge_node)이 RELIABLE이므로 맞춘다. BEST_EFFORT
+        # 구독자도 RELIABLE 발행자를 받을 수 있지만, 여기는 생존이 아니라 값을
+        # 쓰는 구독이라 유실을 감당할 이유가 없다. 온습도는 2초에 한 번뿐이어서
+        # 한 번 잃으면 그 값이 6초 동안 없는 것과 같다.
+        esp32_qos = QoSProfile(
+            reliability=QoSReliabilityPolicy.RELIABLE,
+            durability=QoSDurabilityPolicy.VOLATILE,
+            history=QoSHistoryPolicy.KEEP_LAST,
+            depth=5,
+        )
+        self.create_subscription(
+            Odometry, self._param('odometry_topic'), self._on_odometry, esp32_qos
+        )
+        self.create_subscription(
+            Temperature, self._param('temperature_topic'),
+            self._on_temperature, esp32_qos,
+        )
+        self.create_subscription(
+            RelativeHumidity, self._param('relative_humidity_topic'),
+            self._on_relative_humidity, esp32_qos,
         )
 
         # 임무 상태는 TRANSIENT_LOCAL로 구독한다. mission_manager가 같은 설정으로
@@ -326,6 +394,25 @@ class CloudBridgeNode(Node):
 
     def _on_scan(self, _message: LaserScan) -> None:
         self._scan_last_seen = self._now()
+
+    def _on_odometry(self, message: Odometry) -> None:
+        """엔코더 오도메트리 (S15P11A301-213).
+
+        자세는 여기서 쓰지 않는다. pose는 SLAM의 map→base_footprint TF에서
+        가져오며(그쪽이 누적 오차를 보정한다), 이 토픽에서는 속도만 쓴다.
+        """
+        self._linear_mps = message.twist.twist.linear.x
+        self._angular_radps = message.twist.twist.angular.z
+        self._odometry_last_seen = self._now()
+
+    def _on_temperature(self, message: Temperature) -> None:
+        self._temperature_c = message.temperature
+        self._temperature_last_seen = self._now()
+
+    def _on_relative_humidity(self, message: RelativeHumidity) -> None:
+        # ROS 규약대로 0~1 비율이다. 퍼센트 변환은 environment_payload가 한다.
+        self._humidity_ratio = message.relative_humidity
+        self._humidity_last_seen = self._now()
 
     def _on_map_registered(self, message: String) -> None:
         """map_uploader가 발급한 mapId를 받아 둔다."""
@@ -530,22 +617,44 @@ class CloudBridgeNode(Node):
         """
         return self.count_publishers(self._param('mission_status_topic')) > 0
 
-    def _fresh(self, last_seen: float | None) -> bool | None:
+    def _fresh(
+        self, last_seen: float | None, stale_after: float = SENSOR_STALE_SECONDS
+    ) -> bool | None:
         """None은 "한 번도 못 받음"이고 False는 "받다가 끊김"이다.
 
         관제 화면이 "미구현·미연결"과 "장애"를 구분해야 하므로 섞지 않는다.
+
+        `stale_after`를 인자로 둔 이유는 온습도만 기준이 다르기 때문이다.
+        ENVIRONMENT_STALE_SECONDS의 주석 참고 (S15P11A301-213).
         """
         if last_seen is None:
             return None
-        return (self._now() - last_seen) <= SENSOR_STALE_SECONDS
+        return (self._now() - last_seen) <= stale_after
 
     def _health(self) -> dict[str, bool | None]:
         return {
-            # ESP32 연동(S15P11A301-84~86) 전에는 확인할 수단이 없다.
-            'mcuConnected': None,
+            # 엔코더 토픽 신선도로 판단한다 (S15P11A301-213). 시리얼이 끊기면
+            # esp32_sensor_bridge가 발행을 멈추므로 이것이 USB 연결 상태다.
+            # 한 번도 못 받았으면 None이고, 그것은 "확인할 수단이 없다"와 같다 —
+            # ESP32가 아예 안 붙은 구성이 그렇다.
+            'mcuConnected': self._fresh(self._odometry_last_seen),
             'lidarOk': self._fresh(self._scan_last_seen),
             'cameraOk': self._fresh(self._camera_last_seen),
         }
+
+    def _environment(self) -> dict[str, float] | None:
+        """DHT11 온습도. 오래되면 null이다 (S15P11A301-213)."""
+        if not self._fresh(self._temperature_last_seen, ENVIRONMENT_STALE_SECONDS):
+            return None
+        if not self._fresh(self._humidity_last_seen, ENVIRONMENT_STALE_SECONDS):
+            return None
+        return environment_payload(self._temperature_c, self._humidity_ratio)
+
+    def _motion(self) -> dict[str, float] | None:
+        """엔코더 실측 속도. 오래되면 null이다 (S15P11A301-213)."""
+        if not self._fresh(self._odometry_last_seen):
+            return None
+        return motion_payload(self._linear_mps, self._angular_radps)
 
     # ------------------------------------------------------------------
     # 발행
@@ -754,6 +863,10 @@ class CloudBridgeNode(Node):
                 # 탐지 노드가 죽어도 스택 나머지는 정상 기동한다. 이 값이 없으면
                 # 관제 화면상 정상으로 보인다(S15P11A301-192).
                 'detector': bool(self._fresh(self._candidates_last_seen)),
+                # ESP32 시리얼 (S15P11A301-213). 이것이 false면 온습도·속도가
+                # null인 이유가 설명된다 — 값이 없는 것과 보드가 빠진 것을
+                # 관제가 구분할 수 있어야 한다.
+                'mcu': bool(self._fresh(self._odometry_last_seen)),
                 # 관제가 "임무 상태가 왜 비어 있나"를 구분할 수 있게 한다.
                 'missionManager': alive,
             },
@@ -774,12 +887,15 @@ class CloudBridgeNode(Node):
             self._mission_status if self._mission_manager_alive() else None
         )
         message = self.mapper.telemetry(
-            # 엔코더·ESP32가 붙기 전에는 나머지가 null이다. 31-6 전체 형태를
-            # 유지해 나중에 필드를 추가하지 않도록 한다.
             pose=self._pose(),
-            motion=None,
+            # ESP32 실측값 (S15P11A301-213). 값이 오래되면 각 함수가 null을
+            # 돌려주므로 마지막 값이 남지 않는다.
+            motion=self._motion(),
+            # battery는 계속 null이다. S15P11A301-174에 전압 계측이 없고
+            # FAULT_UNDERVOLTAGE 플래그만 있다. 없는 값을 0이나 100으로 채우면
+            # 관제가 잔량을 안다고 믿게 된다.
             battery=None,
-            environment=None,
+            environment=self._environment(),
             compute=self.metrics.sample(),
             health=self._health(),
             mission_state=(

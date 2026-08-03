@@ -5,11 +5,11 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Archive, Radio } from "lucide-react";
 import LidarMap from "@/features/mapping/LidarMap";
+import LiveMap from "@/features/mapping/LiveMap";
 import VideoPanel from "@/features/streaming/VideoPanel";
 import StatusPanel from "@/features/telemetry/StatusPanel";
 import SensorDashboard from "@/features/telemetry/SensorDashboard";
 import ModeRow from "@/features/telemetry/ModeRow";
-import { OverlayLine, OverlayStack } from "@/features/telemetry/PanelOverlay";
 import { useRobot } from "@/features/robot/RobotContext";
 
 function NavLink({ to, children }: { to: string; children: React.ReactNode }) {
@@ -73,22 +73,22 @@ function TopBar() {
 /**
  * 미니맵 슬롯.
  *
- * 라벨을 영상 오버레이와 같은 형식으로 맞췄다 (S15P11A301-200).
+ * 목업 격자를 **실시간 SLAM 지도로 바꿨다** (S15P11A301-227). 젯슨의
+ * `foxglove_bridge`에 직접 붙어 `/map`을 받는다 — Foxglove Studio 가 보는 것과 같은
+ * 데이터·같은 주기(2초)다.
  *
- * 격자는 아직 목업이다(mockData.buildMockGrid). 실시간 SLAM 지도로 대체하려면
- * 점유격자를 관제까지 보내는 경로가 필요한데 계약·발행·조회가 모두 없다 —
- * telemetry 스키마에 격자 필드가 없고, 백엔드 map API는 임무 종료 후 PGM뿐이다.
- * 그 대체는 별 작업으로 다룬다.
+ * 그 전에는 "계약·발행·조회가 모두 없다"고 미뤄 두었는데 그 판단이 틀렸다. 경로가
+ * 이미 있었고(bridge 가 /map 을 WebSocket 으로 내보내고 있었다), 막고 있다고 본 두
+ * 가지(혼합 콘텐츠, 무인증 노출)는 bridge 의 `tls`·`capabilities`·`topic_whitelist`
+ * 로 풀렸다(S15P11A301-224).
+ *
+ * 상태 줄은 영상 오버레이와 같은 형식(`OverlayLine`)을 쓴다 — 두 패널이 같은 종류의
+ * 정보를 다르게 보여주지 않게 한다(S15P11A301-200).
  */
 function SmallLidarSlot() {
   return (
     <div className="relative bg-[#12171f] border-b border-border flex-shrink-0 overflow-hidden" style={{ height: 148 }}>
-      <LidarMap compact />
-      <OverlayStack>
-        <OverlayLine kind="LIDAR" tone="idle" title="점유격자는 아직 목업이다. 실시간 SLAM 지도 연동은 별 작업이다.">
-          목업
-        </OverlayLine>
-      </OverlayStack>
+      <LiveMap />
     </div>
   );
 }

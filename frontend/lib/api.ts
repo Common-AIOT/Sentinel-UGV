@@ -123,6 +123,33 @@ export interface TelemetryPoint {
   battery: number | null;
 }
 
+export interface MapView {
+  mapId: string;
+  pgmUrl: string;
+  yamlUrl: string;
+  expiresInSec: number;
+  /** 전정밀 메타데이터 (#197). 완료 이전·구버전 지도는 null — 그때는 yamlUrl 파싱 폴백. */
+  resolution: number | null;
+  originX: number | null;
+  originY: number | null;
+  originYaw: number | null;
+  width: number | null;
+  height: number | null;
+}
+
+export interface TrajectoryPoint {
+  time: string;
+  x: number;
+  y: number;
+  yaw: number;
+}
+
+export interface Trajectory {
+  /** 이 궤적과 같은 좌표계인 지도. 지도 등록 전엔 null. */
+  mapId: string | null;
+  points: TrajectoryPoint[];
+}
+
 export type CommandType = "START" | "PAUSE" | "RESUME" | "RETURN" | "STOP";
 
 export interface CommandResponse {
@@ -158,6 +185,14 @@ export const api = {
 
   mediaViewUrl: (mediaId: string) =>
     request<PresignedUrl>(`/api/v1/media/${mediaId}/view-url`),
+
+  missionMap: (missionId: string) =>
+    request<MapView>(`/api/v1/missions/${missionId}/map`),
+
+  missionTrajectory: (missionId: string, maxPoints?: number) =>
+    request<Trajectory>(
+      `/api/v1/missions/${missionId}/trajectory${maxPoints ? `?maxPoints=${maxPoints}` : ""}`,
+    ),
 
   missionTelemetry: (missionId: string, bucketSeconds = 10) =>
     request<TelemetryPoint[]>(

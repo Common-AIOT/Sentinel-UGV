@@ -11,6 +11,7 @@ import {
   type TelemetryPoint,
 } from "@/lib/api";
 import TelemetryChart from "@/features/telemetry/TelemetryChart";
+import MissionMap from "@/features/mapping/MissionMap";
 
 /**
  * 임무 이력 화면. 운영 API 실데이터로 임무 목록 → 발견(encounter) 목록 → 이벤트
@@ -260,6 +261,13 @@ export default function MissionHistoryPage() {
                   </div>
                   <TelemetryChart points={telemetry} metric="cpu" label="CPU 사용률" unit="%" />
                 </div>
+
+                {/* 임무 지도 — 지도 위 발견 마커·주행 경로. 마커 클릭 → 영상 (S15P11A301-203) */}
+                <MissionMap
+                  missionId={selected.id}
+                  encounters={encounters}
+                  onEncounterClick={openEncounter}
+                />
 
                 {/* 발견 목록 */}
                 <div>

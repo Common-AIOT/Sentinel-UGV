@@ -66,19 +66,24 @@ void sendCommandAck(uint8_t ackedType, uint16_t ackedSequence, uint8_t result) {
   sendFrame(MSG_COMMAND_ACK, payload, (uint16_t)len);
 }
 
+// PWM 듀티(-255..255)를 프로토콜 단위인 permille(-1000..1000)로 변환한다.
+int16_t pwmToPermille(int16_t pwm) {
+  return static_cast<int16_t>((static_cast<int32_t>(pwm) * 1000) / 255);
+}
+
 void sendDriveState() {
   MotorSharedState snapshot = motorSharedStateSnapshot();
   DriveState state{};
   state.appliedSequence = snapshot.lastAcceptedSequence;
   state.state = (uint8_t)snapshot.state;
   state.faultFlags = snapshot.faultFlags;
-  // 실제 BTS7960 PWM 값은 후속 티켓 몫이라, 통신 계층 검증용으로 목표값을 그대로 반영한다.
-  state.drivePwmLeftPermille = snapshot.targetDriveLeftMmps;
-  state.drivePwmRightPermille = snapshot.targetDriveRightMmps;
-  state.targetSteeringMdeg = snapshot.targetSteeringMdeg;
-  state.steeringActuatorCmd = snapshot.targetSteeringMdeg;
+  state.drivePwmLeftPermille = pwmToPermille(motorDriverAppliedPwmLeft());
+  state.drivePwmRightPermille = pwmToPermille(motorDriverAppliedPwmRight());
+  // 조향 모터가 캐스터 휠로 대체되어 더 이상 액추에이션되지 않는다 - 항상 0을 보고한다.
+  state.targetSteeringMdeg = 0;
+  state.steeringActuatorCmd = 0;
   state.estopActive = (snapshot.state == MotorBoardState::ESTOP_LATCHED) ? 1 : 0;
-  state.driverEnabled = 0;  // 실제 driver enable 배선 전이라 항상 0
+  state.driverEnabled = motorDriverEnabled() ? 1 : 0;
 
   uint8_t payload[DRIVE_STATE_BYTES];
   size_t len = packDriveState(state, payload);

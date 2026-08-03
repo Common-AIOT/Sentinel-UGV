@@ -3,7 +3,7 @@
 <package format="3">
   <name>esp32_bridge</name>
   <version>0.1.0</version>
-  <description>모터·센서 ESP32와 USB 직렬(COBS+CRC16)로 통신하는 브리지 (S15P11A301-84). 통신 계층만 다루며 BTS7960 PWM 제어·차량 기구학 변환은 포함하지 않는다.</description>
+  <description>모터·센서 ESP32와 USB 직렬(COBS+CRC16)로 통신하는 브리지 (S15P11A301-84). 센서 페이로드를 표준 ROS 메시지(nav_msgs/Odometry·sensor_msgs/Range 등)로 변환하며 차동 구동 wheel odometry 정운동학까지 포함한다. /cmd_vel 역운동학·안전 중재는 sentinel_drive/sentinel_safety의 몫이다.</description>
   <maintainer email="team@example.com">Sentinel Team</maintainer>
   <license>Apache-2.0</license>
 
@@ -11,6 +11,10 @@
   <exec_depend>std_msgs</exec_depend>
   <exec_depend>std_srvs</exec_depend>
   <exec_depend>diagnostic_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
   <exec_depend>python3-serial</exec_depend>
 
   <test_depend>python3-pytest</test_depend>

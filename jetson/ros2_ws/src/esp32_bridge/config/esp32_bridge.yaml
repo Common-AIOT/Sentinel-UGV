@@ -20,3 +20,42 @@ esp32_sensor_bridge:
     baudrate: 921600
     # 300ms 통신 워치독의 절반 이하 - §34-7 gap-fill(계획 §8, 열린 리스크 2).
     keepalive_period_s: 0.15
+
+    # ---- 토픽·프레임 (Phase 0 메시지 계약) ----
+    odometry_topic: /wheel/odometry
+    range_topic: /range/front
+    protective_stop_topic: /proximity/protective_stop
+    temperature_topic: /environment/temperature
+    relative_humidity_topic: /environment/relative_humidity
+    odom_frame_id: odom
+    base_frame_id: base_footprint
+    range_frame_id: ultrasonic_front_link
+    environment_frame_id: base_link
+
+    # slam.launch.py가 odom->base_footprint를 static identity로 발행하는 동안은
+    # 반드시 false여야 한다(두 발행자가 같은 TF를 다툰다). static을
+    # publish_static_odom:=false로 끄거나 ekf_node가 TF를 소유하게 된 뒤에 판단한다.
+    publish_odom_tf: false
+
+    # ---- 오도메트리 캘리브레이션 (TBD-CAL-001, §35-3) ----
+    # meters_per_tick 기본값 = (pi * 0.120m) / (16384 counts * 82 기어비)
+    #   = 2.806e-07 m/tick. sensor_task.cpp의 실측 전 임시 상수에서 유도한 값이라
+    #   3m 직선 5회 실측(좌·우 개별) 후 반드시 덮어쓴다. 좌·우를 따로 두는 이유는
+    #   합격 기준이 "좌우 편차 ±3%p"라 개별 스케일로만 보정할 수 있어서다.
+    meters_per_tick_left: 2.806e-07
+    meters_per_tick_right: 2.806e-07
+    # 접지 중심 실측 후 제자리 회전으로 역산해 확정한다. 지금은 순수 임시값이라
+    # 각속도 절대값을 신뢰하면 안 된다.
+    track_width_m: 0.30
+    # tick 점프·I2C 노이즈 샘플을 거르는 상한. 실제 최고 속도보다 넉넉히 크게.
+    max_wheel_speed_mps: 2.0
+    # 대각 성분만 지정한다(x, y, z, roll, pitch, yaw). 차동 구동이 측정하지 않는
+    # 자유도는 1e6으로 둬 EKF가 융합하지 않게 한다. 바퀴 미끄럼이 크면 x·yaw를
+    # 더 키우고 IMU yaw 가중을 높인다(명세 23.2).
+    odom_pose_covariance_diagonal: [0.05, 0.05, 1.0e6, 1.0e6, 1.0e6, 0.1]
+    odom_twist_covariance_diagonal: [0.02, 1.0e6, 1.0e6, 1.0e6, 1.0e6, 0.05]
+
+    # ---- HC-SR04 (sensor_task.cpp의 MIN/MAX_VALID_DISTANCE_CM과 맞출 것) ----
+    range_min_m: 0.02
+    range_max_m: 4.0
+    range_field_of_view_rad: 0.26  # 데이터시트 유효 각도 약 15deg

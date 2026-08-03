@@ -1,6 +1,7 @@
 // 모터 ESP32 <-> Jetson USB 직렬 통신 계층.
 // 범위: COBS+CRC16 프레이밍, HELLO/HELLO_ACK, STOP/ESTOP, 300ms 통신 워치독,
-// DRIVE_STATE/DIAGNOSTIC 송신(placeholder 값). BTS7960 PWM 구동은 후속 티켓(safety_stub.h 참고).
+// DRIVE_STATE/DIAGNOSTIC 송신, BTS7960 2개(좌/우 구동) 실제 PWM 구동(safety_stub.h 참고).
+// 조향 모터는 캐스터 휠로 대체되어 제거되었다.
 //
 // 기존 motor_test/double_motor_test/triple_motor_test 벤치 스케치는 그대로 둔다.
 #include <Arduino.h>
@@ -10,6 +11,7 @@
 #include "board_state.h"
 #include "comm_task.h"
 #include "control_task.h"
+#include "safety_stub.h"
 
 constexpr uint32_t COMM_TASK_STACK_WORDS = 4096;
 constexpr uint32_t CONTROL_TASK_STACK_WORDS = 2048;
@@ -18,6 +20,8 @@ constexpr UBaseType_t COMM_TASK_PRIORITY = 2;
 constexpr UBaseType_t CONTROL_TASK_PRIORITY = 3;
 
 void setup() {
+  // §34-6: 전원 인가 직후 PWM=0·driver enable=LOW를 태스크 생성보다 먼저 보장한다.
+  motorDriverInit();
   motorSharedStateInit();
 
   xTaskCreatePinnedToCore(commTaskFn, "comm_task", COMM_TASK_STACK_WORDS, nullptr,

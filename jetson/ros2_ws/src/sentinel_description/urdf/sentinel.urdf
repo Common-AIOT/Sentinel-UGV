@@ -37,6 +37,7 @@
   <link name="lidar_link"/>
   <link name="camera_link"/>
   <link name="camera_optical_frame"/>
+  <link name="ultrasonic_front_link"/>
 
   <!-- base_footprint(지면 투영) -> base_link(차체 기준). z = 지상고, TBD-HW-001 -->
   <joint name="base_footprint_to_base_link" type="fixed">
@@ -68,6 +69,15 @@
   <joint name="base_link_to_front_right_wheel_link" type="fixed">
     <parent link="base_link"/>
     <child link="front_right_wheel_link"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- 전방 HC-SR04. esp32_sensor_bridge의 /range/front(sensor_msgs/Range) frame_id.
+       collision_monitor가 Range를 점으로 바꿀 때 이 TF를 쓰므로 위치·정렬 실측이
+       실제 정지 거리에 그대로 반영된다(§35-7, TBD-HW-006). x는 전방 돌출량. -->
+  <joint name="base_link_to_ultrasonic_front_link" type="fixed">
+    <parent link="base_link"/>
+    <child link="ultrasonic_front_link"/>
     <origin xyz="0 0 0" rpy="0 0 0"/>
   </joint>
 

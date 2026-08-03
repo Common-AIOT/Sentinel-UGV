@@ -105,8 +105,52 @@ posture:
   bbox_aspect_ratio: 1.20
   vertical_extent_ratio: 0.25
   min_valid_keypoints: 4
+  # 카메라 광축(앞뒤) 기울기 반영. torso_angle_deg는 이미지 좌표 기준이라
+  # 좌우 기울기만 잡는다. 복도 방향으로 누운 사람이 사각지대가 되므로,
+  # 어깨 폭 대비 상체 단축률로 앞뒤 기울기를 추정해 큰 쪽을 쓴다.
+  depth_tilt: true
+  # 똑바로 선 사람의 (상체 길이 / 어깨 폭) 기대비.
+  # ⚠️ 해부학 통념값이며 실측 근거가 없다. 실영상 확보 후 조정할 것.
+  torso_shoulder_ratio: 1.3
+  # --- 점수화 (2026-08-03, 이진 분류 전환) ---
+  # 각 신호를 임계값 기준 시그모이드로 0~1에 매핑해 가중 평균한다.
+  # 이산 투표에서는 54도와 10도가 똑같이 "표 없음"이었지만 점수는 이를 구분한다.
+  #
+  # ⚠️ 아래 가중치와 폭은 실측 근거가 없다. 라벨 데이터 확보 후 로지스틱 회귀로
+  #    교체할 자리다(계획 2단계). "검증됨"으로 보고하지 않는다.
+  #
+  # 가중 평균 점수가 이 값 이상이면 FALLEN.
+  fallen_threshold: 0.5
+  # 자세·형상 신호의 가중치.
+  weight_torso_angle: 1.0
+  weight_vertical_extent: 1.0
+  weight_bbox_aspect: 0.8
+  # 부동은 가중치가 아니라 **배수**다. 부동 1.0일 때 점수가 (1 + 이 값)배가 된다.
+  #
+  # 독립 항으로 더하면 가중 평균의 일정 비율을 무조건 채워, 형상이 애매할 때
+  # 부동이 대신 점수를 밀어 올린다. 실측(2026-08-03)에서 부동이 1.0일 때
+  # FALLEN이 되는 가로비가 1.47 → 0.93으로 떨어졌다. 0.93은 거의 정사각형이라
+  # 상반신만 잡힌 앉은 사람도 걸린다.
+  #
+  # 곱셈이면 자세·형상 점수가 낮을 때 부동이 아무리 커도 결과가 낮게 유지된다.
+  # 문헌의 "최종 몸 방향 + 바닥에 머문 시간" 조합이 이 형태다.
+  inactivity_boost: 0.4
+  # 시그모이드 폭. 임계값에서 이만큼 떨어지면 약 0.73/0.27이 된다.
+  # 작을수록 예전 이산 판정에 가까워진다.
+  width_torso_angle: 12.0
+  width_vertical_extent: 0.08
+  width_bbox_aspect: 0.25
   smoothing_window: 5
-  unknown_yields_to_known: true
+
+# 움직임 추적 — 부동(inactivity) 신호.
+# 문헌의 쓰러짐 탐지는 "하강 속도, 최종 몸 방향, 바닥에 머문 시간"을 함께 가중한다.
+# 관절이 하나도 안 잡혀도 동작하므로, 누운 사람의 관절이 가려지는 상황을 보완한다.
+motion:
+  # bbox 크기 대비 이 비율 미만으로 움직이면 "정지"로 본다.
+  # 크기로 정규화해 카메라 이동과 거리 편차의 영향을 줄인다.
+  still_ratio: 0.06
+  # 이 시간(초) 이상 정지해 있으면 부동 점수가 1.0이 된다.
+  full_still_seconds: 3.0
 
 memory:
   forget_seconds: 10.0
@@ -126,6 +170,11 @@ output:
   jsonl_events: events.jsonl
   events_dir: events
   draw_overlay_on_event_image: true
+  # 이벤트 확정 프레임에만 Pose를 강제 실행해 증빙 이미지에 골격을 남긴다.
+  # Jetson은 헤드리스라 상시 overlay를 그리지 않으므로, 관절을 볼 수 있는 건
+  # 이 이벤트 이미지뿐이다. 실측 기준 Pose 1회 약 82ms인데 쿨다운이 15초라
+  # 추가 부하는 0.5% 미만이다. 상시 Pose(FPS 절반 이하)와 혼동하지 않는다.
+  pose_on_event: true
 
 report:
   schema_version: "1.0"

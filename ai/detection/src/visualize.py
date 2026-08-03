@@ -8,7 +8,7 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
-from .schemas import POSTURE_STANDING, POSTURE_POSSIBLE_FALLEN, PersonObservation
+from .schemas import POSTURE_FALLEN, PersonObservation
 
 # COCO 17 keypoint 골격 연결. 시각 확인용이며 판정에는 쓰지 않는다.
 SKELETON = (
@@ -19,16 +19,12 @@ SKELETON = (
 
 _COLOR_NORMAL = (0, 200, 0)
 _COLOR_FALLEN = (0, 0, 255)
-_COLOR_UNKNOWN = (128, 128, 128)
 _COLOR_KEYPOINT = (255, 200, 0)
 
 
 def _status_color(status: str) -> tuple[int, int, int]:
-    if status == POSTURE_POSSIBLE_FALLEN:
-        return _COLOR_FALLEN
-    if status == POSTURE_STANDING:
-        return _COLOR_NORMAL
-    return _COLOR_UNKNOWN
+    """이진 라벨이므로 두 색만 쓴다. 판정 확신도는 라벨이 아니라 점수로 표시한다."""
+    return _COLOR_FALLEN if status == POSTURE_FALLEN else _COLOR_NORMAL
 
 
 def draw(
@@ -48,7 +44,13 @@ def draw(
 
         track_label = f"ID{det.track_id}" if det.track_id is not None else "ID-"
         # seen은 encounter 트리거 기준, fallen은 자세 심각도 속성이다.
-        label = f"{track_label} {person.posture.status} {det.confidence:.2f} seen{person.seen_sec:.1f}s"
+        # 점수와 신호 수를 함께 띄운다. 이진 라벨만 보면 아슬아슬한 판정과
+        # 확실한 판정이 구분되지 않고, 관절 없이 내린 판정도 티가 안 난다.
+        posture = person.posture
+        label = (
+            f"{track_label} {posture.status} {posture.fallen_score:.2f}"
+            f"/{posture.signal_count} {det.confidence:.2f} seen{person.seen_sec:.1f}s"
+        )
         if person.fallen_sec > 0:
             label += f" fallen{person.fallen_sec:.1f}s"
         if person.event_confirmed:

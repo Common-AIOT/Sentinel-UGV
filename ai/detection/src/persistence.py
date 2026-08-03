@@ -22,7 +22,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from .schemas import POSTURE_POSSIBLE_FALLEN
+from .schemas import POSTURE_FALLEN
 
 
 @dataclass
@@ -139,7 +139,7 @@ class PersistenceTracker:
         seen = timestamp_sec - state.seen_since
 
         # 자세 지속 시간은 트리거가 아니라 속성으로만 잰다.
-        if posture_status == POSTURE_POSSIBLE_FALLEN:
+        if posture_status == POSTURE_FALLEN:
             if state.fallen_since is None:
                 state.fallen_since = timestamp_sec
             fallen = timestamp_sec - state.fallen_since

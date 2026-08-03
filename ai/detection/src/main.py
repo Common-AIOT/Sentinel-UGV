@@ -88,6 +88,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="overlay 미리보기 창을 띄운다. 종료는 q 또는 ESC.",
     )
     parser.add_argument(
+        "--pose-every-frame",
+        action="store_true",
+        help="조건부 Pose 주기 제한을 풀고 매 프레임 모든 사람에 Pose를 실행한다. "
+        "자세 임계값 검증 전용이며 FPS가 크게 떨어진다. 성능 측정에는 쓰지 않는다.",
+    )
+    parser.add_argument(
         "--no-run-subdir",
         action="store_true",
         help="실행별 타임스탬프 하위 폴더를 만들지 않고 --output에 바로 기록한다.",
@@ -121,6 +127,16 @@ def main(argv: list[str] | None = None) -> int:
         config["detector"]["confidence"] = args.conf
     if args.frame_log:
         config["output"]["write_frame_log"] = True
+    if args.pose_every_frame:
+        # max_fps <= 0이면 PoseScheduler가 주기 제한을 걸지 않고, 전역 예산도 함께 풀린다.
+        # 설정 파일은 건드리지 않는다. 검증 실행에서만 덮어써야 두 프로파일이 갈라지지 않는다.
+        # activate_after_frames(명세 25.6의 3프레임 연속 조건)는 그대로 둔다.
+        config["pose_trigger"]["max_fps"] = 0
+        print(
+            "[main] --pose-every-frame: 매 프레임 Pose를 실행합니다. "
+            "검증 전용이며 이 실행의 FPS는 성능 지표로 쓰지 않습니다.",
+            file=sys.stderr,
+        )
 
     config.setdefault("camera", {})
     if args.width is not None:

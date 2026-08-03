@@ -34,12 +34,19 @@ class PostureClassifier:
         vertical_extent_ratio: float = 0.25,
         min_valid_keypoints: int = 4,
         keypoint_confidence: float = 0.5,
+        depth_tilt: bool = True,
+        torso_shoulder_ratio: float = 1.3,
     ) -> None:
         self.torso_horizontal_deg = torso_horizontal_deg
         self.bbox_aspect_ratio = bbox_aspect_ratio
         self.vertical_extent_ratio = vertical_extent_ratio
         self.min_valid_keypoints = min_valid_keypoints
         self.keypoint_confidence = keypoint_confidence
+        # 카메라 광축 방향(앞뒤) 기울기를 각도에 반영할지. 아래 _depth_tilt_deg 참고.
+        self.depth_tilt = depth_tilt
+        # 똑바로 선 사람의 (어깨중점→엉덩이중점 길이) / (어깨 폭) 기대비.
+        # ⚠️ 해부학 통념에 따른 값이며 실측 근거가 없다. 실영상 확보 후 조정한다.
+        self.torso_shoulder_ratio = torso_shoulder_ratio
 
     @staticmethod
     def _midpoint(
@@ -49,6 +56,44 @@ class PostureClassifier:
         if a and b:
             return ((a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0)
         return a or b
+
+    def _depth_tilt_deg(
+        self,
+        pose: PoseResult,
+        torso_len: float,
+        signals: dict,
+    ) -> float | None:
+        """카메라 쪽(앞뒤)으로 기운 각도를 상체 단축률에서 추정한다.
+
+        torso_angle_deg는 이미지 좌표의 dx/dy로 계산하므로 **좌우 기울기만** 잡는다.
+        카메라 광축 방향으로 기울면 dx가 거의 0이라 각도가 0으로 나온다. 복도를 주행하는
+        UGV에서는 복도 방향으로 누운 사람이 정확히 이 배치가 되므로 사각지대가 된다.
+
+        앞뒤로 기울면 상체는 짧아 보이지만 **어깨 폭은 그대로다**(회전축이 어깨선과
+        나란하기 때문). 그래서 어깨 폭을 자로 삼아 단축률을 재고 각도로 환산한다.
+
+            cos(기울기) ≈ (관측 상체 길이 / 어깨 폭) / 기대비
+
+        어깨가 한쪽만 잡히면 폭을 알 수 없으므로 None을 돌려 이 신호를 쓰지 않는다.
+        옆으로 돌아선 사람은 어깨 폭이 좁아져 비가 커지고, 그때는 1.0으로 잘려 0도가
+        된다. 즉 이 추정은 **과소 추정 방향으로만 틀리며 오탐을 만들지 않는다.**
+        """
+        conf = self.keypoint_confidence
+        left = pose.get("left_shoulder", conf)
+        right = pose.get("right_shoulder", conf)
+        if left is None or right is None:
+            return None
+
+        shoulder_width = math.hypot(left[0] - right[0], left[1] - right[1])
+        if shoulder_width < 1e-6 or self.torso_shoulder_ratio <= 0:
+            return None
+
+        observed = torso_len / shoulder_width
+        signals["torso_shoulder_ratio"] = round(observed, 3)
+
+        # 기대비보다 길면 기울지 않은 것이다(또는 몸을 돌린 것). 1.0으로 잘라 0도로 둔다.
+        cos_tilt = min(1.0, max(0.0, observed / self.torso_shoulder_ratio))
+        return math.degrees(math.acos(cos_tilt))
 
     def classify(self, detection: Detection, pose: PoseResult | None) -> PostureResult:
         signals: dict[str, float | bool | None] = {}
@@ -101,7 +146,18 @@ class PostureClassifier:
             )
 
         # 수직축(0, 1) 기준 각도. 0도=수직(서 있음), 90도=수평(누움).
+        # 이미지 좌표 기준이라 좌우 기울기만 잡힌다.
         torso_angle = math.degrees(math.atan2(abs(dx), abs(dy)))
+        signals["torso_angle_lateral_deg"] = round(torso_angle, 2)
+
+        # 앞뒤(카메라 광축) 기울기를 상체 단축률로 추정해 합친다.
+        # 두 축 중 더 많이 기운 쪽을 상체 기울기로 본다.
+        if self.depth_tilt:
+            depth_angle = self._depth_tilt_deg(pose, torso_len, signals)
+            if depth_angle is not None:
+                signals["torso_angle_depth_deg"] = round(depth_angle, 2)
+                torso_angle = max(torso_angle, depth_angle)
+
         signals["torso_angle_deg"] = round(torso_angle, 2)
         torso_horizontal = torso_angle >= self.torso_horizontal_deg
 

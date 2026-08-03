@@ -1822,7 +1822,7 @@ AI-Hub 데이터가 끝내 확보되지 않아도 아래는 반드시 충족한�
 | 14 | ~~ROS2 노드 래핑 미착수~~ → **해결: `src/ros_main.py`(S15P11A301-153)** | 해결됨 | — | §10 |
 | 15 | `ai/detection/README.md` 부재 — 외부 개발자 진입점이 AGENTS.md뿐 | 인수인계 | 에이전트 | §8 |
 | 16 | 모델 가중치가 Git에 없어 clone만으로는 실행 불가 | 배포 | Runbook 3장으로 완화됨 | §7.1 |
-| 17 | `dataset_selection.md` 미작성 — 조사 내용이 §26에만 있다 | 문서 정합 | ISSUE-02 | §11.1 |
+| 17 | ~~`dataset_selection.md` 미작성~~ → **2026-07-31 해결**(`../../docs/ai/detection/dataset_selection.md`) | 해결됨 | — | §11.1 |
 | 18 | `schemas.py`의 `build_encounter_data()`가 여전히 encounter를 만든다. **encounter 발급 권한은 Mission Manager 단독**(명세 26.1) | **중복 소지** | 에이전트 + Mission 담당 | §10, §17 |
 | 19 | `src.main` 경로는 로봇에서 카메라를 열 수 없다(`usb_cam` 점유). 단독 검증 전용임을 코드가 강제하지 않는다 | 오용 위험 | 에이전트 | §10 |
 | 20 | Jetson 가용 RAM 700MB 이하에서 `CUBLAS_STATUS_ALLOC_FAILED` 재현 | 운영 제약 | Jetson 담당 | Runbook 13장 |

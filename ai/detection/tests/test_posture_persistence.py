@@ -432,6 +432,103 @@ def test_pose_select_respects_consecutive_frames() -> None:
     assert ran == [False, False, True, True, True], ran
 
 
+def _pose_wh(shoulder_y: float, hip: tuple[float, float], half_width: float = 30.0,
+             cx: float = 150.0) -> PoseResult:
+    """어깨 폭이 명시된 상체 pose. depth_tilt 검증용."""
+    from src.schemas import KEYPOINT_INDEX
+
+    xy = [(0.0, 0.0)] * KPT_COUNT
+    cf = [0.0] * KPT_COUNT
+    for name, pt in [
+        ("left_shoulder", (cx - half_width, shoulder_y)),
+        ("right_shoulder", (cx + half_width, shoulder_y)),
+        ("left_hip", hip),
+        ("right_hip", hip),
+        ("nose", (cx, shoulder_y - 25)),
+        ("left_knee", (hip[0], hip[1] + 40)),
+    ]:
+        idx = KEYPOINT_INDEX[name]
+        xy[idx] = pt
+        cf[idx] = 0.9
+    return PoseResult(keypoints_xy=xy, keypoints_conf=cf)
+
+
+def test_depth_tilt_catches_person_lying_along_optical_axis() -> None:
+    """카메라 광축 방향으로 누운 사람을 잡는다.
+
+    torso_angle은 이미지 dx/dy 기반이라 앞뒤 기울기를 못 본다. 복도를 주행하는
+    UGV에서는 복도 방향으로 누운 사람이 정확히 이 배치가 되므로 사각지대였다.
+    """
+    det = _det(140, 110, track_id=1)
+    # 어깨 폭 60, 상체가 30px로 단축(똑바로 서면 78px) → 앞뒤로 크게 기움
+    pose = _pose_wh(180.0, (150.0, 210.0))
+
+    off = PostureClassifier(depth_tilt=False).classify(det, pose)
+    on = PostureClassifier(depth_tilt=True).classify(det, pose)
+
+    assert off.signals["torso_angle_deg"] == 0.0, "좌우 각도는 0이어야 한다(전제 확인)"
+    assert off.status == POSTURE_STANDING, "기존 규칙은 이 자세를 놓친다(회귀 기준)"
+    assert on.status == POSTURE_POSSIBLE_FALLEN, f"앞뒤 기울기를 못 잡음: {on.signals}"
+
+
+def test_depth_tilt_does_not_flag_upright_person() -> None:
+    """똑바로 선 사람에게 오탐을 만들지 않는다."""
+    det = _det(60, 300, track_id=1)
+    # 어깨 폭 60, 상체 78 = 60 * 1.3 (기대비와 일치) → 기울기 0
+    pose = _pose_wh(100.0, (150.0, 178.0))
+    result = PostureClassifier(depth_tilt=True).classify(det, pose)
+    assert result.signals["torso_angle_depth_deg"] == 0.0, result.signals
+    assert result.status == POSTURE_STANDING
+
+
+def test_depth_tilt_ignores_turned_person_instead_of_guessing() -> None:
+    """몸을 옆으로 돌려 어깨 폭이 좁아진 경우 각도를 부풀리지 않는다.
+
+    관측 비가 기대비보다 커지면 cos가 1을 넘는데, 이때 1로 잘라 0도로 둔다.
+    이 추정은 과소 추정 방향으로만 틀려야 한다. 반대로 틀리면 서 있는 사람이
+    쓰러진 것으로 보고되어 구조 우선순위가 잘못 올라간다.
+    """
+    det = _det(60, 300, track_id=1)
+    # 어깨 폭 10(옆으로 돌아섬)인데 상체는 78 → 관측비 7.8 (기대비 1.3보다 훨씬 큼)
+    pose = _pose_wh(100.0, (150.0, 178.0), half_width=5.0)
+    result = PostureClassifier(depth_tilt=True).classify(det, pose)
+    assert result.signals["torso_angle_depth_deg"] == 0.0, result.signals
+    assert result.status == POSTURE_STANDING
+
+
+def test_depth_tilt_skipped_when_one_shoulder_missing() -> None:
+    """어깨가 한쪽만 잡히면 폭을 알 수 없으므로 이 신호를 쓰지 않는다."""
+    from src.schemas import KEYPOINT_INDEX
+
+    xy = [(0.0, 0.0)] * KPT_COUNT
+    cf = [0.0] * KPT_COUNT
+    for name, pt in [
+        ("left_shoulder", (120.0, 180.0)),
+        ("left_hip", (150.0, 210.0)),
+        ("right_hip", (150.0, 210.0)),
+        ("nose", (150.0, 155.0)),
+        ("left_knee", (150.0, 250.0)),
+    ]:
+        idx = KEYPOINT_INDEX[name]
+        xy[idx] = pt
+        cf[idx] = 0.9
+    pose = PoseResult(keypoints_xy=xy, keypoints_conf=cf)
+
+    result = PostureClassifier(depth_tilt=True).classify(_det(140, 110), pose)
+    assert "torso_angle_depth_deg" not in result.signals, result.signals
+
+
+def test_pose_scheduler_exposes_bbox_thresholds() -> None:
+    """이벤트 강제 Pose(_fill_pose_for_event)가 같은 크기 기준을 재사용한다.
+
+    파이프라인이 이 속성으로 판단하므로 이름이 바뀌면 조용히 깨진다.
+    작은 bbox에 Pose를 돌리면 keypoint를 믿을 수 없는데도 증빙에 실린다.
+    """
+    sch = PoseScheduler(min_bbox_width=80, min_bbox_height=90)
+    assert sch.min_bbox_width == 80
+    assert sch.min_bbox_height == 90
+
+
 def test_no_person_no_event() -> None:
     """사람이 없으면 아무 이벤트도 나면 안 된다."""
     tracker = PersistenceTracker(person_confirm_seconds=1.0)

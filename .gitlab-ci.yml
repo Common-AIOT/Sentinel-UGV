@@ -36,11 +36,34 @@ variables:
 
 # 파이프라인 자체를 생성할 조건입니다. 위에서부터 평가하며 하나라도 일치하면 생성됩니다.
 workflow:
+  # 새 파이프라인이 시작될 때 이전 파이프라인을 자동 취소할지 정합니다.
+  # interruptible 인 job 만 취소하는 것이 기본 동작이고, default 블록이 모든 job 을
+  # interruptible: true 로 두었으므로 사실상 파이프라인 전체가 취소 대상입니다.
+  auto_cancel:
+    on_new_commit: interruptible
   rules:
     # Merge Request가 생성되거나 새 커밋으로 갱신될 때 실행합니다.
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     # main/master 등 GitLab 프로젝트에 설정된 기본 브랜치에서 실행합니다.
+    #
+    # 기본 브랜치 파이프라인은 자동 취소하지 않습니다(S15P11A301-211).
+    #
+    # 배포 job 들의 rules 는 `기본 브랜치 + changes` 형태이고, changes 는 직전
+    # 커밋(CI_COMMIT_BEFORE_SHA) 대비 diff 를 봅니다. 취소된 파이프라인의 커밋은
+    # 다음 파이프라인의 비교 범위에 들어오지 않으므로, 그 변경은 **어느
+    # 파이프라인에서도 배포되지 않습니다.**
+    #
+    # 2026-08-03 에 실제로 일어났습니다. 09:55 프런트엔드 머지의 파이프라인이
+    # test:frontend(npm ci + tsc + next build) 실행 중이었고, 09:57 하드웨어 머지가
+    # 그것을 취소했습니다. 09:57 머지는 frontend 파일이 0개라 deploy:frontend 가
+    # changes 조건에 걸리지 않았습니다. 파이프라인은 초록이고 MR 은 머지됐고
+    # 화면은 정상 렌더링되는데 배포만 없는 상태가 됩니다.
+    #
+    # MR·기능 브랜치는 위 규칙 그대로 취소합니다. 그쪽은 배포를 하지 않으므로
+    # 연속 푸시에서 러너 시간을 아끼는 편이 맞습니다.
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      auto_cancel:
+        on_new_commit: none
     # GitLab의 Build > Pipelines > Run pipeline에서 수동으로 시작한 경우 실행합니다.
     - if: '$CI_PIPELINE_SOURCE == "web"'
     # 위 조건에 해당하지 않는 일반 기능 브랜치 push, 태그 push 등은 실행하지 않습니다.
@@ -356,6 +379,10 @@ deploy:ec2:
   stage: deploy_ec2
   image: alpine:3.20
   needs: ["build:backend-image"] # 빌드가 성공해야만 배포 실행
+  # 이 배포는 한 번에 하나만 돕니다(S15P11A301-211). 기본 브랜치 파이프라인의
+  # 자동 취소를 끄면서 두 파이프라인이 동시에 살아 있을 수 있게 됐고, 그러면
+  # docker compose pull && up -d 가 겹쳐 컨테이너가 두 번 재시작됩니다.
+  resource_group: ec2-production
   before_script:
     # SSH 접속을 위한 패키지 설치 및 키 세팅
     - apk add --no-cache openssh-client
@@ -407,6 +434,9 @@ deploy:ec2:
 deploy:frontend:
   stage: deploy_ec2
   image: node:20-alpine
+  # deploy:ec2 와 같은 이유입니다(S15P11A301-211). 배포가 겹치면 늦게 시작한
+  # 것이 먼저 끝날 수 있고, 그때 운영 별칭이 예전 커밋을 가리킨 채 남습니다.
+  resource_group: vercel-production
   script:
     - cd frontend
     # VERCEL_ORG_ID/VERCEL_PROJECT_ID는 env로 자동 인식, 인증은 --token 사용

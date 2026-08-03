@@ -244,5 +244,9 @@ NVMMLITE_NVVIDEODEC video_parser_parse Unsupported Codec
 ERROR:gstsplitmuxsink.c:2691:check_completed_gop: assertion failed: (gop != NULL)
 ```
 
-`scripts/stop_sentinel.sh`로 전부 내린 뒤 필요한 것만 띄웁니다. MediaMTX가 없으면
+`scripts/demo_down.sh`로 전부 내린 뒤 필요한 것만 띄웁니다. MediaMTX가 없으면
 `rtspclientsink`가 재연결 루프에 빠져 조각이 나오지 않는 것도 같은 증상입니다.
+
+이전에는 이 자리에 `stop_sentinel.sh`가 적혀 있었는데 **그것으로는 전부 내려가지
+않습니다**(S15P11A301-217). 센서·스트리밍만 정리하므로 SLAM·녹화·임무·탐지가
+남고, 그 상태로 다시 띄우면 같은 토픽을 중복 발행하는 고아가 쌓입니다.

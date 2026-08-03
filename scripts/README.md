@@ -24,9 +24,16 @@
 
 | 스크립트 | 하는 일 |
 |---|---|
-| `start_sentinel.sh` | 중복 검사 → 센서 → 토픽 확인 → 스트리밍·MediaMTX |
-| `stop_sentinel.sh` | launch 트리와 노드를 정리하고 남은 프로세스를 확인 |
 | `demo_up.sh` | 센서·SLAM·스트리밍·녹화·임무·브리지·탐지를 순차 기동 |
+| `demo_down.sh` | 그 스택을 전부 내리고 **남은 프로세스를 확인한다** |
+| `start_sentinel.sh` | 중복 검사 → 센서 → 토픽 확인 → 스트리밍·MediaMTX |
+| `stop_sentinel.sh` | 센서·스트리밍만 정리 (`start_sentinel.sh`의 짝) |
+| `viz_up.sh` | 돌고 있는 스택에 Foxglove Bridge를 붙인다 |
+| `viz_down.sh` | Bridge만 떼고 스택은 그대로 둔다 |
+
+**`stop_sentinel.sh`로 데모 스택을 내릴 수 없다.** 이름 때문에 그렇게 보이지만
+그것은 `start_sentinel.sh`의 짝이고 센서·스트리밍만 덮는다. 데모 스택은
+`demo_down.sh`를 쓴다. 자세한 경계는 아래 「내릴 때 무엇이 남는가」에 있다.
 
 이름이 `start_streaming`이 아닌 이유는 켜는 대상이 스트리밍만이 아니기
 때문이다. 지금은 센서와 스트리밍이고 여기에 녹화(S15P11A301-123)와 AI·임무
@@ -37,15 +44,18 @@
 실행(`start_sentinel.sh`)은 매번 하는 작업이다. 두 축을 섞지 않는다.
 
 ```bash
-./scripts/start_sentinel.sh                  # HTTPS (기본)
-./scripts/start_sentinel.sh --no-tls         # 평문 HTTP
-./scripts/start_sentinel.sh --sensors-only   # 센서만, 스트리밍 없이
-./scripts/stop_sentinel.sh
-
 # 데모 전체 스택. 개별 기능은 launch 인자로 끌 수 있다.
 ./scripts/demo_up.sh
 ./scripts/demo_up.sh enable_detector:=false
 ./scripts/demo_up.sh enable_viz:=true        # Foxglove 시각화까지 (아래 참고)
+./scripts/demo_down.sh                       # 전부 내린다
+./scripts/demo_down.sh --dry-run             # 무엇을 정리할지만 본다
+
+# 센서·스트리밍만 (개발용)
+./scripts/start_sentinel.sh                  # HTTPS (기본)
+./scripts/start_sentinel.sh --no-tls         # 평문 HTTP
+./scripts/start_sentinel.sh --sensors-only   # 센서만, 스트리밍 없이
+./scripts/stop_sentinel.sh
 ```
 
 `start_sentinel.sh`는 센서·스트리밍 경로를 빠르게 확인하는 개발용 진입점이고,
@@ -156,36 +166,65 @@ colcon build --symlink-install --packages-select sentinel_bringup \
 넘어가도록 만들어져 있어서다(S15P11A301-156의 장애 격리). **스택이 정상 기동하므로
 인자가 안 먹은 것처럼 보인다.** 브랜치를 옮긴 뒤에 재발할 수 있다.
 
-#### 8765는 인증이 없고 이 기기는 공인 IP에 있다
+#### 왜 demo_up.sh에 enable_viz를 박아 두지 않는가
 
-작업이 끝나면 내린다.
+위 「켠 상태는 인증이 없다」와 같은 이유다. `demo_up.sh`는 systemd가 부팅마다
+부르는 진입점이므로(위 「부팅 자동 시작」), 박아 두면 **무인 상태로 8765가 상시
+열린다.** 이 기기는 NAT 뒤가 아니고 임의 포트가 외부에서 닿는다(WHEP 8889가
+그렇게 동작한다).
 
-```bash
-pkill -f foxglove_bridge
-```
-
-이 기기는 NAT 뒤가 아니다. `jetson.sentinel-ugv.xyz`가 이 기기를 직접 가리키고
-임의 포트가 외부에서 닿는다(WHEP 8889가 그렇게 동작한다). 그런데
-`foxglove_bridge`의 기본 capability는 읽기만이 아니다.
+기본 capability가 읽기 전용이 아니라는 것이 핵심이다.
 
 ```text
 [clientPublish, parameters, parametersSubscribe, services, connectionGraph, assets]
 ```
 
-**토픽 발행·서비스 호출·파라미터 변경이 되고 인증이 없다.** 켜 둔 동안은 누구나
-로봇을 조작할 수 있다는 뜻이다. `viz_address` 기본값도 `0.0.0.0`이다.
+토픽 발행·서비스 호출·파라미터 변경이 되고 인증이 없다. 주행 코드가 붙기
+시작하면 이 노출의 의미가 달라진다.
 
-포트를 열지 않고 쓰려면 localhost로 묶고 SSH 터널을 쓴다.
+### 내릴 때 무엇이 남는가
+
+`demo_up.sh`가 띄우는 것을 실측으로 열거했다. `demo.launch.py` 아래 15개다.
+
+| 프로세스 | 메모리 | `stop_sentinel.sh` | `demo_down.sh` |
+|---|---|---|---|
+| `ros2 launch ... demo.launch.py` | 66MB | | O |
+| `usb_cam_node_exe` | 68MB | O | O |
+| `ydlidar_ros2_driver_node` | 25MB | O | O |
+| `robot_state_publisher` | 26MB | O | O |
+| `static_transform_publisher` | 26MB | | O |
+| `async_slam_toolbox_node` | **551MB** | | O |
+| `mediamtx` | 49MB | O | O |
+| `stream_pipeline` | **456MB** | O | O |
+| `recording_manager` | 46MB | | O |
+| `map_saver` | 50MB | | O |
+| `map_uploader` | 50MB | | O |
+| `media_uploader` | 51MB | | O |
+| `mission_manager` | 60MB | | O |
+| `sentinel_voice.ros_node` | 42MB | | O |
+| `src.ros_main` (탐지) | **1601MB** | | O |
+
+`stop_sentinel.sh`로 내리면 **9개가 남고 그중 탐지 1601MB와 SLAM 551MB가 있다.**
+8GB 장비에서 2.1GB가 물린 채로 다음 실행을 시도하게 된다.
+
+이 사고가 두 번 났다. S15P11A301-192에서 "메모리 부족"의 원인을 VSCode로 잘못
+짚었는데, 실제 원인은 teardown이 `src.ros_main`을 빼먹어 CUDA 컨텍스트가 계속
+잡혀 있던 것이었다. 그 앞에는 `usb_cam`을 빼먹은 같은 사고가 있었다.
+
+그래서 `demo_down.sh`는 **정리한 뒤 다시 훑어 확인하고 남아 있으면 실패로 끝낸다.**
+"끄는 명령을 실행했다"와 "실제로 다 내려갔다"는 다르다.
 
 ```bash
-ros2 launch sentinel_bringup viz.launch.py viz_address:=127.0.0.1
-ssh -L 8765:localhost:8765 orin@jetson.sentinel-ugv.xyz   # 노트북에서
-# Foxglove 접속 주소는 ws://localhost:8765
+./scripts/demo_down.sh --dry-run    # 패턴이 무엇을 잡는지 먼저 본다
+./scripts/demo_down.sh
 ```
 
-`demo_up.sh`에 `enable_viz:=true`를 박아 두지 않는 이유가 이것이다. 이 스크립트는
-systemd가 부팅마다 부르는 진입점이므로(위 「부팅 자동 시작」), 박아 두면 무인
-상태로 이 포트가 상시 열린다.
+`--dry-run`이 있는 이유는 노드를 추가했을 때 목록에서 빠지는 것을 **스택을
+내리지 않고** 확인해야 하기 때문이다. 새 노드를 만들면 `demo_down.sh`의
+`node_patterns`에도 넣고 `--dry-run`으로 잡히는지 확인한다.
+
+순서는 SIGINT → TERM → KILL이다. 곧바로 KILL 하지 않는 이유는 녹화가 파일을
+쓰는 중일 수 있어서다. `ros2 launch`에 SIGINT를 보내면 자식들이 정상 종료한다.
 
 ### 센서는 카메라만이 아니다
 

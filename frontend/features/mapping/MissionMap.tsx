@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Map as MapIcon } from "lucide-react";
+import { COLOR_FREE, COLOR_OCCUPIED, COLOR_UNKNOWN } from "./palette";
 import {
   api,
   ApiError,
@@ -81,9 +82,9 @@ export function parseYaml(text: string): Meta | null {
 }
 
 // 셀 값 → 색. 3종 외 값은 미지로 떨어뜨린다(mode 가 바뀌어도 안 깨지게).
-const COLOR_OCCUPIED = [226, 232, 240]; // 벽 — 밝게 도드라짐
-const COLOR_FREE = [42, 53, 66];        // 탐사된 빈 공간
-const COLOR_UNKNOWN = [18, 23, 31];     // 미탐사 — 패널 배경에 동화
+//
+// 색 상수는 palette.ts 로 옮겼다 (S15P11A301-227). 메인 화면의 실시간 지도가 같은
+// 격자를 그리므로 두 곳에 복사하면 언젠가 한쪽만 바뀐다.
 
 /**
  * 셀 값 → 색 (S15P11A301-223 에서 시험용으로 노출).

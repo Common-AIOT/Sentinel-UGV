@@ -64,6 +64,93 @@ class ReportSchemaTest(unittest.TestCase):
         self.assertEqual(report["mobilityStatus"], "NO")
         self.assertEqual(report["urgentConditionReported"], "YES")
 
+    def test_reported_injury_is_urgent_regardless_of_severity(self):
+        """부상을 말하면 정도를 재지 않고 YES다 (2026-08-04 팀 결정).
+
+        이전에는 중대한 출혈·호흡 이상만 YES로 봤다. 그러면 "다리를 다쳤어요"가
+        UNKNOWN으로 관제에 올라가 구조대원이 쓸 정보가 없다. 판단이 갈리면
+        알려야 하는 쪽을 고른다 — 최종 판단은 관제의 사람이 한다.
+        """
+        for text in ("다리를 다쳤어요", "팔이 부러졌어요", "너무 아파요", "피가 계속 나요"):
+            with self.subTest(text=text):
+                self.assertEqual(
+                    keyword_extract(text)["urgentConditionReported"], "YES"
+                )
+
+    def test_denied_injury_stays_no(self):
+        """부정 표현이 긴급으로 뒤집히지 않는다.
+
+        완화하면서 '다친'이라는 글자만 보고 YES를 내면 "다친 곳은 없습니다"가
+        정반대로 보고된다. 부정을 먼저 걸러야 한다.
+        """
+        for text in ("다친 곳은 없습니다", "괜찮아요 다친 곳 없어요"):
+            with self.subTest(text=text):
+                self.assertEqual(
+                    keyword_extract(text)["urgentConditionReported"], "NO"
+                )
+
+    def test_partial_denial_keeps_remaining_symptom(self):
+        """하나를 부정해도 다른 증상이 남으면 YES다."""
+        self.assertEqual(
+            keyword_extract("출혈은 없는데 숨쉬기가 힘들어요")[
+                "urgentConditionReported"
+            ],
+            "YES",
+        )
+
+    def test_pain_blocking_movement_is_immobile(self):
+        """통증 때문에 못 일어난다고 하면 이동 불가다 (2026-08-04 팀 결정).
+
+        이전에는 "통증만으로 추측하지 않는다"로 UNKNOWN이었다.
+        """
+        self.assertEqual(
+            keyword_extract("일어나려니까 너무 아파요")["mobilityStatus"], "NO"
+        )
+
+    def test_injury_alone_does_not_decide_mobility(self):
+        """부상을 말했을 뿐 이동 언급이 없으면 UNKNOWN이다.
+
+        완화가 여기까지 번지면 "다리를 다쳤어요"가 이동 불가로 굳는다.
+        """
+        self.assertEqual(
+            keyword_extract("다리를 다쳤어요")["mobilityStatus"], "UNKNOWN"
+        )
+
+    def test_nearby_people_add_to_speaker(self):
+        """주변 인원을 덧붙여 말하면 화자를 더한다 (2026-08-04 팀 결정)."""
+        self.assertEqual(
+            keyword_extract("두 명 더 있어요")["reportedResponsiveCount"], 3
+        )
+        self.assertEqual(
+            keyword_extract("옆에 한 명 있어요")["reportedResponsiveCount"], 2
+        )
+        # 총인원을 말한 경우는 더하지 않는다.
+        self.assertEqual(
+            keyword_extract("저 포함해서 세 명이요")["reportedResponsiveCount"], 3
+        )
+
+    def test_pinned_counts_as_urgent(self):
+        """끼임·압착도 긴급이다.
+
+        GMS 실호출 대조에서 발견했다(2026-08-04) — `다리가 눌려서 못 움직여요`를
+        GMS는 YES로, 폴백은 UNKNOWN으로 냈다. 폴백이 더 낮은 등급을 내면 GMS
+        장애 시 과소보고가 되므로 폴백을 올려 맞췄다.
+        """
+        for text in ("다리가 눌려서 못 움직여요", "기둥에 깔렸어요", "문에 끼였어요"):
+            with self.subTest(text=text):
+                self.assertEqual(
+                    keyword_extract(text)["urgentConditionReported"], "YES"
+                )
+
+    def test_unresponsive_companion_is_excluded_from_count(self):
+        """대답을 못 한다고 명시된 사람은 응답 인원에서 뺀다."""
+        self.assertEqual(
+            keyword_extract("옆에 한 명 있는데 대답을 안 해요")[
+                "reportedResponsiveCount"
+            ],
+            1,
+        )
+
     @patch("sentinel_voice.llm._gms")
     def test_gms_output_is_restricted_to_report_schema(self, gms):
         message = type(

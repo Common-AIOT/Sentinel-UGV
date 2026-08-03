@@ -24,7 +24,40 @@ _KOREAN_NUMBERS = {
     "넷": 4,
     "다섯": 5,
 }
-_URGENT_WORDS = ("심한 출혈", "피가 많이", "숨을 못", "호흡 곤란", "불", "화재", "가스")
+# 긴급 근거가 되는 언급. 부상·통증도 포함한다 — 정도를 재지 않는 것이
+# 프롬프트(`prompts/triage_extract.txt`)와 같은 태도다. "다리를 다쳤어요"가
+# UNKNOWN으로 올라가면 구조대원에게 쓸모없는 보고가 된다.
+_URGENT_PATTERN = re.compile(
+    # '피가 계속 나요'처럼 사이에 말이 끼는 경우가 있어 '피가'만으로 잡는다.
+    # 부정("피가 안 나요")은 _DENIAL_PATTERN이 걸러낸다.
+    r"(다쳤|다친|부상|골절|부러|아파|아프|"
+    r"출혈|피\s*(가|를)|"
+    r"숨\s*(을|이)?\s*(못|안)|숨쉬기|호흡\s*곤란|"
+    r"눌려|눌렸|끼여|끼였|깔려|깔렸|"  # 끼임·압착. GMS 실호출 대조로 추가(2026-08-04)
+    r"불이|화재|가스|연기)"
+)
+
+# 부정 표현. 위 언급 뒤에 이것이 붙으면 긴급 근거로 세지 않는다.
+_DENIAL_PATTERN = re.compile(r"^.{0,8}?(없|아니|괜찮|안\s*나)")
+
+# 통증·끼임 때문에 일어나거나 움직이기 어렵다는 표현. 부상 언급만으로는 여기 걸리지
+# 않는다 — 이동에 대한 말이 있어야 한다("다리를 다쳤어요"는 이동 UNKNOWN).
+_HARD_TO_MOVE_PATTERN = re.compile(
+    r"((일어나|움직이|걷|나가).{0,10}(아파|아프|힘들|어렵|안\s*되)"
+    r"|(아파서|아프고|눌려서|끼여서|깔려서).{0,10}(일어나|움직|못|안))"
+)
+
+
+def _mentioned_without_denial(pattern: "re.Pattern[str]", text: str) -> bool:
+    """부정이 붙지 않은 언급이 하나라도 있으면 True.
+
+    "다친 곳은 없습니다"는 '다친' 뒤에 '없'이 와서 False다.
+    "출혈은 없는데 숨쉬기가 힘들어요"는 '출혈'은 부정되지만 '숨쉬기'가 남아 True다.
+    """
+    for match in pattern.finditer(text):
+        if not _DENIAL_PATTERN.match(text[match.end() :]):
+            return True
+    return False
 
 
 def _gms():
@@ -79,23 +112,48 @@ def _reported_count(text: str) -> int | None:
         return None
     token = match.group(1)
     count = int(token) if token.isdigit() else _KOREAN_NUMBERS[token]
+
+    # 언급된 사람이 대답을 못 한다고 하면 응답 인원에서 뺀다. 화자만 남는다.
+    if re.search(r"(대답|말|응답).{0,6}(안\s*(해|하|함)|못\s*(해|하|함)|없)", text):
+        return 1
+
+    # "두 명 더", "옆에 한 명" 처럼 주변 인원을 덧붙인 표현은 화자를 더한다.
+    # "저 포함해서 세 명", "여기 두 명"처럼 총인원을 말한 경우는 그대로 둔다.
+    tail = text[match.end() :]
+    if re.search(r"^\s*(더|또)", tail) or re.search(
+        r"(옆|근처|주변|같이|함께)\s*(에|에는)?\s*$", text[: match.start()]
+    ):
+        count += 1
     return count
 
 
 def keyword_extract(text):
-    """GMS 없이 명시적으로 발화된 예·아니오·숫자·긴급어만 추출한다."""
+    """GMS 없이 발화된 예·아니오·숫자·부상·긴급어를 추출한다.
+
+    프롬프트(`prompts/triage_extract.txt`)와 **같은 태도**를 지킨다 — 말한 것을
+    그대로 받아들이고 정도를 재지 않는다. 두 경로가 어긋나면 GMS 장애 시 보고
+    내용이 달라져 관제가 혼란해진다.
+
+    다만 규칙 기반이라 LLM보다 거칠다. 어순이 뒤바뀐 표현이나 완곡한 표현은
+    놓친다. 33-8이 요구하는 축소 동작이며 이것이 주 경로를 대체하지는 않는다.
+    """
     normalized = (text or "").strip()
     count = _reported_count(normalized)
     cannot_move = bool(
-        re.search(r"(못\s*(가|움직)|움직일\s*수\s*없|이동\s*불가)", normalized)
+        re.search(r"(못\s*(가|움직|일어나)|움직일\s*수\s*없|일어날\s*수\s*없|이동\s*불가)", normalized)
+        or _HARD_TO_MOVE_PATTERN.search(normalized)
     )
     can_move = bool(
-        re.search(r"(움직일\s*수\s*있|이동\s*가능|갈\s*수\s*있)", normalized)
+        re.search(r"(움직일\s*수\s*있|이동\s*가능|갈\s*수\s*있|걸을\s*수\s*있)", normalized)
     )
-    urgent = any(word in normalized for word in _URGENT_WORDS)
-    urgent_denied = bool(
-        re.search(r"(출혈|호흡\s*곤란|위험).{0,5}(없|아니)", normalized)
-    )
+    # 부정된 언급은 긴급 근거로 세지 않는다. "다친 곳은 없습니다"가 '다친'에
+    # 걸려 YES가 되면 정반대 보고가 나간다.
+    #
+    # 부정을 먼저 걸러내고 남은 언급만 본다. 그래서 "출혈은 없는데 숨쉬기가
+    # 힘들어요"는 출혈이 빠져도 호흡 언급이 남아 YES가 된다 — 프롬프트의
+    # "하나를 부정하더라도 다른 증상이 명시되면 YES"와 같은 결과다.
+    urgent = _mentioned_without_denial(_URGENT_PATTERN, normalized)
+    urgent_denied = bool(_URGENT_PATTERN.search(normalized)) and not urgent
 
     return coerce_extraction(
         {

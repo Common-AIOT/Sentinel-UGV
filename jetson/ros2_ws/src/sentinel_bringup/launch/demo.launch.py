@@ -50,7 +50,7 @@ from launch.actions import (
 )
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, NotSubstitution
 from launch_ros.actions import Node
 
 SECRETS_PATH = Path.home() / '.config' / 'sentinel' / 'secrets.yaml'
@@ -116,6 +116,41 @@ def generate_launch_description():
 
     return LaunchDescription([
         DeclareLaunchArgument('enable_sensors', default_value='true'),
+        # ESP32 두 보드 (S15P11A301-174, 데모 배선은 222). 이 패키지가 만들어진
+        # 뒤에도 여기 include가 없어서 데모에서는 /wheel/odometry 와
+        # /environment/* 가 **아예 발행되지 않았다.** cloud_bridge 가 그것을
+        # 구독해 telemetry 를 채우게 만든 S15P11A301-213 이 그래서 값을 못 받고
+        # 있었다 — 구독은 성공하고 값만 안 오므로 로그에도 남지 않는다.
+        # **기본은 꺼짐이다.** 켜면 static identity 가 꺼지므로(아래 slam 참고)
+        # 보드가 없을 때 odom TF 발행자가 0개가 되고 slam_toolbox 가 지도를 아예
+        # 만들지 않는다. 지금 이 젯슨에 붙은 시리얼 장치는 라이다 하나뿐이다
+        # (/dev/sentinel-lidar -> ttyUSB0, CP2102). 기본을 켜면 잘 도는 스택이
+        # 깨진다.
+        #
+        # 보드를 물린 뒤에 이렇게 켠다:
+        #   ./scripts/demo_up.sh enable_esp32:=true \
+        #       motor_port:=/dev/ttyUSB1 sensor_port:=/dev/ttyUSB2
+        #
+        # 어느 포트가 모터/센서인지는 HELLO_ACK.board_role 로 확정한다
+        # (esp32_bridge/TESTING.md). 역할이 어긋나면 핸드셰이크 로그에 오류가 난다.
+        #
+        # **켰는데 보드가 없으면 조용히 실패한다.** 노드는 죽지 않고 1초마다
+        # 재시도하므로(SerialTransport 재시도) 프로세스는 살아 있고 토픽도
+        # 광고되는데 데이터만 오지 않는다. 그 상태에서는 static identity 도 꺼져
+        # 있어 odom TF 발행자가 0개가 되고, slam_toolbox 는 "Failed to compute odom
+        # pose" 를 반복하며 지도를 만들지 않는다. 화면에서는 "지도가 안 나온다"로만
+        # 보인다. 확인 방법은 둘이다:
+        #
+        #   ros2 run tf2_ros tf2_echo odom base_footprint   → 조회 실패
+        #   demo 로그에 "not available ... retrying in 1.0s"
+        DeclareLaunchArgument('enable_esp32', default_value='false'),
+        # udev 별칭이 이 저장소에 없다. CP2102 클론 보드는 idVendor:idProduct:serial
+        # 이 겹칠 수 있어 별칭으로 역할을 보장할 수 없고, HELLO_ACK.board_role 로
+        # 확인하는 쪽을 신뢰한다는 것이 S15P11A301-174 의 판단이다. 빈 값이면
+        # esp32_bridge.yaml 의 기본값(/dev/sentinel_mcu_*)을 쓴다.
+        #   ./scripts/demo_up.sh motor_port:=/dev/ttyUSB0 sensor_port:=/dev/ttyUSB1
+        DeclareLaunchArgument('motor_port', default_value=''),
+        DeclareLaunchArgument('sensor_port', default_value=''),
         DeclareLaunchArgument('enable_slam', default_value='true'),
         DeclareLaunchArgument('enable_streaming', default_value='true'),
         DeclareLaunchArgument('enable_recorder', default_value='true'),
@@ -135,8 +170,34 @@ def generate_launch_description():
 
         _include('sentinel_bringup', 'sensors.launch.py',
                  'enable_sensors', 0),
+        # 센서와 함께 먼저 띄운다. slam_toolbox 가 odom→base_footprint TF 를
+        # 요구하므로, 이쪽이 늦으면 SLAM 이 "Failed to compute odom pose" 를
+        # 반복하며 그동안 지도를 만들지 않는다.
+        _include('esp32_bridge', 'esp32_bridge.launch.py',
+                 'enable_esp32', 0,
+                 {
+                     'motor_port': LaunchConfiguration('motor_port'),
+                     'sensor_port': LaunchConfiguration('sensor_port'),
+                     # 아래 slam 의 publish_static_odom 과 **정확히 반대**여야 한다.
+                     'publish_odom_tf': LaunchConfiguration('enable_esp32'),
+                 }),
+        # odom→base_footprint 발행자를 하나로 유지한다 (S15P11A301-222).
+        #
+        # 이 TF 를 낼 수 있는 곳이 둘이다 — esp32_bridge 의 휠 오도메트리와
+        # slam.launch.py 의 static identity. 둘 다 켜지면 같은 TF 를 다투어 위치가
+        # 흔들리고, 둘 다 꺼지면 slam_toolbox 가 지도를 아예 만들지 않는다.
+        # 어느 쪽이든 증상이 "지도가 이상하다"로만 보여 원인을 찾기 어렵다.
+        #
+        # 그래서 규약으로 두지 않고 구조로 묶는다. static 은 enable_esp32 의
+        # 부정이므로 발행자가 항상 정확히 하나다. ESP32 가 없는 구성
+        # (enable_esp32:=false)에서는 예전처럼 identity 로 돌아 SLAM 이 계속 된다.
         _include('sentinel_bringup', 'slam.launch.py',
-                 'enable_slam', 4.0),
+                 'enable_slam', 4.0,
+                 {
+                     'publish_static_odom': NotSubstitution(
+                         LaunchConfiguration('enable_esp32')
+                     ),
+                 }),
         _include('sentinel_streaming', 'streaming.launch.py',
                  'enable_streaming', 4.0,
                  {'webrtc_encryption': LaunchConfiguration('webrtc_encryption')}),

@@ -52,18 +52,49 @@ public class MissionService {
             WHERE m.id = ?
             """;
 
+    // x IS NOT NULL: 엔코더 전용 행(속도만, 좌표 null — V5)은 궤적점이 아니다.
     private static final String SELECT_TRAJECTORY = """
-            SELECT time, x, y, yaw FROM robot_pose WHERE mission_id = ? ORDER BY time
+            SELECT time, x, y, yaw FROM robot_pose
+            WHERE mission_id = ? AND x IS NOT NULL ORDER BY time
             """;
 
     // 조회 창의 기본값이 임무 창(started_at~ended_at)이므로 양끝을 포함한다.
+    //
+    // 세 하이퍼테이블을 같은 버킷 격자로 각각 집계한 뒤 FULL OUTER JOIN 으로 합친다
+    // (S15P11A301-205). 테이블마다 적재 주기가 달라 어느 한쪽에만 버킷이 있을 수 있고,
+    // 그때 다른 쪽 필드는 null(결측)로 나가는 것이 맞다 — null 을 0 으로 채우지 않는다.
+    // mcu_connected 는 평균이 없는 boolean 이라 bool_and: 구간 중 한 번이라도 끊겼으면
+    // false 로 보여 "끊김"을 숨기지 않고, 값이 아예 없으면 null(모름)이다.
     private static final String SELECT_TELEMETRY = """
-            SELECT time_bucket(make_interval(secs => ?), time) AS bucket,
-                   avg(cpu) AS cpu, avg(gpu) AS gpu, avg(memory) AS memory,
-                   avg(jetson_temp) AS jetson_temp, avg(battery) AS battery
-            FROM robot_metrics
-            WHERE mission_id = ? AND time >= ? AND time <= ?
-            GROUP BY bucket
+            WITH m AS (
+                SELECT time_bucket(make_interval(secs => ?), time) AS bucket,
+                       avg(cpu) AS cpu, avg(gpu) AS gpu, avg(memory) AS memory,
+                       avg(jetson_temp) AS jetson_temp, avg(battery) AS battery,
+                       bool_and(mcu_connected) AS mcu_connected
+                FROM robot_metrics
+                WHERE mission_id = ? AND time >= ? AND time <= ?
+                GROUP BY bucket
+            ), e AS (
+                SELECT time_bucket(make_interval(secs => ?), time) AS bucket,
+                       avg(temperature) AS temperature, avg(humidity) AS humidity
+                FROM environment_metrics
+                WHERE mission_id = ? AND time >= ? AND time <= ?
+                GROUP BY bucket
+            ), p AS (
+                SELECT time_bucket(make_interval(secs => ?), time) AS bucket,
+                       avg(linear_velocity) AS linear_velocity,
+                       avg(angular_velocity) AS angular_velocity
+                FROM robot_pose
+                WHERE mission_id = ? AND time >= ? AND time <= ?
+                GROUP BY bucket
+            )
+            SELECT COALESCE(m.bucket, e.bucket, p.bucket) AS bucket,
+                   m.cpu, m.gpu, m.memory, m.jetson_temp, m.battery, m.mcu_connected,
+                   e.temperature, e.humidity,
+                   p.linear_velocity, p.angular_velocity
+            FROM m
+            FULL OUTER JOIN e ON e.bucket = m.bucket
+            FULL OUTER JOIN p ON p.bucket = COALESCE(m.bucket, e.bucket)
             ORDER BY bucket
             """;
 
@@ -142,15 +173,23 @@ public class MissionService {
         Instant effectiveTo = to != null ? to
                 : mission.endedAt() != null ? mission.endedAt() : Instant.now();
 
+        Timestamp fromTs = Timestamp.from(effectiveFrom);
+        Timestamp toTs = Timestamp.from(effectiveTo);
         return jdbc.query(SELECT_TELEMETRY, (rs, i) -> new TelemetryPointResponse(
                         toInstant(rs.getTimestamp("bucket")),
                         rs.getObject("cpu", Double.class),
                         rs.getObject("gpu", Double.class),
                         rs.getObject("memory", Double.class),
                         rs.getObject("jetson_temp", Double.class),
-                        rs.getObject("battery", Double.class)),
-                bucketSeconds, missionId,
-                Timestamp.from(effectiveFrom), Timestamp.from(effectiveTo));
+                        rs.getObject("battery", Double.class),
+                        rs.getObject("temperature", Double.class),
+                        rs.getObject("humidity", Double.class),
+                        rs.getObject("linear_velocity", Double.class),
+                        rs.getObject("angular_velocity", Double.class),
+                        rs.getObject("mcu_connected", Boolean.class)),
+                bucketSeconds, missionId, fromTs, toTs,
+                bucketSeconds, missionId, fromTs, toTs,
+                bucketSeconds, missionId, fromTs, toTs);
     }
 
     /**

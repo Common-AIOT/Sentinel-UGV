@@ -86,9 +86,11 @@ public class MissionController {
      * from·to 를 생략하면 임무 창(started_at~ended_at)이 기본값이다.
      */
     @Operation(summary = "시계열 그래프 조회",
-            description = "로봇의 CPU·GPU·메모리·온도·배터리 기록을 그래프 그리기 좋게 구간 평균으로 잘라서 줍니다. "
-                    + "bucketSeconds=10 이면 10초 단위 평균 한 점씩입니다. 기간(from/to)을 안 주면 임무 시작~종료 구간을 줍니다. "
-                    + "battery 는 ESP32 연동 전까지 null 로 옵니다.")
+            description = "로봇의 CPU·GPU·메모리·온도·배터리에 더해 온습도(DHT11)·주행 속도(엔코더)·MCU 연결 상태를 "
+                    + "그래프 그리기 좋게 구간 집계로 잘라서 줍니다. bucketSeconds=10 이면 10초 단위 한 점씩입니다. "
+                    + "기간(from/to)을 안 주면 임무 시작~종료 구간을 줍니다. "
+                    + "null 은 그 구간에 측정값이 없었다는 뜻(결측)이고 0 과 다릅니다. battery 는 전압 계측 전까지 항상 null 입니다. "
+                    + "mcuConnected 는 구간 내 한 번이라도 끊겼으면 false 입니다.")
     @GetMapping("/{missionId}/telemetry")
     public ApiResponse<List<TelemetryPointResponse>> telemetry(
             @PathVariable UUID missionId,

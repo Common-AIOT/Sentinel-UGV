@@ -27,8 +27,8 @@ public class TelemetryWriter {
             """;
 
     private static final String INSERT_METRICS = """
-            INSERT INTO robot_metrics (time, mission_id, battery, voltage, cpu, gpu, memory, jetson_temp, state)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO robot_metrics (time, mission_id, battery, voltage, cpu, gpu, memory, jetson_temp, state, mcu_connected)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """;
 
     private static final String INSERT_ENVIRONMENT = """
@@ -46,18 +46,24 @@ public class TelemetryWriter {
         Timestamp time = Timestamp.from(envelope.sentAt());
         UUID missionId = envelope.missionId();
 
+        // pose(SLAM)와 motion(엔코더)은 출처가 다른 독립 그룹이다. SLAM 이 죽어도
+        // 엔코더 속도는 기록한다 — 어느 한쪽만 와도 행을 만든다(S15P11A301-205).
         TelemetryData.Pose pose = data.pose();
-        if (pose != null) {
-            TelemetryData.Motion motion = data.motion();
+        TelemetryData.Motion motion = data.motion();
+        if (pose != null || motion != null) {
             jdbc.update(INSERT_POSE,
-                    time, missionId, pose.x(), pose.y(), pose.yaw(),
+                    time, missionId,
+                    pose == null ? null : pose.x(),
+                    pose == null ? null : pose.y(),
+                    pose == null ? null : pose.yaw(),
                     motion == null ? null : motion.linearVelocityMps(),
                     motion == null ? null : motion.angularVelocityRadps());
         }
 
         TelemetryData.Compute compute = data.compute();
         TelemetryData.Battery battery = data.battery();
-        if (compute != null || battery != null || data.missionState() != null) {
+        TelemetryData.Health health = data.health();
+        if (compute != null || battery != null || health != null || data.missionState() != null) {
             jdbc.update(INSERT_METRICS,
                     time, missionId,
                     battery == null ? null : battery.percent(),
@@ -66,7 +72,8 @@ public class TelemetryWriter {
                     compute == null ? null : compute.gpuPercent(),
                     compute == null ? null : compute.memoryPercent(),
                     compute == null ? null : compute.jetsonTempC(),
-                    data.missionState());
+                    data.missionState(),
+                    health == null ? null : health.mcuConnected());
         }
 
         TelemetryData.Environment environment = data.environment();

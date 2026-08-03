@@ -43,7 +43,8 @@ public class CommandAckWriter {
                    (SELECT sum(step) FROM (
                         SELECT sqrt(power(x - lag(x) OVER (ORDER BY time), 2)
                                   + power(y - lag(y) OVER (ORDER BY time), 2)) AS step
-                        FROM robot_pose WHERE mission_id = ?
+                        -- 좌표 없는 엔코더 전용 행(V5)이 끼면 인접 거리가 끊긴다.
+                        FROM robot_pose WHERE mission_id = ? AND x IS NOT NULL
                     ) steps),
                    NULL,
                    (SELECT count(*) FROM encounters WHERE mission_id = ?)

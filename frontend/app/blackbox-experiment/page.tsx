@@ -10,6 +10,7 @@ import type {
   TelemetryPoint,
 } from "@/lib/api";
 import TelemetryChart from "@/features/telemetry/TelemetryChart";
+import MissionMap from "@/features/mapping/MissionMap";
 import { DENOISED_AUDIO_TYPE, mockApi as api } from "./mockApi";
 
 /**
@@ -22,6 +23,10 @@ import { DENOISED_AUDIO_TYPE, mockApi as api } from "./mockApi";
  *
  * 관제 화면은 프론트 담당 구역이라 원본 파일은 건드리지 않았다. 이 파일은 토글을
  * 어떻게 넣으면 되는지 보여주는 참조 구현이다.
+ *
+ * ⚠️ **원본이 바뀌면 이 파일도 다시 맞춰야 한다.** 2026-08-04에 한 번 어긋났다 —
+ * S15P11A301-203이 `MissionMap`을 넣은 뒤에도 이 복사본이 옛 버전이어서, 그냥
+ * diff를 뜨면 지도를 지우는 것처럼 보였다. 이관 전에 `diff`로 확인한다.
  *
  * ## 토글이 이렇게 생긴 이유
  *
@@ -236,7 +241,7 @@ export default function MissionHistoryPage() {
             <Film size={11} className="text-primary" />
             <span className="font-mono text-[11px] text-primary">임무 이력</span>
           </div>
-          {/* ── 소음 제거본 토글 — 실험판 표시 ────────────────── */}
+          {/* ── 소음 제거본 토글 — 실험판 표시 (이관 대상 아님) ────── */}
           <span className="font-mono text-[9px] px-1.5 py-0.5 rounded border border-accent/40 bg-accent/10 text-accent">
             실험판 · 목 데이터
           </span>
@@ -291,6 +296,7 @@ export default function MissionHistoryPage() {
           {(videoUrl || videoError) && (
             <div className="flex-shrink-0 border-b border-border bg-[#141a22] p-4">
               <div className="flex gap-4">
+                {/* ── 소음 제거본 토글 — 영상 아래에 조작부를 붙이려고 세로 묶음으로 감쌌다 ── */}
                 <div className="flex-shrink-0 flex flex-col gap-2">
                   <div className="rounded border border-border overflow-hidden bg-black" style={{ width: 400, height: 225 }}>
                     {videoUrl ? (
@@ -319,7 +325,7 @@ export default function MissionHistoryPage() {
                         {denoised ? <Volume2 size={12} /> : <VolumeX size={12} />}
                         {denoised ? "소음 제거본 재생 중 — 원본으로" : "소음 제거본으로 듣기"}
                       </button>
-                      <p className="font-mono text-[9px] text-muted-foreground/70 leading-relaxed">
+                      <p className="font-mono text-[9px] text-muted-foreground/70 leading-relaxed" style={{ width: 400 }}>
                         제거본은 명료도 보조입니다. <span className="text-muted-foreground">원본이 증거</span>이며
                         두드림·신음 같은 비언어 소리는 제거본에서 사라질 수 있습니다.
                       </p>
@@ -376,6 +382,13 @@ export default function MissionHistoryPage() {
                   </div>
                   <TelemetryChart points={telemetry} metric="cpu" label="CPU 사용률" unit="%" />
                 </div>
+
+                {/* 임무 지도 — 지도 위 발견 마커·주행 경로. 마커 클릭 → 영상 (S15P11A301-203) */}
+                <MissionMap
+                  missionId={selected.id}
+                  encounters={encounters}
+                  onEncounterClick={openEncounter}
+                />
 
                 {/* 발견 목록 */}
                 <div>

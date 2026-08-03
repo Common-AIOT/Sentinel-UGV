@@ -43,7 +43,7 @@ interface Meta {
 }
 
 /** P5 헤더는 토큰 4개(P5·width·height·maxval). 길이를 상수로 박지 않고 # 주석을 허용한다. */
-function parsePgm(buf: ArrayBuffer): Pgm {
+export function parsePgm(buf: ArrayBuffer): Pgm {
   const bytes = new Uint8Array(buf);
   let pos = 0;
   const isSpace = (c: number) => c === 32 || c === 9 || c === 10 || c === 13;
@@ -71,7 +71,7 @@ function parsePgm(buf: ArrayBuffer): Pgm {
 }
 
 /** 메타데이터 폴백용 yaml 파싱 — resolution 과 origin 만 쓴다. */
-function parseYaml(text: string): Meta | null {
+export function parseYaml(text: string): Meta | null {
   const res = /resolution:\s*([-0-9.eE]+)/.exec(text);
   const origin = /origin:\s*\[([^\]]+)]/.exec(text);
   if (!res || !origin) return null;
@@ -84,6 +84,40 @@ function parseYaml(text: string): Meta | null {
 const COLOR_OCCUPIED = [226, 232, 240]; // 벽 — 밝게 도드라짐
 const COLOR_FREE = [42, 53, 66];        // 탐사된 빈 공간
 const COLOR_UNKNOWN = [18, 23, 31];     // 미탐사 — 패널 배경에 동화
+
+/**
+ * 셀 값 → 색 (S15P11A301-223 에서 시험용으로 노출).
+ *
+ * **정확한 값 비교여야 한다.** nav2 의 점유도 계산은 (255 - v) / 255 인데
+ * 미탐사 값 205 는 0.196 이고, map_saver 가 함께 저장하는 free_thresh 가 0.25 다.
+ * 임계값으로 판정하면 205 가 free 로 떨어져 **미탐사 영역 전체가 탐사된 바닥으로
+ * 그려진다.** 벽은 그대로 맞으므로 눈으로는 알 수 없다.
+ */
+export function cellColor(v: number): readonly number[] {
+  return v === 0 ? COLOR_OCCUPIED : v === 254 ? COLOR_FREE : COLOR_UNKNOWN;
+}
+
+/**
+ * map 좌표(미터) → PGM 픽셀 좌표 (S15P11A301-223 에서 시험용으로 노출).
+ *
+ * **y 를 뒤집는다.** nav2 에서 origin 은 격자의 좌하단 셀이고 PGM 은 첫 행이
+ * 위다. 뒤집지 않으면 궤적이 지도 위에 그려지기는 하는데 위아래가 반대가 된다 —
+ * 벽을 통과한 것처럼 보일 뿐 그림이 깨지지 않아 눈으로 알기 어렵다.
+ * 실측 99.5% 일치로 확정된 규칙이다(S15P11A301-171).
+ *
+ * 그리기용 연속 좌표이므로 정수로 자르지 않는다.
+ */
+export function worldToPixel(
+  x: number,
+  y: number,
+  meta: Meta,
+  pgmHeight: number,
+): { col: number; row: number } {
+  return {
+    col: (x - meta.originX) / meta.resolution,
+    row: pgmHeight - (y - meta.originY) / meta.resolution,
+  };
+}
 
 const MAX_DISPLAY_HEIGHT = 420;
 const MAX_ZOOM = 8;
@@ -173,7 +207,7 @@ export default function MissionMap({ missionId, encounters, onEncounterClick }: 
     const img = ctx.createImageData(pgm.width, pgm.height);
     for (let i = 0; i < pgm.pixels.length; i++) {
       const v = pgm.pixels[i];
-      const c = v === 0 ? COLOR_OCCUPIED : v === 254 ? COLOR_FREE : COLOR_UNKNOWN;
+      const c = cellColor(v);
       img.data[i * 4] = c[0];
       img.data[i * 4 + 1] = c[1];
       img.data[i * 4 + 2] = c[2];
@@ -212,11 +246,11 @@ export default function MissionMap({ missionId, encounters, onEncounterClick }: 
     markerHits.current = [];
     if (!meta) return; // 좌표계를 모르면 격자만 보여준다
 
-    // map 좌표(미터) → 화면 픽셀. 그리기용 연속 좌표(인덱싱 아님).
-    const toScreen = (x: number, y: number) => ({
-      x: ((x - meta.originX) / meta.resolution) * k + panX,
-      y: (pgm.height - (y - meta.originY) / meta.resolution) * k + panY,
-    });
+    // map 좌표(미터) → 화면 픽셀. 확대·이동만 여기서 얹는다.
+    const toScreen = (x: number, y: number) => {
+      const { col, row } = worldToPixel(x, y, meta, pgm.height);
+      return { x: col * k + panX, y: row * k + panY };
+    };
 
     // 주행 궤적
     if (trajectory.length > 1) {

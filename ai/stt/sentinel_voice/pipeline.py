@@ -131,14 +131,12 @@ def build_dependencies() -> SessionDependencies:
 def speak(
     text: str,
     *,
-    report_succeeded: bool = False,
     exploration_resume_approved: bool = False,
 ):
     """승인된 안내 음성을 재생하고 실패를 명시적으로 기록한다."""
     say(f"🔊 로봇: {text}")
     result = guide_player.play_text(
         text,
-        report_succeeded=report_succeeded,
         exploration_resume_approved=exploration_resume_approved,
     )
     if not result.ok:

@@ -14,18 +14,19 @@ from . import config
 
 
 class GuideCode(str, Enum):
-    """안내 문구의 안정적인 식별자. 파일명이나 문장 자체를 이벤트로 사용하지 않는다."""
+    """안내 문구의 안정적인 식별자. 파일명이나 문장 자체를 이벤트로 사용하지 않는다.
+
+    2026-08-01 문구 v2(S15P11A301-146)에서 6개로 축소했다. RETRY_UNCLEAR·
+    REPORT_PENDING·REPORT_SUCCEEDED·NETWORK_WAIT는 삭제 — 재질문 축소(201),
+    종료 안내 단일화, 관제 ACK 부재 확정에 따른다. 경위는 Jira 146·198.
+    """
 
     INTRO = "INTRO"
     ASK_COUNT = "ASK_COUNT"
     ASK_MOBILITY = "ASK_MOBILITY"
     ASK_URGENT = "ASK_URGENT"
     RETRY_NO_RESPONSE = "RETRY_NO_RESPONSE"
-    RETRY_UNCLEAR = "RETRY_UNCLEAR"
-    REPORT_PENDING = "REPORT_PENDING"
-    REPORT_SUCCEEDED = "REPORT_SUCCEEDED"
     REPORT_SUCCEEDED_DEPARTURE = "REPORT_SUCCEEDED_DEPARTURE"
-    NETWORK_WAIT = "NETWORK_WAIT"
 
 
 @dataclass(frozen=True)
@@ -33,65 +34,47 @@ class GuideAsset:
     code: GuideCode
     filename: str
     text: str
-    requires_report_success: bool = False
     requires_exploration_resume: bool = False
 
 
+# 문구 v2 (2026-08-01, S15P11A301-146 확정). 합니다체 통일, "관제" 금지("구조대"),
+# 공백 제외 8자 이상(에코 가드 하한). 문서 §6-1 표와 한 글자도 달라선 안 된다.
 GUIDE_ASSETS: dict[GuideCode, GuideAsset] = {
     GuideCode.INTRO: GuideAsset(
         GuideCode.INTRO,
         "guide_intro.wav",
-        "탐사 로봇입니다. 구조 요청을 돕겠습니다. 제 말이 들리면 대답해 주세요.",
+        "구조 로봇입니다. 들리면 대답해 주세요.",
     ),
     GuideCode.ASK_COUNT: GuideAsset(
         GuideCode.ASK_COUNT,
         "guide_ask_count.wav",
-        "본인을 포함해서, 지금 여기 대화할 수 있는 분은 모두 몇 명인가요?",
+        "주변에 다른 인원이 있습니까?",
     ),
+    # 공백 제외 8자로 에코 가드 하한(`ECHO_MIN_CHARS=8`)에 정확히 걸린다. 온전히
+    # 들리면 잡히지만 꼬리 조각은 잡지 못한다 — 1차 방어선은 `LISTEN_DELAY`다.
     GuideCode.ASK_MOBILITY: GuideAsset(
         GuideCode.ASK_MOBILITY,
         "guide_ask_mobility.wav",
-        "지금 스스로 움직일 수 있나요?",
+        "움직일 수 있습니까?",
     ),
     GuideCode.ASK_URGENT: GuideAsset(
         GuideCode.ASK_URGENT,
         "guide_ask_urgent.wav",
-        "지금 어디가 가장 불편한가요? 숨쉬기 어렵거나 피가 많이 나면 말씀해 주세요.",
+        "다친 곳이 있으십니까?",
     ),
     GuideCode.RETRY_NO_RESPONSE: GuideAsset(
         GuideCode.RETRY_NO_RESPONSE,
         "guide_retry_no_response.wav",
-        "제 말이 들리면 다시 한번 대답해 주세요.",
+        "제 말이 들린다면 대답해주십시오.",
     ),
-    GuideCode.RETRY_UNCLEAR: GuideAsset(
-        GuideCode.RETRY_UNCLEAR,
-        "guide_retry_unclear.wav",
-        "목소리가 잘 들리지 않았습니다. 천천히 다시 말씀해 주세요.",
-    ),
-    GuideCode.REPORT_PENDING: GuideAsset(
-        GuideCode.REPORT_PENDING,
-        "guide_report_pending.wav",
-        "구조 요청을 관제에 전달하고 있습니다. 잠시만 기다려 주세요.",
-    ),
-    # ACK를 확인하고 재개하지 않는 경우에만 쓴다. 발신 완료 시점에는 쓰지 않는다.
-    GuideCode.REPORT_SUCCEEDED: GuideAsset(
-        GuideCode.REPORT_SUCCEEDED,
-        "guide_report_succeeded.wav",
-        "구조 요청이 관제에 전달되었습니다.",
-        requires_report_success=True,
-    ),
-    # 세션 종료 안내. requires_report_success를 붙이면 ACK 연결(182)까지 잠긴다.
-    # 수동태 문구를 ACK 없이 쓰는 근거와 잔여 위험은 docs/README.md 2-6.
+    # 유일한 종료 안내(발신 상태 무관 — 실패 없음 가정, Jira 201).
+    # "전달되었습니다"는 발신 성공 근거이며 관제 ACK가 아니다. 탐사 재개를
+    # 약속할 수 없는 상태에서는 호출자가 재생을 생략한다(ros_node).
     GuideCode.REPORT_SUCCEEDED_DEPARTURE: GuideAsset(
         GuideCode.REPORT_SUCCEEDED_DEPARTURE,
         "guide_report_succeeded_departure.wav",
-        "구조 요청이 관제에 전달되었습니다. 다른 구역을 확인하기 위해 탐사를 계속하겠습니다.",
+        "구조 요청이 전달되었습니다. 다시 탐색을 시작합니다.",
         requires_exploration_resume=True,
-    ),
-    GuideCode.NETWORK_WAIT: GuideAsset(
-        GuideCode.NETWORK_WAIT,
-        "guide_network_wait.wav",
-        "통신 연결을 확인하고 있습니다. 연결되는 대로 구조 요청을 전달하겠습니다.",
     ),
 }
 
@@ -103,7 +86,6 @@ class PlaybackStatus(str, Enum):
     ASSET_NOT_FOUND = "ASSET_NOT_FOUND"
     INVALID_ASSET = "INVALID_ASSET"
     DEVICE_ERROR = "DEVICE_ERROR"
-    REPORT_NOT_CONFIRMED = "REPORT_NOT_CONFIRMED"
     EXPLORATION_RESUME_NOT_APPROVED = "EXPLORATION_RESUME_NOT_APPROVED"
     UNAPPROVED_TEXT = "UNAPPROVED_TEXT"
 
@@ -201,16 +183,9 @@ class GuidePlayer:
         self,
         code: GuideCode,
         *,
-        report_succeeded: bool = False,
         exploration_resume_approved: bool = False,
     ) -> PlaybackResult:
         asset = GUIDE_ASSETS[code]
-        if asset.requires_report_success and not report_succeeded:
-            return PlaybackResult(
-                code,
-                PlaybackStatus.REPORT_NOT_CONFIRMED,
-                "관제 전송 성공이 확인되지 않음",
-            )
         if (
             asset.requires_exploration_resume
             and not exploration_resume_approved
@@ -242,7 +217,6 @@ class GuidePlayer:
         self,
         text: str,
         *,
-        report_succeeded: bool = False,
         exploration_resume_approved: bool = False,
     ) -> PlaybackResult:
         code = GUIDE_BY_TEXT.get(text)
@@ -252,6 +226,5 @@ class GuidePlayer:
             )
         return self.play(
             code,
-            report_succeeded=report_succeeded,
             exploration_resume_approved=exploration_resume_approved,
         )

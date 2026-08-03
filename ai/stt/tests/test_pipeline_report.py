@@ -31,7 +31,7 @@ class ReportSessionTest(unittest.TestCase):
         class Delivery:
             state = type("S", (), {"value": "PENDING"})()
             detail = "테스트"
-            guide_code = GuideCode.REPORT_PENDING
+            guide_code = GuideCode.REPORT_SUCCEEDED_DEPARTURE
 
         pipeline.queue_report = lambda info: (
             self.queued.append(info) or Delivery()

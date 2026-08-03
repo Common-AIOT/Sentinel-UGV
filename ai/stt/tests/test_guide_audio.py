@@ -91,25 +91,12 @@ class GuideAudioTest(unittest.TestCase):
 
         self.assertEqual(result.status, PlaybackStatus.DEVICE_ERROR)
 
-    def test_success_message_requires_report_confirmation(self):
-        write_test_wav(self.asset_path(GuideCode.REPORT_SUCCEEDED))
-        player = GuidePlayer(FakeBackend(), self.assets)
-
-        blocked = player.play(GuideCode.REPORT_SUCCEEDED)
-        allowed = player.play(
-            GuideCode.REPORT_SUCCEEDED, report_succeeded=True
-        )
-
-        self.assertEqual(
-            blocked.status, PlaybackStatus.REPORT_NOT_CONFIRMED
-        )
-        self.assertEqual(allowed.status, PlaybackStatus.PLAYED)
-
     def test_departure_message_requires_resume_only(self):
-        """S15P11A301-183: 완료+탐사 안내는 발신 완료만으로 재생한다.
+        """종료 안내는 탐사 재개 조건만 요구한다.
 
-        관제 ACK 잠금(requires_report_success)을 떼고 탐사 재개 조건만 남겼다.
-        근거와 수용한 위험은 docs/README.md 2-6에 있다.
+        관제 ACK 잠금(requires_report_success)은 ACK 부재 확정(2026-08-01,
+        로봇 다수 투입)으로 필드째 제거됐다. 재개 게이트는 유지 — E-Stop
+        상태에서 "다시 탐색을 시작합니다"를 말하면 거짓이 된다.
         """
         write_test_wav(
             self.asset_path(GuideCode.REPORT_SUCCEEDED_DEPARTURE)

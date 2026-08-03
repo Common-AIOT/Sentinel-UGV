@@ -153,14 +153,9 @@ class SingleClosingAnnouncerTest(unittest.TestCase):
 
     def test_no_guide_text_is_reachable_from_the_state_machine_twice(self):
         """상태머신이 재생하는 문구에 발신 상태 안내가 섞여 있지 않다."""
+        # 문구 v2에서 발신 상태 안내는 종료 안내 하나로 줄었다(146·201).
         delivery_guides = {
-            GUIDE_ASSETS[code].text
-            for code in (
-                GuideCode.REPORT_PENDING,
-                GuideCode.REPORT_SUCCEEDED,
-                GuideCode.REPORT_SUCCEEDED_DEPARTURE,
-                GuideCode.NETWORK_WAIT,
-            )
+            GUIDE_ASSETS[GuideCode.REPORT_SUCCEEDED_DEPARTURE].text,
         }
         self.assertEqual(set(PROMPTS.values()) & delivery_guides, set())
 

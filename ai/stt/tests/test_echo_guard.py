@@ -68,7 +68,7 @@ def build_runner(*, text, sleeps=None, listen_delay=None):
 
 
 class GuideEchoMatchTest(unittest.TestCase):
-    """완료 기준: 승인 안내 문구 10개 전부를 에코로 판정해야 한다."""
+    """완료 기준: 고정 안내 문구 전부(v2 6개)를 에코로 판정해야 한다."""
 
     def test_every_approved_guide_text_is_detected(self):
         self.assertEqual(len(GUIDE_ASSETS), len(GuideCode))
@@ -81,10 +81,10 @@ class GuideEchoMatchTest(unittest.TestCase):
     def test_partial_tail_is_detected(self):
         """에코는 온전한 문장이 아니라 꼬리 조각으로 들어온다."""
         fragments = [
-            "말이 들리면 대답해",
-            "지금 스스로 움직일 수 있나요",
-            "잠시만 기다려 주세요",
-            "연결되는 대로 구조 요청을 전달하겠습니다",
+            "들리면 대답해 주세요",
+            "움직일 수 있습니까",
+            "다시 탐색을 시작합니다",
+            "다른 인원이 있습니까",
         ]
         for fragment in fragments:
             with self.subTest(fragment=fragment):
@@ -94,7 +94,7 @@ class GuideEchoMatchTest(unittest.TestCase):
     def test_spacing_differences_do_not_matter(self):
         """STT 띄어쓰기는 원문과 다르다."""
         is_echo, _ = guide_echo_match(
-            "지금스스로 움직일수있나요", GUIDE_BY_TEXT
+            "움직일수있습니까", GUIDE_BY_TEXT
         )
         self.assertTrue(is_echo)
 
@@ -117,35 +117,61 @@ class GuideEchoMatchTest(unittest.TestCase):
                 self.assertFalse(is_echo, f"{answer!r}이 에코로 판정됐다 → {matched!r}")
 
     def test_answer_that_reuses_the_question_words_survives(self):
-        """가장 좁은 케이스. ASK_MOBILITY가 "지금 스스로 움직일 수 있나요?"라고 묻고,
-        요구조자는 그 단어를 그대로 써서 답한다.
+        """가장 좁은 케이스 — 요구조자가 질문의 단어를 그대로 써서 답한다.
 
-        실측 포함률 0.78이다. 임계값이 0.8이었을 때 여유가 0.02뿐이어서, 걸을 수 있는
-        부상자가 무응답으로 집계되고 IMMEDIATE로 올라갔다. 0.9로 올린 근거가 이 값이다.
+        **비율 검사에 실제로 도달하는** 응답 중 최악은 `"주변에 다른 인원은 없어요"`로
+        포함률 **0.600**이다 (문구 v2 실측, 2026-08-03). 여유 0.300.
+
+        질문 단어를 더 많이 재사용하는 `"움직일 수 있어요"`(원 비율 0.667)는 공백 제외
+        7자로 **길이 하한에서 먼저 걸러진다** — 비율 검사에 도달하지 않는다. 두 관문을
+        섞어서 "최악 0.667"로 읽으면 안 된다.
+
+        이 경로가 위험한 이유 — 임계값을 넘으면 답한 요구조자가 무응답으로 집계되어
+        IMMEDIATE로 올라간다. 안전한 방향이지만 그 답변 자체가 사라진다.
         """
-        answer = "스스로 움직일 수 있어요"
+        answer = "주변에 다른 인원은 없어요"
         self.assertFalse(guide_echo_match(answer, GUIDE_BY_TEXT)[0])
 
         # 임계값을 실측값 아래로 내리면 이 답변이 에코로 판정된다.
         # 이 단정이 깨지면 측정 전제가 바뀐 것이므로 값을 다시 골라야 한다.
         self.assertTrue(
-            guide_echo_match(answer, GUIDE_BY_TEXT, ratio=0.75)[0],
-            "실측 포함률이 0.78에서 벗어났다. docs/README.md 11-3의 측정표를 갱신할 것",
+            guide_echo_match(answer, GUIDE_BY_TEXT, ratio=0.55)[0],
+            "실측 포함률이 0.600에서 벗어났다. docs/README.md 11-3의 측정표를 갱신할 것",
         )
         self.assertGreaterEqual(
             config.ECHO_MATCH_RATIO,
             0.85,
-            "임계값이 실측 최대 0.78과 충분히 떨어져 있어야 한다",
+            "임계값이 실측 최대 0.600과 충분히 떨어져 있어야 한다",
         )
+
+    def test_mobility_phrase_sits_exactly_on_the_length_floor(self):
+        """ASK_MOBILITY는 공백 제외 8자로 `ECHO_MIN_CHARS` 하한에 정확히 걸린다.
+
+        온전히 들리면 잡히지만 꼬리 조각(7자 이하)은 잡지 못한다. 다른 문구는 10자
+        이상 잃어야 그 상태가 되므로 이 문구만 여유가 없다. 문구를 더 줄이면
+        에코 가드가 이 문구에 대해 완전히 무력해지므로 하한을 지키는 단정을 둔다.
+        """
+        from sentinel_voice.safety import _squashed
+
+        mobility = GUIDE_ASSETS[GuideCode.ASK_MOBILITY].text
+        squashed = _squashed(mobility)
+        self.assertGreaterEqual(
+            len(squashed),
+            config.ECHO_MIN_CHARS,
+            f"{mobility!r}가 에코 가드 하한 미달 — 판정 대상에서 빠진다",
+        )
+        self.assertTrue(guide_echo_match(mobility, GUIDE_BY_TEXT)[0])
 
     def test_threshold_keeps_margin_on_both_sides(self):
         """에코와 실제 응답 사이가 비어 있어야 임계값 선택이 정당하다."""
         echoes = [asset.text for asset in GUIDE_ASSETS.values()]
         answers = [
+            "움직일 수 있어요",
             "스스로 움직일 수 있어요",
             "지금 움직일 수 있어요",
             "숨쉬기 어렵고 피가 나요",
             "두 명이고 움직일 수 없어요",
+            "주변에 다른 인원은 없어요",
             "저 말고 대답할 수 있는 사람은 없어요",
         ]
         # 임계값 아래로는 모든 안내 문구가 잡히고, 위로는 어떤 응답도 잡히지 않는다.

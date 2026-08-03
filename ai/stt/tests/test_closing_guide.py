@@ -76,12 +76,6 @@ class SessionClosingGuideTest(unittest.TestCase):
             blocked.status, PlaybackStatus.EXPLORATION_RESUME_NOT_APPROVED
         )
 
-    def test_standalone_success_guide_stays_locked(self):
-        """회귀 방지: 탐사 문구가 없는 단독 완료 안내는 여전히 ACK를 요구한다."""
-        result = self.player.play(GuideCode.REPORT_SUCCEEDED)
-        self.assertFalse(result.ok)
-        self.assertEqual(result.status, PlaybackStatus.REPORT_NOT_CONFIRMED)
-
     def test_no_asset_claims_the_location_is_safe(self):
         """로봇은 요구조자 지점의 안전을 판단할 수 없다(2026-07-30 결정)."""
         for code, asset in GUIDE_ASSETS.items():
@@ -120,16 +114,23 @@ class DocumentedTextMatchesCodeTest(unittest.TestCase):
                 )
 
     def test_no_asset_needs_a_new_recording(self):
-        """모든 승인 자산에 실물 WAV가 있어야 한다.
+        """모든 고정 문구에 실물 WAV가 있어야 한다.
 
-        S15P11A301-183은 새 녹음 없이 기존 자산만 재사용하기로 했다.
+        문구만 바꾸고 자산을 두면 파일명은 맞지만 내용이 구 문구다. 그러면
+        `GUIDE_BY_TEXT`(신)와 스피커 출력(구)이 어긋나 에코 가드가 무력화되고
+        S15P11A301-165가 막은 구멍이 다시 열린다. 이 테스트가 그 상태를 잡는다.
+
+        문구를 바꿀 때는 `mini_*.wav`를 새로 만들고
+        `python -m tools.convert_guide_assets --source-dir . --force`를 같은
+        커밋에서 함께 돌린다.
         """
         assets_dir = config.STT_ROOT / "assets"
         for code, asset in GUIDE_ASSETS.items():
             with self.subTest(code=code):
                 self.assertTrue(
                     (assets_dir / asset.filename).is_file(),
-                    f"{code.value}의 WAV가 없다: {asset.filename}",
+                    f"{code.value}의 WAV가 없다: {asset.filename} "
+                    "— tools.convert_guide_assets를 같은 커밋에서 돌린다",
                 )
 
 

@@ -13,7 +13,7 @@ from sentinel_voice.guide_audio import GUIDE_ASSETS, GuideCode
 
 
 class ConversationMachineTest(unittest.TestCase):
-    def machine(self, observations, abort=lambda: None):
+    def machine(self, observations, abort=lambda: None, unrecognized=()):
         prompts = []
 
         def listen(question, attempt):
@@ -23,6 +23,8 @@ class ConversationMachineTest(unittest.TestCase):
             )
 
         def interpret(question, text):
+            if question in unrecognized:
+                return None
             values = {
                 QuestionCode.INTRO: True,
                 QuestionCode.COUNT: 2,
@@ -54,7 +56,8 @@ class ConversationMachineTest(unittest.TestCase):
         self.assertEqual([code for code, _ in prompts], list(ASKED_QUESTIONS))
         # 종료 안내는 발신 상태를 아는 전송 단계가 한다. 상태머신은 하지 않는다.
         self.assertNotEqual(
-            prompts[-1][1], GUIDE_ASSETS[GuideCode.REPORT_PENDING].text
+            prompts[-1][1],
+            GUIDE_ASSETS[GuideCode.REPORT_SUCCEEDED_DEPARTURE].text,
         )
         self.assertEqual(result.fields["reportedResponsiveCount"], 2)
         self.assertFalse(result.operator_review_required)
@@ -91,6 +94,63 @@ class ConversationMachineTest(unittest.TestCase):
                 GUIDE_ASSETS[GuideCode.RETRY_NO_RESPONSE].text,
             ),
         )
+
+    def test_question_order_asks_urgent_first(self):
+        # 조기 종료 시 가장 중요한 부상 정보부터 확보한다(S15P11A301-146 v2).
+        self.assertEqual(
+            ASKED_QUESTIONS,
+            (
+                QuestionCode.INTRO,
+                QuestionCode.URGENT,
+                QuestionCode.MOBILITY,
+                QuestionCode.COUNT,
+            ),
+        )
+
+    def test_unrecognized_answer_moves_on_without_retry(self):
+        # 값 미확정 답변은 되묻지 않는다(S15P11A301-201). UNKNOWN으로 두고
+        # 다음 질문으로 진행하며, 원문은 세션 기록이 보존한다.
+        observations = {
+            question: AudioObservation(True, "정상 응답")
+            for question in ASKED_QUESTIONS
+        }
+        machine, _ = self.machine(
+            observations, unrecognized={QuestionCode.MOBILITY}
+        )
+        result = machine.run()
+
+        mobility_turns = [
+            turn
+            for turn in result.turns
+            if turn.question == QuestionCode.MOBILITY
+        ]
+        self.assertEqual(len(mobility_turns), 1)
+        self.assertEqual(result.fields["mobilityStatus"], "UNKNOWN")
+        self.assertNotIn(SessionState.RETRYING, result.state_log)
+        self.assertEqual(result.fields["reportedResponsiveCount"], 2)
+        self.assertTrue(result.operator_review_required)
+        self.assertEqual(result.state, SessionState.COMPLETED)
+
+    def test_stt_failure_moves_on_without_retry(self):
+        # STT 실패도 되묻지 않는다. RETRY_UNCLEAR 문구 삭제(146 v2)에 따라
+        # 재질문 경로는 INTRO 무응답 하나만 남는다.
+        observations = {
+            question: AudioObservation(True, "정상 응답")
+            for question in ASKED_QUESTIONS
+        }
+        observations[QuestionCode.URGENT] = AudioObservation(True, "")
+        machine, _ = self.machine(observations)
+        result = machine.run()
+
+        urgent_turns = [
+            turn
+            for turn in result.turns
+            if turn.question == QuestionCode.URGENT
+        ]
+        self.assertEqual(len(urgent_turns), 1)
+        self.assertEqual(result.fields["urgentConditionReported"], "UNKNOWN")
+        self.assertNotIn(SessionState.RETRYING, result.state_log)
+        self.assertTrue(result.operator_review_required)
 
     def test_manual_abort(self):
         calls = iter([None, SessionState.ABORTED_MANUAL])

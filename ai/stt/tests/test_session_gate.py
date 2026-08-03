@@ -1,7 +1,6 @@
 import unittest
 from unittest.mock import patch
 
-from sentinel_voice.guide_audio import GuideCode
 from sentinel_voice.session_gate import SessionGateState, check_session_gate
 
 
@@ -11,7 +10,8 @@ class SessionGateTest(unittest.TestCase):
         result = check_session_gate(lambda _: True)
         self.assertFalse(result.proceed)
         self.assertEqual(result.state, SessionGateState.GMS_MISCONFIGURED)
-        self.assertEqual(result.guide_code, GuideCode.NETWORK_WAIT)
+        # 차단 안내 문구는 146 v2에서 삭제됐다. 차단은 로그로만 남는다.
+        self.assertIsNone(result.guide_code)
 
     @patch("sentinel_voice.session_gate.config.GMS_KEY", "configured")
     def test_unreachable_gms_blocks_stt_session(self):

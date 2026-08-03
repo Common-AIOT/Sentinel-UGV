@@ -5,11 +5,12 @@
 정보 구조화(LLM)는 **GMS API 호출**, 안내 음성은 **사전녹음 재생**으로 동작합니다.
 
 ```
-트리거(VISION) → 네트워크 확인 ─↘ 오프라인: 안전 안내 후 세션 미시작
-              → 다턴 대화 세션 (INTRO → COUNT → MOBILITY → URGENT → CLOSING)
+트리거(VISION) → 네트워크 확인 ─↘ 오프라인: 세션 미시작 (안내 없음, 로그만)
+              → 다턴 대화 세션 (INTRO → URGENT → MOBILITY → COUNT → CLOSING)
                   각 단계: 안내음성 재생 → 청취 → VAD → STT → 환각 가드 → GMS 추출
                                                   ↘ GMS만 실패: 33-8 키워드 폴백
-              → 규칙 위험도 → 관제 보고 대기 → ACK 상태에 맞는 안내 음성
+                  값 미확정이어도 되묻지 않고 UNKNOWN으로 진행
+              → 규칙 위험도 → 관제 보고 인계 → 종료 안내 1회
 ```
 
 무응답·STT 실패·해석 실패·정상 응답을 4분류로 구분하며, **STT 실패를 무응답으로 기록하지
@@ -40,9 +41,9 @@
 | `sentinel_voice/session_gate.py` | 신규 STT 세션 시작 전 GMS 가용성 게이트 |
 | `sentinel_voice/encounter.py` | 비전 Encounter 계약 검증과 encounter당 음성 세션 1회 조정 |
 | `sentinel_voice/report_delivery.py` | 관제 전송 대기/대기열 인계 상태 계약 |
-| `sentinel_voice/report_lifecycle.py` | 관제 ACK·Mission Manager 재개 승인 상태머신 |
+| `sentinel_voice/report_lifecycle.py` | 관제 ACK·재개 승인 상태머신 — **미배선**(ACK 부재 확정으로 전제 불성립) |
 | `sentinel_voice/pipeline.py` | 엔드투엔드 실행(다턴 대화 세션 조립·보고). 모델은 첫 사용 시 지연 로딩 |
-| `sentinel_voice/conversation.py` | 5단계 다턴 상태머신과 VAD·STT·구조화 결과 4분류 |
+| `sentinel_voice/conversation.py` | 다턴 상태머신(질문 4개, 부상 우선 순서)과 VAD·STT·구조화 결과 4분류. 재질문은 INTRO 무응답 1회뿐 |
 | `sentinel_voice/session_runner.py` | 상태머신에 실제 마이크·STT·GMS·안내 음성을 연결하는 어댑터 |
 | `sentinel_voice/guide_audio.py` | 승인 문구 목록, WAV 형식 검사, 안전 재생 결과 |
 | `tools/` | 배포 전 환경·오디오·사전녹음 자산 점검 |
@@ -102,9 +103,10 @@ cp .env.example .env       # Linux/Jetson
 
 필드별 한글 의미, `null`과 `UNKNOWN`의 차이, 결정 주체와 오류 예시는
 [`docs/README.md` §3 보고 계약](docs/README.md)를 따릅니다.
-관제 보고 생성부터 ACK 확인, Mission Manager 재개 승인, Closing 재생과 후속
-MQTT·ROS 2 연결 경계는
+관제 보고 생성부터 Closing 재생과 후속 MQTT·ROS 2 연결 경계는
 [`docs/README.md` §5-2](docs/README.md)에 용어와 사례를 포함해 설명합니다.
+**관제 ACK는 없습니다** — 로봇이 여러 대 투입되어 관제가 개별 보고에 ACK를 내리지
+않습니다(2026-08-01 확정). 종료 안내는 발신 상태와 무관하게 한 번만 재생합니다.
 비전 Encounter의 `CONFIRMED`·`APPROACHED` 사건과 음성 세션 시작·중단 조건은
 [`docs/README.md` §5-1](docs/README.md)를 따릅니다.
 

@@ -73,15 +73,11 @@ if port_listening "${port}"; then
   exit 0
 fi
 
-# set -u 와 ROS setup.bash 는 함께 못 쓴다. 소싱 동안만 푼다.
-set +u
-# 설치된 ROS 환경 파일은 저장소 밖에 있어 ShellCheck가 따라갈 수 없다.
-# shellcheck disable=SC1091
-source /opt/ros/humble/setup.bash
-# 빌드 후 생성되는 setup 파일이므로 정적 분석 시에는 존재하지 않을 수 있다.
-# shellcheck disable=SC1091
-source "${REPO_ROOT}/jetson/ros2_ws/install/setup.bash"
-set -u
+# ROS 소싱과 DDS 격리 설정(S15P11A301-218). 스택과 같은 값이어야 bridge 가
+# 우리 노드를 본다 — 다르면 Foxglove 에 토픽이 하나도 안 뜨고 그 이유가
+# 어디에도 남지 않는다.
+# shellcheck source=ros_env.sh disable=SC1091
+source "${REPO_ROOT}/scripts/ros_env.sh"
 
 launch_args=("$@")
 if [[ "${address_given}" -eq 0 ]]; then

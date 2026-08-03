@@ -106,10 +106,10 @@ fi
 
 mkdir -p "${log_dir}"
 
-# shellcheck source=/dev/null
-source /opt/ros/humble/setup.bash
-# shellcheck source=/dev/null
-source "${workspace}/install/setup.bash"
+# ROS 소싱과 DDS 격리 설정(S15P11A301-218). demo_up.sh 와 같은 파일을 쓴다 —
+# 두 진입점의 도메인이 다르면 한쪽으로 띄운 노드를 다른 쪽 도구가 못 본다.
+# shellcheck source=ros_env.sh disable=SC1091
+source "${repo_root}/scripts/ros_env.sh"
 
 echo "센서를 켠다 (카메라, 라이다, robot_state_publisher)..."
 nohup ros2 launch sentinel_bringup sensors.launch.py \

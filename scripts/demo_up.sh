@@ -14,14 +14,11 @@ set -Eeuo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export SENTINEL_REPO_ROOT="${REPO_ROOT}"
 
-# set -u 와 ROS setup.bash 는 함께 못 쓴다. 소싱 동안만 푼다.
-set +u
-# 설치된 ROS 환경 파일은 저장소 밖에 있어 ShellCheck가 따라갈 수 없다.
-# shellcheck disable=SC1091
-source /opt/ros/humble/setup.bash
-# 빌드 후 생성되는 setup 파일이므로 정적 분석 시에는 존재하지 않을 수 있다.
-# shellcheck disable=SC1091
-source "${REPO_ROOT}/jetson/ros2_ws/install/setup.bash"
-set -u
+# ROS 소싱과 DDS 격리 설정(S15P11A301-218). 값은 그 파일에만 있다 — 여기에
+# 복사하면 두 곳이 어긋나고, 어긋나면 노드들이 서로를 못 본 채 조용히 돈다.
+# ShellCheck 는 -x 없이는 source 를 따라가지 못한다(SC1091). CI 는 기본
+# 심각도로 돌아 info 도 실패로 다루므로 이 파일의 다른 ROS 소싱과 같이 끈다.
+# shellcheck source=ros_env.sh disable=SC1091
+source "${REPO_ROOT}/scripts/ros_env.sh"
 
 exec ros2 launch sentinel_bringup demo.launch.py "$@"

@@ -30,6 +30,7 @@
 | `stop_sentinel.sh` | 센서·스트리밍만 정리 (`start_sentinel.sh`의 짝) |
 | `viz_up.sh` | 돌고 있는 스택에 Foxglove Bridge를 붙인다 |
 | `viz_down.sh` | Bridge만 떼고 스택은 그대로 둔다 |
+| `ros_env.sh` | **source 전용.** ROS 소싱과 DDS 격리 설정이 있는 유일한 곳 |
 
 **`stop_sentinel.sh`로 데모 스택을 내릴 수 없다.** 이름 때문에 그렇게 보이지만
 그것은 `start_sentinel.sh`의 짝이고 센서·스트리밍만 덮는다. 데모 스택은
@@ -181,6 +182,46 @@ colcon build --symlink-install --packages-select sentinel_bringup \
 
 토픽 발행·서비스 호출·파라미터 변경이 되고 인증이 없다. 주행 코드가 붙기
 시작하면 이 노출의 의미가 달라진다.
+
+### 손으로 ros2 명령을 칠 때는 ros_env.sh를 source한다
+
+```bash
+source scripts/ros_env.sh
+ros2 node list
+```
+
+`source /opt/ros/humble/setup.bash`만 하면 **DDS 격리 설정이 빠진다.** 그 상태로
+`ros2 topic echo`를 하면 다른 팀 그래프의 토픽이 섞여 보이고, 반대로 스택 노드는
+안 보인다. 자주 쓰면 `~/.bashrc`에 위 한 줄을 두는 편이 낫다(기기 설정이라
+저장소에서 강제하지 않는다).
+
+#### 왜 격리가 필요한가
+
+이 설정이 비어 있던 동안 **다른 팀의 ROS 그래프가 이 젯슨과 섞여 있었다**
+(S15P11A301-218). `ros2 node list`에 남의 nav2 스택 두 벌(`/sim_f02/*`,
+`/sim_f03/*`)과 `/kinematic_fleet`, `/rviz`, `/map_server`가 있었다.
+
+DDS는 IP가 아니라 **LAN 멀티캐스트로** 상대를 찾는다. 같은 망 + 같은
+`ROS_DOMAIN_ID`면 서로를 찾으므로, 기본값 0에 여러 팀이 함께 있었다. 젯슨 IP를
+바꿔도 해결되지 않는다.
+
+실제 피해가 확인된 곳:
+
+| 토픽 | 실측 | 결과 |
+|---|---|---|
+| `/map` | 발행자 2 | `map_saver`가 어느 지도를 저장할지 보장이 없었다. latched라 늦게 붙은 구독자가 남의 값을 받을 수 있다 |
+| `/map` 구독자 | 남의 costmap 2개 | 우리 SLAM 지도가 남의 nav2로 흘러갔다 |
+| `/tf` / `/tf_static` | 발행자 4 / 5 | TF 트리가 섞여 Foxglove 3D를 읽을 수 없었다 |
+| `/cmd_vel` | 남의 `kinematic_fleet`이 구독 | 주행 코드를 붙이면 우리 명령이 남의 시뮬레이터로 간다 |
+
+`ROS_LOCALHOST_ONLY=1`이 주 수단이다. DDS를 루프백에 묶어 LAN 디스커버리 자체를
+없앤다 — 도메인 격리는 합의지만 이것은 물리적 차단이다. 우리는 ROS 통신이 전부
+젯슨 안에서 끝나므로(밖으로 나가는 것은 MQTT·HTTPS·WHEP·WebSocket) 잃는 것이 없다.
+
+`ROS_DOMAIN_ID`도 함께 둔다. `ROS_LOCALHOST_ONLY`가 Humble 이후 폐기 예정이라
+배포를 올릴 때 조용히 무력화될 수 있다.
+
+**노트북에서 `ros2` CLI로 젯슨 토픽을 보는 경로는 끊긴다.** Foxglove로 본다.
 
 ### 내릴 때 무엇이 남는가
 

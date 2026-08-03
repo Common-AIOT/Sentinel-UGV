@@ -4,7 +4,6 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Archive, Radio } from "lucide-react";
-import LidarMap from "@/features/mapping/LidarMap";
 import LiveMap from "@/features/mapping/LiveMap";
 import VideoPanel from "@/features/streaming/VideoPanel";
 import StatusPanel from "@/features/telemetry/StatusPanel";
@@ -74,8 +73,8 @@ function TopBar() {
  * 미니맵 슬롯.
  *
  * 목업 격자를 **실시간 SLAM 지도로 바꿨다** (S15P11A301-227). 젯슨의
- * `foxglove_bridge`에 직접 붙어 `/map`을 받는다 — Foxglove Studio 가 보는 것과 같은
- * 데이터·같은 주기(2초)다.
+ * `foxglove_bridge`에 직접 붙어 `/map`·`/pose`를 받는다 — Foxglove Studio 가 보는
+ * 것과 같은 데이터·같은 주기다.
  *
  * 그 전에는 "계약·발행·조회가 모두 없다"고 미뤄 두었는데 그 판단이 틀렸다. 경로가
  * 이미 있었고(bridge 가 /map 을 WebSocket 으로 내보내고 있었다), 막고 있다고 본 두
@@ -85,7 +84,7 @@ function TopBar() {
  * 상태 줄은 영상 오버레이와 같은 형식(`OverlayLine`)을 쓴다 — 두 패널이 같은 종류의
  * 정보를 다르게 보여주지 않게 한다(S15P11A301-200).
  */
-function SmallLidarSlot() {
+function MiniMapSlot() {
   return (
     <div className="relative bg-[#12171f] border-b border-border flex-shrink-0 overflow-hidden" style={{ height: 148 }}>
       <LiveMap />
@@ -117,13 +116,15 @@ export default function GCSPage() {
           {videoMain ? (
             <VideoPanel isMain onSwap={() => setMainView("map")} />
           ) : (
-            <LidarMap />
+            /* 메인도 같은 실시간 지도다. 예전에는 목업 격자(LidarMap)를 띄워서
+               키우면 실시간 지도가 사라졌다(S15P11A301-227). */
+            <LiveMap variant="full" />
           )}
         </div>
 
         <div className="flex flex-col border-l border-border bg-card flex-shrink-0 overflow-y-auto" style={{ width: 308 }}>
           {videoMain ? (
-            <SmallLidarSlot />
+            <MiniMapSlot />
           ) : (
             <VideoPanel onSwap={() => setMainView("video")} />
           )}

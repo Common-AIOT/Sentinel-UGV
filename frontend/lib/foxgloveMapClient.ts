@@ -20,6 +20,7 @@
  */
 
 import { decodeOccupancyGrid, type OccupancyGrid } from "./occupancyGrid";
+import { decodeRobotPose, type RobotPose } from "./robotPose";
 
 /** bridge 가 요구하는 서브프로토콜. 틀리면 HTTP 400 이다. */
 const SUBPROTOCOL = "foxglove.sdk.v1";
@@ -30,10 +31,16 @@ const OP_MESSAGE_DATA = 1;
 /** `[op:1][subscriptionId:4][timestamp:8]` 다음이 페이로드다. */
 const MESSAGE_HEADER_BYTES = 13;
 
-const MAP_TOPIC = "/map";
-
-/** 우리가 정하는 구독 번호. 채널이 하나뿐이라 고정해도 된다. */
-const SUBSCRIPTION_ID = 1;
+/**
+ * 구독할 토픽과 우리가 정하는 번호.
+ *
+ * 번호를 고정하는 것이 의도다. 서버가 주는 `channelId` 는 재연결마다 달라질 수
+ * 있는데, 우리 번호는 그대로이므로 수신 쪽 분기가 흔들리지 않는다.
+ */
+const SUBSCRIPTIONS = [
+  { id: 1, topic: "/map" },
+  { id: 2, topic: "/pose" },
+] as const;
 
 export type MapClientState =
   | "connecting"
@@ -43,6 +50,7 @@ export type MapClientState =
 
 export interface MapClientHandlers {
   onGrid: (grid: OccupancyGrid) => void;
+  onPose: (pose: RobotPose) => void;
   onState: (state: MapClientState, detail?: string) => void;
 }
 
@@ -121,31 +129,40 @@ export function startMapClient(
     const payload = message as { op?: string; channels?: unknown };
     if (payload.op !== "advertise" || !Array.isArray(payload.channels)) return;
 
-    const channel = payload.channels.find(
+    const channels = payload.channels.filter(
       (c): c is { id: number; topic: string } =>
-        typeof c === "object" &&
-        c !== null &&
-        (c as { topic?: unknown }).topic === MAP_TOPIC,
+        typeof c === "object" && c !== null &&
+        typeof (c as { id?: unknown }).id === "number" &&
+        typeof (c as { topic?: unknown }).topic === "string",
     );
-    if (!channel) return;
 
-    ws.send(
-      JSON.stringify({
-        op: "subscribe",
-        subscriptions: [{ id: SUBSCRIPTION_ID, channelId: channel.id }],
-      }),
-    );
+    // 있는 것만 구독한다. SLAM 이 안 떠 있으면 /map 이 없고, 그때 /pose 만 받아도
+    // 상태 줄은 "지도 대기" 로 정확히 나온다.
+    const subscriptions = SUBSCRIPTIONS.flatMap(wanted => {
+      const channel = channels.find(c => c.topic === wanted.topic);
+      return channel ? [{ id: wanted.id, channelId: channel.id }] : [];
+    });
+    if (subscriptions.length === 0) return;
+
+    ws.send(JSON.stringify({ op: "subscribe", subscriptions }));
   };
 
   const handleBinary = (buffer: ArrayBuffer) => {
     if (buffer.byteLength < MESSAGE_HEADER_BYTES) return;
     const view = new DataView(buffer);
     if (view.getUint8(0) !== OP_MESSAGE_DATA) return;
-    if (view.getUint32(1, true) !== SUBSCRIPTION_ID) return;
+    const subscriptionId = view.getUint32(1, true);
+    const payload = buffer.slice(MESSAGE_HEADER_BYTES);
 
     try {
-      handlers.onGrid(decodeOccupancyGrid(buffer.slice(MESSAGE_HEADER_BYTES)));
-      handlers.onState("streaming");
+      if (subscriptionId === 1) {
+        handlers.onGrid(decodeOccupancyGrid(payload));
+        // 지도가 왔을 때만 streaming 이다. /pose 만 오는 상태는 지도가 없는
+        // 것이므로 화면에 그렇게 보여야 한다.
+        handlers.onState("streaming");
+      } else if (subscriptionId === 2) {
+        handlers.onPose(decodeRobotPose(payload));
+      }
     } catch (error) {
       // 디코딩 실패를 삼키지 않는다. 삼키면 "지도가 안 나온다"만 남고 이유가
       // 사라진다 — 이 프로젝트에서 반복해서 겪은 형태다.

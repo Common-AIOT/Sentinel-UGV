@@ -2,10 +2,6 @@
 
 import React, { createContext, useContext, useEffect, useRef, useState, useCallback } from "react";
 import {
-  buildMockGrid,
-  revealArea,
-  PATROL_PATH,
-  GRID_SIZE,
   INITIAL_SENSORS,
   BATTERY_ABORT_PCT,
   type SensorReading,
@@ -41,13 +37,11 @@ const SERVER_MISSION_STATE: Record<string, MissionState> = {
 };
 
 // ── Types ──────────────────────────────────────────────────────────────────
-export interface RobotPos { r: number; c: number; heading: number; }
 
 interface RobotContextValue {
-  // Map
-  grid: number[][];
-  robotPos: RobotPos;
-  pathHistory: RobotPos[];
+  // 지도는 여기서 나가지 않는다. 실시간 SLAM 지도는 젯슨의 foxglove_bridge 에
+  // 직접 붙어 받고(LiveMap, S15P11A301-227), 저장된 지도는 조회 API 로 받는다
+  // (MissionMap). 목업 격자를 들고 있을 이유가 없어졌다.
   // Status
   status: RobotStatus;
   // Sensors
@@ -70,9 +64,6 @@ interface RobotContextValue {
 const RobotCtx = createContext<RobotContextValue | null>(null);
 
 export function RobotProvider({ children }: { children: React.ReactNode }) {
-  const [grid, setGrid] = useState<number[][]>(() => buildMockGrid());
-  const [robotPos, setRobotPos] = useState<RobotPos>({ r: 10, c: 10, heading: 0 });
-  const [pathHistory, setPathHistory] = useState<RobotPos[]>([{ r: 10, c: 10, heading: 0 }]);
   const [sensors, setSensors] = useState<SensorReading>(INITIAL_SENSORS);
   const [detections, setDetections] = useState<DetectionEvent[]>([]);
   const [videoConnected, setVideoConnected] = useState(false);
@@ -93,17 +84,14 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
     infoCount: 7,
   });
 
-  // Mock patrol state
-  const waypointIdx = useRef(0);
+  // 목 임무 상태. 순찰 경로 인덱스와 가동 시각은 목업 주행 애니메이션과 함께
+  // 뺐다 (S15P11A301-227) — 읽는 화면이 없다.
   const mockMission = useRef<MissionState>("SAFE_IDLE");
-  const startTime = useRef(Date.now());
 
   // 실 임무 상태. missionId 가 있으면 임무 상태는 서버(STOMP 푸시·백업 폴링)가
-  // 결정하고, 목 시뮬레이션의 가짜 탐지·자동 전이는 멈춘다(지도 주행 애니메이션만 유지).
+  // 결정하고, 목 시뮬레이션의 가짜 탐지·자동 전이는 멈춘다.
   const [missionId, setMissionId] = useState<string | null>(null);
   const missionIdRef = useRef<string | null>(null);
-  const robotPosRef = useRef(robotPos);
-  useEffect(() => { robotPosRef.current = robotPos; }, [robotPos]);
 
   // 명령 직후 유예 창. 202 접수 후 ACK 가 서버에 반영되기 전에 폴링이 옛 상태를
   // 가져와 낙관적 표시("복귀 중")를 "탐사 중"으로 되돌리는 경합을 막는다.
@@ -132,52 +120,14 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
       if (!missionIdRef.current) mockMission.current = "SAFE_IDLE";
     }, 1000);
 
-    // Robot movement — 10Hz. 주행하는 상태만 좌표를 갱신한다.
-    const moveTimer = setInterval(() => {
-      const ms = mockMission.current;
-      if (ms !== "EXPLORING" && ms !== "RETURNING" && ms !== "PERSON_APPROACHING") return;
-
-      setRobotPos(prev => {
-        const target = PATROL_PATH[waypointIdx.current % PATROL_PATH.length];
-        const dr = target.r - prev.r;
-        const dc = target.c - prev.c;
-        const dist = Math.sqrt(dr * dr + dc * dc);
-
-        if (dist < 1.5) {
-          waypointIdx.current = (waypointIdx.current + 1) % PATROL_PATH.length;
-          return prev;
-        }
-
-        const speed = 0.4;
-        const nr = prev.r + (dr / dist) * speed;
-        const nc = prev.c + (dc / dist) * speed;
-        const heading = Math.atan2(dc, dr) * (180 / Math.PI);
-
-        const nr2 = Math.round(nr);
-        const nc2 = Math.round(nc);
-        setGrid(g => {
-          const ng = g.map(row => [...row]);
-          revealArea(ng, nr2, nc2, 14);
-          return ng;
-        });
-
-        const newPos = { r: nr, c: nc, heading };
-        setPathHistory(h => [...h.slice(-200), newPos]);
-
-        setStatus(s => ({
-          ...s,
-          // 명세 24: 자율 0.25m/s, 사람 접근 0.10m/s
-          speed:
-            mockMission.current === "PERSON_APPROACHING"
-              ? 0.10
-              : 0.25 + Math.random() * 0.03,
-          heading: Math.round(heading),
-          uptime: Math.floor((Date.now() - startTime.current) / 1000),
-        }));
-
-        return newPos;
-      });
-    }, 100);
+    // 10Hz 목업 주행 애니메이션을 걷어냈다 (S15P11A301-227).
+    //
+    // 메인 지도가 실시간 SLAM 지도로 바뀌면서 이 타이머의 산출물(목업 격자,
+    // 가짜 좌표, 순찰 궤적)을 읽는 화면이 하나도 남지 않았다. 같이 갱신하던
+    // status.speed·heading·uptime 도 표시하는 곳이 없다 — 근거 없는 지표라
+    // 이미 화면에서 뺐다(S15P11A301-200·223).
+    //
+    // 남겨 두면 초당 10번 14400칸 격자를 복사하면서 아무것도 그리지 않는다.
 
     // 1Hz 탐사 타이머를 걷어냈다 (S15P11A301-223).
     //
@@ -215,7 +165,6 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
 
     return () => {
       clearTimeout(connectTimer);
-      clearInterval(moveTimer);
       clearInterval(sensorTimer);
     };
   }, []);
@@ -289,7 +238,6 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
           if (from !== "ESTOP" && from !== "ERROR") {
             missionState = "RETURNING";
             controlMode = "AUTO";
-            waypointIdx.current = 0;
           }
           break;
 
@@ -364,8 +312,6 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
         id,
         timestamp: at,
         confidence: 1,
-        gridR: Math.round(robotPosRef.current.r),
-        gridC: Math.round(robotPosRef.current.c),
         thumbnailColor: "hsl(20, 60%, 30%)",
         location:
           mapX !== null && mapY !== null
@@ -465,7 +411,6 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
   // encounter 백업 폴링 — 연결 중 30초, 끊기면 5초. 새 발견을 목록·배지에 반영한다.
   // 첫 실행이 기존 발견을 조용히 채우는 복구 역할도 그대로 한다(배지 강조는
   // 배지 쪽 이전 값 비교 담당, S15P11A301-196).
-  // 좌표 계약(occupancy grid)이 없어 지도는 목이므로, 마커는 현재 로봇 위치에 찍는다.
   useEffect(() => {
     if (!missionId) return;
     const timer = setInterval(async () => {
@@ -483,7 +428,6 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <RobotCtx.Provider value={{
-      grid, robotPos, pathHistory,
       status, sensors,
       detections,
       sendControl, sendCommand,

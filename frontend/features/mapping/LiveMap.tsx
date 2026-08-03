@@ -6,19 +6,31 @@ import {
   type MapClientState,
 } from "@/lib/foxgloveMapClient";
 import { classifyGridCell, type OccupancyGrid } from "@/lib/occupancyGrid";
+import { worldToPixel } from "@/lib/gridGeometry";
+import type { RobotPose } from "@/lib/robotPose";
 import { OverlayLine, OverlayStack } from "@/features/telemetry/PanelOverlay";
 import { COLOR_FREE, COLOR_OCCUPIED, COLOR_UNKNOWN } from "./palette";
 
 /**
  * 실시간 SLAM 지도 (S15P11A301-227).
  *
- * 젯슨의 `foxglove_bridge`에 직접 붙어 `/map`을 받는다. Foxglove Studio가 보는 것과
- * 같은 데이터·같은 주기(2초)다. 백엔드를 거치지 않는다 — telemetry 스키마에 격자
- * 필드가 없고 지도 조회 API는 임무 종료 후 PGM뿐이라, 그 둘로는 실시간이 안 된다.
+ * 젯슨의 `foxglove_bridge`에 직접 붙어 `/map`과 `/pose`를 받는다. Foxglove Studio가
+ * 보는 것과 같은 데이터·같은 주기(지도 2초, 위치 4~5Hz)다. 백엔드를 거치지 않는다 —
+ * telemetry 스키마에 격자 필드가 없고 지도 조회 API는 임무 종료 후 PGM뿐이라, 그
+ * 둘로는 실시간이 안 된다.
  *
- * 임무 이력의 지도(S15P11A301-203)와 값 체계가 다르다. 그쪽은 PGM 바이트,
- * 이쪽은 nav2 `int8`이다. 판정은 `classifyGridCell`이 하고 **색은 공유한다**
- * (`palette.ts`).
+ * 임무 이력의 지도(S15P11A301-203)와 값 체계가 다르다. 그쪽은 PGM 바이트, 이쪽은
+ * nav2 `int8`이다. 판정은 `classifyGridCell`이 하고 **색·좌표 변환·범례는 공유한다**
+ * (`palette.ts`, `gridGeometry.ts`). 규칙이 갈라지면 두 화면의 로봇 위치가 서로
+ * 반대로 찍히거나 같은 색이 다른 뜻이 된다.
+ *
+ * ## 큰 화면과 작은 화면
+ *
+ * 사이드바 148px 슬롯과 메인 영역이 같은 컴포넌트를 쓴다. 예전에는 메인이 목업
+ * 격자(`LidarMap`)여서 **키우면 실시간 지도가 사라졌다.**
+ *
+ * 정보량은 크기에 맞춘다. 148px에 격자 크기·해상도까지 적으면 지도보다 글자가
+ * 넓다. 좁을 때는 상태 한 낱말만 남긴다.
  *
  * ## 같은 네트워크에서만 보인다
  *
@@ -30,6 +42,23 @@ import { COLOR_FREE, COLOR_OCCUPIED, COLOR_UNKNOWN } from "./palette";
 
 /** 기본 주소. bridge 는 wss 로 뜬다(S15P11A301-224) — 평문이면 브라우저가 막는다. */
 const DEFAULT_URL = "wss://jetson.sentinel-ugv.xyz:8765";
+
+/**
+ * 로봇 화살표 크기(화면 픽셀).
+ *
+ * 확대율과 무관하게 **화면 고정**이다. 격자 셀 기준으로 잡으면 0.05m/셀 지도에서
+ * 로봇(0.3m 급)이 6픽셀짜리 점이 되어 방향을 알 수 없다. 임무 이력 지도의 발견
+ * 마커도 같은 방식이다.
+ */
+const ARROW_LENGTH_PX = 13;
+const ARROW_HALF_WIDTH_PX = 6;
+
+/** 화살표 색. 임무 이력 지도의 궤적·끝점과 같은 초록이다. */
+const COLOR_ROBOT = "#45c98c";
+const COLOR_ROBOT_EDGE = "#12171f";
+
+/** 위치를 못 받은 지 이 시간이 지나면 화살표를 흐리게 한다. */
+const POSE_STALE_MS = 5_000;
 
 const STATE_LABEL: Record<MapClientState, string> = {
   connecting: "연결 중",
@@ -83,15 +112,67 @@ function renderGrid(grid: OccupancyGrid): HTMLCanvasElement | null {
   return canvas;
 }
 
-export default function LiveMap() {
+/**
+ * 로봇을 화살표로 그린다. 좌표는 이미 화면 픽셀이고 각도는 map 프레임의 yaw 다.
+ *
+ * **화면 각도는 `-yaw` 다.** map 좌표계는 y 가 위로 증가하고 캔버스는 아래로
+ * 증가한다. 부호를 안 뒤집으면 화살표가 거울처럼 돌아 — 로봇이 제자리에서 회전할
+ * 때만 눈에 보이는 오류다.
+ */
+function drawRobot(
+  ctx: CanvasRenderingContext2D,
+  screenX: number,
+  screenY: number,
+  yaw: number,
+  fresh: boolean,
+) {
+  ctx.save();
+  ctx.translate(screenX, screenY);
+  ctx.rotate(-yaw);
+  ctx.globalAlpha = fresh ? 1 : 0.35;
+
+  ctx.beginPath();
+  ctx.moveTo(ARROW_LENGTH_PX, 0);
+  ctx.lineTo(-ARROW_LENGTH_PX * 0.5, -ARROW_HALF_WIDTH_PX);
+  ctx.lineTo(-ARROW_LENGTH_PX * 0.2, 0);
+  ctx.lineTo(-ARROW_LENGTH_PX * 0.5, ARROW_HALF_WIDTH_PX);
+  ctx.closePath();
+
+  ctx.fillStyle = COLOR_ROBOT;
+  ctx.fill();
+  // 어두운 미탐색 영역 위에서도 형태가 보이게 테두리를 둔다.
+  ctx.strokeStyle = COLOR_ROBOT_EDGE;
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  ctx.restore();
+}
+
+interface Meta {
+  w: number;
+  h: number;
+  res: number;
+}
+
+interface PoseText {
+  coords: string;
+  bearing: string;
+}
+
+/** `full` 은 메인 영역, `compact` 는 사이드바 148px 슬롯이다. */
+export default function LiveMap({
+  variant = "compact",
+}: { variant?: "compact" | "full" } = {}) {
+  const full = variant === "full";
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const gridRef = useRef<OccupancyGrid | null>(null);
+  const poseRef = useRef<{ pose: RobotPose; at: number } | null>(null);
   const [state, setState] = useState<MapClientState>("connecting");
   const [detail, setDetail] = useState<string | null>(null);
-  const [meta, setMeta] = useState<{ w: number; h: number; res: number } | null>(
-    null,
-  );
+  const [meta, setMeta] = useState<Meta | null>(null);
+  // 좌표를 상태로 두는 것은 글자 표시용이다. 그리기는 ref 로 한다 — 4~5Hz 로
+  // 리렌더하면 캔버스가 매번 다시 만들어진다.
+  const [poseText, setPoseText] = useState<PoseText | null>(null);
 
   useEffect(() => {
     const url = process.env.NEXT_PUBLIC_MAP_WS_URL || DEFAULT_URL;
@@ -99,6 +180,17 @@ export default function LiveMap() {
       onGrid: grid => {
         gridRef.current = grid;
         setMeta({ w: grid.width, h: grid.height, res: grid.resolution });
+        draw();
+      },
+      onPose: pose => {
+        // frame_id 가 map 이 아니면 지도와 다른 좌표계다. 그대로 찍으면 로봇이
+        // 엉뚱한 곳에 그려지므로 버린다.
+        if (pose.frameId !== "map") return;
+        poseRef.current = { pose, at: Date.now() };
+        setPoseText({
+          coords: `${pose.x.toFixed(2)}, ${pose.y.toFixed(2)} m`,
+          bearing: `${((pose.yaw * 180) / Math.PI).toFixed(1)}°`,
+        });
         draw();
       },
       onState: (next, why) => {
@@ -139,12 +231,26 @@ export default function LiveMap() {
     const drawH = grid.height * scale;
     // 셀 경계를 흐리지 않는다. 격자는 사진이 아니라 데이터다.
     ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(
-      offscreen,
-      (box.width - drawW) / 2,
-      (box.height - drawH) / 2,
-      drawW,
-      drawH,
+    const offsetX = (box.width - drawW) / 2;
+    const offsetY = (box.height - drawH) / 2;
+    ctx.drawImage(offscreen, offsetX, offsetY, drawW, drawH);
+
+    const tracked = poseRef.current;
+    if (!tracked) return;
+    // 격자 픽셀 → 화면 픽셀. drawImage 에 쓴 것과 **같은** scale·offset 이어야
+    // 한다. 따로 계산하면 창 크기에 따라 화살표만 어긋난다.
+    const { col, row } = worldToPixel(
+      tracked.pose.x,
+      tracked.pose.y,
+      grid,
+      grid.height,
+    );
+    drawRobot(
+      ctx,
+      offsetX + col * scale,
+      offsetY + row * scale,
+      tracked.pose.yaw,
+      Date.now() - tracked.at < POSE_STALE_MS,
     );
   };
 
@@ -177,35 +283,91 @@ export default function LiveMap() {
           )}
         </div>
       )}
-      <MapStatus state={state} meta={meta} detail={detail} />
+
+      <OverlayStack>
+        <OverlayLine
+          kind="SLAM"
+          tone={STATE_TONE[state]}
+          title={
+            detail ??
+            "젯슨의 foxglove_bridge 에서 /map 과 /pose 를 직접 받는다. 같은 네트워크에서만 보인다."
+          }
+        >
+          {/* 격자 크기·해상도는 큰 화면에서만 적는다. 148px 슬롯에서는 지도보다
+              글자가 넓어져 정작 지도가 안 보인다. */}
+          {full && meta
+            ? `${STATE_LABEL[state]} · ${meta.w}×${meta.h} · ${meta.res.toFixed(2)}m/셀`
+            : STATE_LABEL[state]}
+        </OverlayLine>
+      </OverlayStack>
+
+      {full && <Legend />}
+      {full && hasGrid && <PoseReadout pose={poseText} />}
     </div>
   );
 }
 
-/** 상태 줄. 영상 오버레이와 같은 형식을 쓴다(S15P11A301-200). */
-function MapStatus({
-  state,
-  meta,
-  detail,
-}: {
-  state: MapClientState;
-  meta: { w: number; h: number; res: number } | null;
-  detail: string | null;
-}) {
+/**
+ * 범례. **임무 이력의 임무 지도와 같은 낱말·같은 색·같은 형식이다.**
+ *
+ * 두 화면이 같은 격자를 보여주는데 한쪽은 "장애물·이동가능·미탐색", 다른 쪽은
+ * "벽·탐사"라고 적으면 다른 것을 보고 있다고 읽힌다. 색을 맞춰 놓고 이름을
+ * 다르게 두는 것이 더 나쁘다.
+ *
+ * 미탐색은 넣지 않는다 — 패널 배경과 같은 색이라 범례에 두면 빈 칸으로 보인다.
+ * 임무 지도도 같은 이유로 빼 두었다.
+ */
+function Legend() {
   return (
-    <OverlayStack>
-      <OverlayLine
-        kind="SLAM"
-        tone={STATE_TONE[state]}
-        title={
-          detail ??
-          "젯슨의 foxglove_bridge 에서 /map 을 직접 받는다. 같은 네트워크에서만 보인다."
-        }
-      >
-        {meta
-          ? `${STATE_LABEL[state]} · ${meta.w}×${meta.h} · ${meta.res.toFixed(2)}m/셀`
-          : STATE_LABEL[state]}
-      </OverlayLine>
-    </OverlayStack>
+    <div className="absolute top-1.5 right-1.5 z-10 flex items-center gap-3 rounded bg-black/50 px-1.5 py-0.5 font-mono text-[9px] text-muted-foreground">
+      <span>
+        <span
+          className="mr-1 inline-block h-2 w-2 align-middle"
+          style={{ background: `rgb(${COLOR_OCCUPIED.join(",")})` }}
+        />
+        벽
+      </span>
+      <span>
+        <span
+          className="mr-1 inline-block h-2 w-2 align-middle"
+          style={{ background: `rgb(${COLOR_FREE.join(",")})` }}
+        />
+        탐사
+      </span>
+      <span>
+        <span
+          className="mr-1 inline-block h-2 w-2 rounded-full align-middle"
+          style={{ background: COLOR_ROBOT }}
+        />
+        로봇
+      </span>
+    </div>
+  );
+}
+
+/**
+ * 좌표 표시. 큰 화면에서만 나온다.
+ *
+ * **미터 단위 map 좌표다.** 예전 목업은 격자 행·열(`행:10.0 열:10.0`)을 적었는데
+ * 그건 화면 내부 인덱스라 현장에서 쓸 수 없는 값이었다.
+ *
+ * **나침반을 두지 않는다.** 방위는 map 프레임 기준이고, map 프레임의 x축은 SLAM을
+ * 시작한 순간 로봇이 향한 방향이다. 자북과는 아무 관계가 없다(자력계가 없다).
+ * 예전 목업의 N·E·S·W 나침반은 없는 근거를 있는 것처럼 보이게 했다.
+ */
+function PoseReadout({ pose }: { pose: PoseText | null }) {
+  return (
+    <div className="absolute bottom-2 left-2 z-10 space-y-0.5 rounded bg-black/50 px-1.5 py-1 font-mono text-[10px] text-muted-foreground">
+      {pose ? (
+        <>
+          <div>좌표 {pose.coords}</div>
+          <div title="map 프레임 기준. 자북이 아니다 — 시작 시 로봇이 향한 방향이 0°다.">
+            방위 {pose.bearing}
+          </div>
+        </>
+      ) : (
+        <div>위치 대기</div>
+      )}
+    </div>
   );
 }

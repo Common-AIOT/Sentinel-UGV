@@ -35,12 +35,9 @@
  * 어긋난다.
  */
 
-/** 좌표계. `worldToPixel`이 요구하는 형태와 같다. */
-export interface GridGeometry {
-  resolution: number;
-  originX: number;
-  originY: number;
-}
+import { CdrError, CdrReader } from "./cdr";
+
+import type { GridGeometry } from "./gridGeometry";
 
 export interface OccupancyGrid extends GridGeometry {
   frameId: string;
@@ -48,105 +45,6 @@ export interface OccupancyGrid extends GridGeometry {
   height: number;
   /** 행 우선, **첫 행이 아래**(nav2 규약). 길이는 width × height. */
   data: Int8Array;
-}
-
-/** 값이 하나뿐인 예외. 호출자가 메시지로 구분할 필요가 없다. */
-export class CdrError extends Error {}
-
-/**
- * CDR 바이트를 읽는 커서.
- *
- * 정렬 계산을 한 곳에 모은다. 각 `read*`가 스스로 정렬하므로 호출부에서
- * 패딩을 세지 않는다 — 세는 순간 틀린다.
- */
-class CdrReader {
-  private offset: number;
-  private readonly view: DataView;
-  private readonly bodyStart: number;
-  private readonly little: boolean;
-
-  constructor(buffer: ArrayBuffer) {
-    if (buffer.byteLength < 4) {
-      throw new CdrError("CDR 이 encapsulation 헤더보다 짧습니다");
-    }
-    this.view = new DataView(buffer);
-    // 두 번째 바이트가 엔디안이다. 0x01 = little, 0x00 = big.
-    // ROS 2 는 사실상 항상 little 이지만, big 을 little 로 읽으면 숫자가 전부
-    // 말이 되지 않는 값이 되므로 여기서 갈라 두는 편이 낫다.
-    this.little = this.view.getUint8(1) === 1;
-    this.bodyStart = 4;
-    this.offset = 4;
-  }
-
-  /** 본문 시작 기준으로 `size` 배수에 맞춘다. */
-  private align(size: number): void {
-    const rel = this.offset - this.bodyStart;
-    this.offset += (size - (rel % size)) % size;
-  }
-
-  private need(bytes: number): void {
-    if (this.offset + bytes > this.view.byteLength) {
-      throw new CdrError(
-        `CDR 이 중간에 끊겼습니다: ${this.offset + bytes}바이트 필요, ` +
-          `${this.view.byteLength}바이트 있음`,
-      );
-    }
-  }
-
-  int32(): number {
-    this.align(4);
-    this.need(4);
-    const value = this.view.getInt32(this.offset, this.little);
-    this.offset += 4;
-    return value;
-  }
-
-  uint32(): number {
-    this.align(4);
-    this.need(4);
-    const value = this.view.getUint32(this.offset, this.little);
-    this.offset += 4;
-    return value;
-  }
-
-  float32(): number {
-    this.align(4);
-    this.need(4);
-    const value = this.view.getFloat32(this.offset, this.little);
-    this.offset += 4;
-    return value;
-  }
-
-  float64(): number {
-    this.align(8);
-    this.need(8);
-    const value = this.view.getFloat64(this.offset, this.little);
-    this.offset += 8;
-    return value;
-  }
-
-  /** 길이 접두 문자열. 길이에 널 종단이 포함된다. */
-  string(): string {
-    const length = this.uint32();
-    this.need(length);
-    const bytes = new Uint8Array(this.view.buffer, this.offset, Math.max(0, length - 1));
-    this.offset += length;
-    return new TextDecoder().decode(bytes);
-  }
-
-  /** 길이 접두 int8 시퀀스. 복사하지 않고 뷰를 돌려준다. */
-  int8Sequence(): Int8Array {
-    const length = this.uint32();
-    this.need(length);
-    const seq = new Int8Array(this.view.buffer, this.offset, length);
-    this.offset += length;
-    return seq;
-  }
-
-  /** 지금까지 읽은 바이트 수. 남는 바이트 검사에 쓴다. */
-  get consumed(): number {
-    return this.offset;
-  }
 }
 
 /**
@@ -222,3 +120,6 @@ export function classifyGridCell(value: number, occupiedThreshold = 65): GridCel
   if (value < 0) return "unknown";
   return value >= occupiedThreshold ? "occupied" : "free";
 }
+
+// 기존 호출부가 `occupancyGrid` 에서 가져가고 있어 다시 내보낸다.
+export { CdrError } from "./cdr";

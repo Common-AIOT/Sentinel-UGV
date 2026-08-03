@@ -193,7 +193,14 @@ export default function VideoPanel({ isMain = false, onSwap }: VideoPanelProps) 
           LIVE일 때는 상태 문자열을 빼고 실제 수치를 보여준다. 점 색이 이미
           상태를 말하고, 정지·재연결은 배너와 중앙 오버레이가 알린다.
           지연은 수신 지연이며 카메라 노출·인코딩이 빠져 있어 체감보다 작다 —
-          자세한 것은 툴팁에 있다. VID-01은 타임코드 촬영으로 측정한다. */}
+          자세한 것은 툴팁에 있다. VID-01은 타임코드 촬영으로 측정한다.
+
+          **사이드바(작은 화면)에서는 띄우지 않는다.** 폭이 308px이라 통계 줄이
+          두 줄로 접히면서 우측 상단 버튼(다시 연결·설정·확대)을 덮었다. 작은
+          화면은 참조용이고 조작 버튼이 가려지는 쪽이 손해가 크다.
+          연결이 끊긴 상태는 중앙 오버레이가 그대로 알리므로 정보가 사라지지
+          않는다. */}
+      {isMain && (
       <OverlayStack>
         <OverlayLine
           kind="STREAM"
@@ -216,8 +223,9 @@ export default function VideoPanel({ isMain = false, onSwap }: VideoPanelProps) 
             `${STATE_LABEL[status.state]} · ${path}`
           )}
         </OverlayLine>
-        {isMain && <DetectionLine />}
+        <DetectionLine />
       </OverlayStack>
+      )}
 
       {/* 버튼은 항상 보이되 hover에서 선명해진다. hover에만 나타나면
           전환 기능이 있다는 것을 알기 어렵다. */}

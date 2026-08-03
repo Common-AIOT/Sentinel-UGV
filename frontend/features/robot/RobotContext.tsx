@@ -317,21 +317,28 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
           }
           break;
 
+        // manual/auto 는 controlMode 만 바꾼다. missionState 는 건드리지 않는다
+        // (S15P11A301-200).
+        //
+        // 이전에는 manual 이 missionState 를 "MANUAL" 로 세웠는데, 서버는 MANUAL 을
+        // 모르므로(SERVER_MISSION_STATE 5종) 3초 폴링이 즉시 EXPLORING 으로
+        // 덮었다. 그러면 controlMode 만 MANUAL 로 남아 두 값이 어긋나고, auto 의
+        // 조건(from === "MANUAL")이 영원히 거짓이 되어 **자율 버튼이 눌리지
+        // 않았다.** 실기기에서 "탐사 중 + 수동"으로 굳은 상태가 그것이다.
+        //
+        // missionState 의 단일 출처는 서버다. 서버가 모르는 상태를 화면이
+        // 지어내면 폴링이 바로 지운다 — 지어내지 않는 것이 맞다.
+        //
+        // 26.3의 "MANUAL 종료는 PAUSED로 복귀"는 실제 제어 세션이 붙을 때
+        // 지켜야 한다(S15P11A301-39). 지금 이 토글은 로봇에 아무것도 보내지
+        // 않으므로 되돌릴 주행 상태도 없고, 표시만 바꾸는 조작이 실제 임무를
+        // 일시정지시키면 그쪽이 더 위험하다.
         case "manual":
-          // 2단 전이. MANUAL 진입은 SAFE_IDLE 또는 PAUSED에서만 허용하므로
-          // 주행 중이면 PAUSED를 자동 경유한다(26.3). 버튼 하나가 이걸 감춘다.
-          if (from !== "ESTOP" && from !== "ERROR") {
-            missionState = "MANUAL";
-            controlMode = "MANUAL";
-          }
+          if (from !== "ESTOP" && from !== "ERROR") controlMode = "MANUAL";
           break;
 
         case "auto":
-          // MANUAL 종료는 항상 PAUSED로 복귀한다. 자동 재출발 금지.
-          if (from === "MANUAL") {
-            missionState = "PAUSED";
-            controlMode = "AUTO";
-          }
+          controlMode = "AUTO";
           break;
 
         case "pause":

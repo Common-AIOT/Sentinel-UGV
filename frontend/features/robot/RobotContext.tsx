@@ -15,6 +15,14 @@ import {
 } from "./mockData";
 
 import { api, ApiError, type CommandType } from "@/lib/api";
+import {
+  createStompClient,
+  missionEventsTopic,
+  missionEncountersTopic,
+  type MissionEventMessage,
+  type EncounterChangedMessage,
+} from "@/lib/realtime";
+import type { Client, StompSubscription } from "@stomp/stompjs";
 
 // 명령·조회는 실 API(@/lib/api)를 쓴다. 지도 격자와 환경 센서는 서버 계약이 아직
 // 없으므로(S15P11A301-169 결정) 목 시뮬레이션을 유지한다.
@@ -90,8 +98,8 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
   const mockMission = useRef<MissionState>("SAFE_IDLE");
   const startTime = useRef(Date.now());
 
-  // 실 임무 상태. missionId 가 있으면 임무 상태는 서버 폴링이 결정하고,
-  // 목 시뮬레이션의 가짜 탐지·자동 전이는 멈춘다(지도 주행 애니메이션만 유지).
+  // 실 임무 상태. missionId 가 있으면 임무 상태는 서버(STOMP 푸시·백업 폴링)가
+  // 결정하고, 목 시뮬레이션의 가짜 탐지·자동 전이는 멈춘다(지도 주행 애니메이션만 유지).
   const [missionId, setMissionId] = useState<string | null>(null);
   const missionIdRef = useRef<string | null>(null);
   const robotPosRef = useRef(robotPos);
@@ -110,8 +118,8 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
     // Simulate connection after 1s.
     // 명세 26.3: 초기화가 끝나면 SAFE_IDLE에서 운영자의 명시적 시작을 기다린다.
     // 접속만으로 탐사가 시작되면 안 된다.
+    // wsConnected 는 더 이상 목이 아니다 — 실제 STOMP 연결 상태(아래)가 결정한다.
     const connectTimer = setTimeout(() => {
-      setWsConnected(true);
       setVideoConnected(true);
       setStatus(s => ({
         ...s,
@@ -260,7 +268,7 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
     }
 
     // 이하 낙관적 로컬 전이 — 202 접수 직후 화면이 즉시 반응하게 한다.
-    // 실제 상태는 3초 폴링(아래 useEffect)이 서버 값으로 덮는다.
+    // 실제 상태는 STOMP 푸시(없으면 백업 폴링)가 서버 값으로 덮는다.
     // 명세 26.3의 전이 규칙을 모의한다. 임의 전이를 허용하면 관제 화면이
     // 실제 로봇에서는 불가능한 상태 조합을 보여주게 된다.
     setStatus(s => {
@@ -326,8 +334,91 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
-  // ── 실 임무 폴링 ─────────────────────────────────────────────────────────
-  // STOMP 가 프론트·백 모두 없어(S15P11A301-169) REST 폴링으로 대체한다.
+  // ── 실시간 반영 ──────────────────────────────────────────────────────────
+  // 주 채널은 STOMP 푸시(S15P11A301-204), REST 폴링은 끊김 대비 저빈도 백업이다.
+  // 어느 쪽이 가져와도 서버 상태가 진실이라는 원칙(27.3)은 같다.
+
+  /** 서버 상태를 화면에 반영한다. 푸시·폴링 공용. COMPLETED 는 임무를 닫는다. */
+  const applyServerStatus = useCallback((serverStatus: string) => {
+    const mapped = SERVER_MISSION_STATE[serverStatus];
+    if (!mapped) return;
+    pendingCommand.current = null;
+    mockMission.current = mapped;
+    setStatus(s => ({ ...s, missionState: mapped }));
+    if (serverStatus === "COMPLETED") {
+      // 다음 explore 가 새 임무를 만들 수 있게 활성 임무를 비운다.
+      missionIdRef.current = null;
+      setMissionId(null);
+    }
+  }, []);
+
+  // 푸시와 폴링이 같은 발견을 두 번 목록에 넣지 않도록 본 것을 공유한다.
+  const seenEncounters = useRef(new Set<string>());
+  useEffect(() => { seenEncounters.current.clear(); }, [missionId]);
+
+  const addDetection = useCallback(
+    (id: string, at: number, mapX: number | null, mapY: number | null) => {
+      if (seenEncounters.current.has(id)) return;
+      seenEncounters.current.add(id);
+      const event: DetectionEvent = {
+        id,
+        timestamp: at,
+        confidence: 1,
+        gridR: Math.round(robotPosRef.current.r),
+        gridC: Math.round(robotPosRef.current.c),
+        thumbnailColor: "hsl(20, 60%, 30%)",
+        location:
+          mapX !== null && mapY !== null
+            ? `(${mapX.toFixed(1)}, ${mapY.toFixed(1)})`
+            : "위치 미기록",
+      };
+      setDetections(d => [event, ...d].slice(0, 20));
+    }, []);
+
+  // STOMP 연결은 임무와 무관하게 유지한다 — 헤더의 연결 표시등이 이 상태다.
+  // 구독은 임무 단위라 missionId 가 바뀌면 갈아타고, 재연결 시 onConnect 가 복구한다.
+  const stompRef = useRef<Client | null>(null);
+  const subsRef = useRef<StompSubscription[]>([]);
+
+  const subscribeMission = useCallback((client: Client, mid: string | null) => {
+    subsRef.current.forEach(s => { try { s.unsubscribe(); } catch { /* 이미 끊김 */ } });
+    subsRef.current = [];
+    if (!mid || !client.connected) return;
+    subsRef.current = [
+      client.subscribe(missionEventsTopic(mid), msg => {
+        const ev = JSON.parse(msg.body) as MissionEventMessage;
+        // 푸시는 ACK 반영 직후의 새 상태다 — 폴링과 달리 유예 없이 즉시 반영한다.
+        if (ev.type === "MISSION_STATUS") applyServerStatus(ev.status);
+      }),
+      client.subscribe(missionEncountersTopic(mid), msg => {
+        const ev = JSON.parse(msg.body) as EncounterChangedMessage;
+        // 목록·배지는 신규 발견만 센다. phase 변화 상세는 블랙박스 화면이 다룬다.
+        if (ev.phase === "CONFIRMED") {
+          addDetection(ev.encounterId, Date.parse(ev.detectedAt), ev.mapX, ev.mapY);
+        }
+      }),
+    ];
+  }, [applyServerStatus, addDetection]);
+
+  useEffect(() => {
+    const client = createStompClient();
+    stompRef.current = client;
+    client.onConnect = () => {
+      setWsConnected(true);
+      subscribeMission(client, missionIdRef.current);
+    };
+    client.onWebSocketClose = () => setWsConnected(false);
+    client.activate();
+    return () => {
+      subsRef.current = [];
+      stompRef.current = null;
+      void client.deactivate();
+    };
+  }, [subscribeMission]);
+
+  useEffect(() => {
+    if (stompRef.current) subscribeMission(stompRef.current, missionId);
+  }, [missionId, subscribeMission]);
 
   // 새로고침 복구 — missionId 는 리액트 상태에만 있으므로, 페이지 로드 시
   // 서버의 활성 임무(endedAt 없음)를 찾아 이어받는다. 없으면 목 초기 상태 그대로.
@@ -349,7 +440,7 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
     })();
   }, []);
 
-  // 임무 상태 3초 폴링 — 서버 상태가 로봇 ACK 의 결과이므로 이것이 진실이다.
+  // 임무 상태 백업 폴링 — STOMP 연결 중엔 15초로 늦추고, 끊기면 3초로 돌아온다.
   useEffect(() => {
     if (!missionId) return;
     const timer = setInterval(async () => {
@@ -359,64 +450,36 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
         if (!mapped) return;
         const pc = pendingCommand.current;
         if (pc && Date.now() - pc.at < COMMAND_GRACE_MS && mapped === pc.before) {
-          // 아직 ACK 반영 전 — 낙관적 표시를 유지한다.
+          // 아직 ACK 반영 전 — 낙관적 표시를 유지한다. (푸시에는 이 유예가 없다 —
+          // 푸시 자체가 ACK 반영의 알림이라 옛 상태를 가져올 수 없다.)
           return;
         }
-        pendingCommand.current = null;
-        mockMission.current = mapped;
-        setStatus(s => ({
-          ...s,
-          missionState: mapped,
-        }));
-        if (m.status === "COMPLETED") {
-          // 다음 explore 가 새 임무를 만들 수 있게 활성 임무를 비운다.
-          missionIdRef.current = null;
-          setMissionId(null);
-        }
+        applyServerStatus(m.status);
       } catch {
         // 일시적 네트워크 오류는 다음 폴링에 맡긴다.
       }
-    }, 3000);
+    }, wsConnected ? 15_000 : 3000);
     return () => clearInterval(timer);
-  }, [missionId]);
+  }, [missionId, wsConnected, applyServerStatus]);
 
-  // encounter 5초 폴링 — 새 발견을 팝업·목록에 반영한다.
+  // encounter 백업 폴링 — 연결 중 30초, 끊기면 5초. 새 발견을 목록·배지에 반영한다.
+  // 첫 실행이 기존 발견을 조용히 채우는 복구 역할도 그대로 한다(배지 강조는
+  // 배지 쪽 이전 값 비교 담당, S15P11A301-196).
   // 좌표 계약(occupancy grid)이 없어 지도는 목이므로, 마커는 현재 로봇 위치에 찍는다.
   useEffect(() => {
     if (!missionId) return;
-    const seen = new Set<string>();
-    let first = true;
     const timer = setInterval(async () => {
       try {
         const list = await api.missionEncounters(missionId);
-        const fresh = list.filter(e => !seen.has(e.id));
-        fresh.forEach(e => seen.add(e.id));
-        // 첫 폴링은 기존 발견을 조용히 채우고, 이후 새 발견만 팝업을 띄운다.
-        const isFirst = first;
-        first = false;
-        if (fresh.length === 0) return;
-        const events: DetectionEvent[] = fresh.map(e => ({
-          id: e.id,
-          timestamp: Date.parse(e.startedAt),
-          confidence: 1,
-          gridR: Math.round(robotPosRef.current.r),
-          gridC: Math.round(robotPosRef.current.c),
-          thumbnailColor: "hsl(20, 60%, 30%)",
-          location:
-            e.mapX !== null && e.mapY !== null
-              ? `(${e.mapX.toFixed(1)}, ${e.mapY.toFixed(1)})`
-              : "위치 미기록",
-        }));
-        setDetections(d => [...events, ...d].slice(0, 20));
-        // 팝업 없이 배지 강조만 한다 (S15P11A301-196). 첫 폴링(복구)과 새 발견의
-        // 구분은 배지 쪽 이전 값 비교가 담당하므로 여기서는 목록만 채운다.
-        void isFirst;
+        for (const e of list) {
+          addDetection(e.id, Date.parse(e.startedAt), e.mapX, e.mapY);
+        }
       } catch {
         // 다음 폴링에 맡긴다.
       }
-    }, 5000);
+    }, wsConnected ? 30_000 : 5000);
     return () => clearInterval(timer);
-  }, [missionId]);
+  }, [missionId, wsConnected, addDetection]);
 
   return (
     <RobotCtx.Provider value={{

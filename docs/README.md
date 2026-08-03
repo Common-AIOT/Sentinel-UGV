@@ -39,6 +39,7 @@ date: "2026-07-27"
 | v1.1-r2  | 2026-07-27 | 제어기 변경 | 저수준 제어기를 STM32에서 ESP32로 변경. 유선 USB Serial, ESP-IDF watchdog·태스크 분리, 부팅 안전 출력, DHT11·전방 초음파의 ESP32 수집 및 독립 근거리 정지 원칙을 반영. 정확한 ESP32 보드 모델과 핀맵은 TBD. 변경 파일: `README.md`, `01~06`, `TBD.md`, `scripts/docs/split-integrated-spec.ps1` |
 | v1.1-r3  | 2026-07-29 | AI 문서 정리 | 객체탐지 Jetson 실행 runbook을 25.7장에 반영하고, detection 세부 문서를 `docs/ai/detection/`으로 이동. 변경 파일: `README.md`, `04-자율주행-AI.md`, `docs/ai/README.md`, `docs/ai/detection/*`, `ai/detection/AGENTS.md` |
 | v1.1-r4  | 2026-07-30 | 하드웨어 스택 확정 | 짐벌을 프로젝트에서 완전히 제외(카메라·LiDAR 차체 고정 마운트로 전환)하고, 배터리(모터용 유아전동차 내장 12V + Jetson용 대용량 보조배터리 분리 급전), 구동/조향 모터(RS540 FD-12V RPM14000 좌·우 각 1개 + WW MOTOR RS380SP-12V RPM5500 조향 1개, BTS7960 드라이버 3개), 저수준 제어기(ESP32 WROOM-32를 모터 제어용·센서 제어용 2개로 이원화, 각각 Jetson과 별도 USB Serial 연결), 센서(HC-SR04 초음파 1개, DHT-11 온습도 1개, MT6701 엔코더 3개)를 확정 반영. 짐벌 제외로 FR-024·CAL-08/09·`/gimbal/state`·gimbal TF 체인은 폐기 처리. 변경 파일: `README.md`, `01~06`, `TBD.md` |
+| v1.1-r5  | 2026-08-01 | 구동계 차동 구동 전환 | 조향 모터(WW MOTOR RS380SP-12V)와 조향되는 앞바퀴를 제거하고, 프레임 앞부분에 수동 캐스터 바퀴 2개를 부착해 후륜과 높이를 맞췄다. 후륜 좌·우 RS540 모터 2개만으로 전진·후진·조향·제자리 회전을 수행하는 **차동 구동(differential drive)**으로 전환. 이에 따라 BTS7960·MT6701을 각각 3개→2개로 감축하고, 전륜 Ackermann 조향·최소 회전반경 제약·조향각 프로토콜 필드(`target_steering_mdeg` 등)·`STEERING_ENCODER_FAULT`·TBD-HW-008을 폐기했다. Nav2는 최소 회전반경 제약이 없는 차동 구동 로봇으로 재설정(NavFn/Smac 2D + DWB, rotation shim 활성화). 변경 파일: `README.md`, `01~06`, `TBD.md` |
 
 > 문서를 변경할 때는 위 표에 한 줄을 추가하고, 어느 파일이 바뀌었는지 함께 적는다. 파일별 버전은 두지 않는다.
 
@@ -58,7 +59,7 @@ date: "2026-07-27"
 - 고수준 컴퓨팅은 Jetson Orin Nano 8GB, 저수준 주행 제어는 ESP32 WROOM-32 2개(모터 제어용·센서 제어용 분리)가 담당하며 Raspberry Pi 5는 차량에 탑재하지 않는다.
 - Jetson↔ESP32 제어 링크는 각 ESP32마다 독립된 유선 USB Serial을 사용한다. ESP32 Wi-Fi/Bluetooth는 모터 제어·E-Stop·watchdog 경로에 사용하지 않는다.
 - 실제 Jetson에서 확인한 `JetPack 6.2.1+b38`과 ROS 2 Humble을 소프트웨어 기준선으로 고정한다.
-- 구동/조향 모터(RS540 FD-12V RPM14000 좌·우 각 1개 + WW MOTOR RS380SP-12V RPM5500 조향 1개), 모터 드라이버(BTS7960 3개), 엔코더(MT6701 3개), 초음파(HC-SR04), 온습도(DHT-11), 배터리(모터용 유아전동차 내장 12V·Jetson용 대용량 보조배터리 분리 급전)는 모델·수량을 확정했다. 차체 IMU는 센서 ESP32의 I2C/SPI에 연결하는 구조와 수량 1개를 확정했고 모델·핀·장착 오프셋은 TBD-HW-012로 관리한다. 감속비·정지 전류·조향 링크 백래시 등 세부 실측값과 전력 예산은 계속 TBD로 관리한다(부록 H).
+- 구동계는 후륜 좌·우 RS540 FD-12V RPM14000 모터 2개로 차동 구동하며 별도 조향 모터·앞바퀴 없이 전진·후진·조향·제자리 회전을 모두 수행한다(2026-08-01 전환). 전방은 수동 캐스터 바퀴 2개로 지지한다. 모터 드라이버(BTS7960 2개), 엔코더(MT6701 2개), 초음파(HC-SR04), 온습도(DHT-11), 배터리(모터용 유아전동차 내장 12V·Jetson용 대용량 보조배터리 분리 급전)는 모델·수량을 확정했다. 차체 IMU는 센서 ESP32의 I2C/SPI에 연결하는 구조와 수량 1개를 확정했고 모델·핀·장착 오프셋은 TBD-HW-012로 관리한다. 감속비·정지 전류·트랙폭·좌우 속도 대칭 등 세부 실측값과 전력 예산은 계속 TBD로 관리한다(부록 H).
 - 추가 학습 YOLO26n Detect와 STT-LLM-TTS 피해자 상호작용을 목표 구조에 포함한다. Pose는 사람 감지 시에만 실행하는 조건부 파이프라인으로 운영한다.
 - 짐벌은 프로젝트에서 완전히 제외한다. 카메라·LiDAR는 차체에 고정 마운트하며 정적(static) TF만 사용한다. 기존 FR-024(짐벌 NAV_LOCK/CENTER_LOCK)는 폐기한다.
 - 피해자 음성 출력은 블루투스 스피커, 입력은 BRIO 100 내장 마이크를 우선 적용한다. STT·LLM·TTS는 전부 Jetson 온디바이스로 실행하고 메모리 부족 시 33-8장의 축소안을 적용한다.
@@ -185,7 +186,7 @@ date: "2026-07-27"
 - [ROS 2 Humble Ubuntu 22.04 설치](https://docs.ros.org/en/humble/Installation/Ubuntu-Install-Debs.html)
 - [Ultralytics YOLO26](https://docs.ultralytics.com/models/yolo26/)
 - [Nav2 공식 문서](https://docs.nav2.org/)
-- [Nav2 알고리즘 선택 - Ackermann 지원](https://docs.nav2.org/setup_guides/algorithm/select_algorithm.html)
+- [Nav2 알고리즘 선택 - 차동 구동(differential) 지원](https://docs.nav2.org/setup_guides/algorithm/select_algorithm.html)
 - [ROS 2 Control Humble - Wheeled Mobile Robot Kinematics](https://control.ros.org/humble/doc/ros2_controllers/doc/mobile_robot_kinematics.html)
 - [MediaMTX 공식 문서](https://mediamtx.org/docs/kickoff/introduction)
 - [MQTT 5.0 OASIS 표준](https://docs.oasis-open.org/mqtt/mqtt/v5.0/mqtt-v5.0.html)

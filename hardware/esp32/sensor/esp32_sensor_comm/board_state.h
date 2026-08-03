@@ -8,7 +8,7 @@
 enum class SensorBoardState : uint8_t {
   BOOT,
   STREAMING,
-  DEGRADED,  // 센서 일부 실패(DHT-11 checksum 오류 등) - 실제 판독은 후속 티켓 범위라 이번엔 전이하지 않는다.
+  DEGRADED,  // 환경(DHT-11)·근접(HC-SR04) 센서 지속 실패 시 sensor_task.cpp가 전이시킨다.
   COMM_LOST,
 };
 
@@ -17,12 +17,13 @@ struct SensorSharedState {
   SensorBoardState state = SensorBoardState::BOOT;
   uint16_t faultFlags = 0;
 
-  // placeholder 텔레메트리 값. 실제 MT6701/DHT-11/HC-SR04 판독은 후속 센서 티켓의
-  // sensor_task.cpp가 채운다 - 여기서는 통신 계층 검증용 값만 갱신한다.
+  // 실측 텔레메트리 값. MT6701(좌/우 구동)·DHT-11·HC-SR04 판독은 sensor_task.cpp가 채운다.
   int32_t driveEncoderTicksLeft = 0;
   int32_t driveEncoderTicksRight = 0;
   int16_t driveSpeedLeftMmps = 0;
   int16_t driveSpeedRightMmps = 0;
+  // 조향 모터·조향 엔코더가 캐스터 휠로 대체되어 제거되었다 - 프로토콜 호환을 위해
+  // 필드는 유지하되 sensor_task.cpp가 항상 0으로 보고한다.
   int16_t measuredSteeringMdeg = 0;
 
   int16_t temperatureDeciC = 0;

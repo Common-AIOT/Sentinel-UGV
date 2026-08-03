@@ -158,12 +158,17 @@ def generate_launch_description():
         DeclareLaunchArgument('enable_bridge', default_value='true'),
         DeclareLaunchArgument('enable_voice', default_value='true'),
         DeclareLaunchArgument('enable_detector', default_value='true'),
-        # 개발용 실시간 시각화 (S15P11A301-176). 기본 꺼짐 — 데모 구성이 아니라
-        # 개발 도구다. WebSocket 서버가 토픽을 직렬화하느라 CPU를 쓰고, Orin
-        # Nano에서 x264enc·YOLO가 이미 코어를 다 쓴다(S15P11A301-131에서 오디오
-        # 손실로 겪었다). 필요할 때만 켠다:
-        #   ./scripts/demo_up.sh enable_viz:=true
-        DeclareLaunchArgument('enable_viz', default_value='false'),
+        # Foxglove Bridge (S15P11A301-176). **기본 켜짐으로 바꿨다
+        # (S15P11A301-224)** — 관제 웹의 실시간 지도가 여기서 /map 을 받으므로
+        # 더 이상 개발 도구가 아니라 제품 구성요소다.
+        #
+        # 끄면 관제 메인 화면의 지도가 비고, 그 이유가 화면에 안 나온다.
+        #
+        # 켜는 대가는 CPU 다. WebSocket 서버가 구독한 토픽을 직렬화하고 Orin
+        # Nano 에서 x264enc·YOLO 가 이미 코어를 다 쓴다(S15P11A301-131 에서 오디오
+        # 손실로 겪었다). 그래서 viz.launch.py 가 토픽을 여섯 개로 제한한다 —
+        # 화이트리스트가 없으면 카메라 원본까지 직렬화한다.
+        DeclareLaunchArgument('enable_viz', default_value='true'),
         # 데모 기본은 TLS다. 관제 웹(HTTPS)이 평문 WHEP를 혼합 콘텐츠로
         # 차단한다(32-4, S15P11A301-145). 인증서가 없는 개발 기기에서만 끈다.
         DeclareLaunchArgument('webrtc_encryption', default_value='true'),

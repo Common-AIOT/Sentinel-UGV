@@ -48,7 +48,7 @@
 # 데모 전체 스택. 개별 기능은 launch 인자로 끌 수 있다.
 ./scripts/demo_up.sh
 ./scripts/demo_up.sh enable_detector:=false
-./scripts/demo_up.sh enable_viz:=true        # Foxglove 시각화까지 (아래 참고)
+./scripts/demo_up.sh enable_viz:=false      # Foxglove Bridge 없이 (아래 참고)
 ./scripts/demo_down.sh                       # 전부 내린다
 ./scripts/demo_down.sh --dry-run             # 무엇을 정리할지만 본다
 
@@ -85,7 +85,12 @@ sudo systemctl disable --now sentinel-demo
 
 ### 시각화(Foxglove) 켜고 끄기
 
-SLAM 지도·스캔·TF를 눈으로 보는 수단이다(S15P11A301-177). **기본은 꺼져 있다.**
+SLAM 지도·스캔·TF를 눈으로 보는 수단이다(S15P11A301-177).
+
+**기본이 켜져 있다 (S15P11A301-224).** 관제 웹의 실시간 지도가 이 bridge에서
+`/map`을 받으므로 더 이상 개발 도구가 아니라 제품 구성요소다. `demo_up.sh`가 함께
+띄우므로 보통은 아래 스크립트를 쓸 일이 없다 — 스택을 재시작하지 않고 붙이거나
+뗄 때만 쓴다.
 
 ```bash
 ./scripts/viz_up.sh            # 켠다. 돌고 있는 스택에 붙는다
@@ -105,14 +110,62 @@ SLAM 지도·스캔·TF를 눈으로 보는 수단이다(S15P11A301-177). **기�
 명령줄에 들어 있어 셸 자신이 함께 죽는다(S15P11A301-125에서 `stop_sentinel.sh`가
 같은 사고를 겪었다). PID를 먼저 모으고 자기 자신과 부모를 제외한다.
 
-**스택을 처음 띄울 때 함께 켜는 길도 있다**(`./scripts/demo_up.sh enable_viz:=true`).
-다만 이미 스택이 돌고 있으면 `viz_up.sh`를 쓴다. 스택을 재시작하면 그때까지 쌓은
-SLAM 지도를 잃는다 — 지도는 메모리에만 있고 임무 종료 시점에 저장되므로
-(S15P11A301-171) 중간에 재시작하면 처음부터 다시 그린다.
+`demo_up.sh`가 이미 띄우므로 **껐다 켤 때만** 이 스크립트를 쓴다. 스택 전체를
+재시작하면 그때까지 쌓은 SLAM 지도를 잃는다 — 지도는 메모리에만 있고 임무 종료
+시점에 저장되므로(S15P11A301-171) 중간에 재시작하면 처음부터 다시 그린다.
 
-접속은 `ws://jetson.sentinel-ugv.xyz:8765`이고 연결 유형은 반드시
-**"Foxglove WebSocket"** 이다. Rosbridge를 고르면 핸드셰이크가 깨지고 서버 로그에
-`Dropping client ...: handshake`가 남는다.
+#### 접속 주소는 wss다
+
+```text
+wss://jetson.sentinel-ugv.xyz:8765
+```
+
+`ws://`가 아니다(S15P11A301-224). 관제 웹이 HTTPS이므로 평문이면 브라우저가 혼합
+콘텐츠로 차단한다. 인증서는 WHEP이 쓰는 것과 같은 파일이며
+`jetson.sentinel-ugv.xyz` 이름으로 발급돼 있다.
+
+연결 유형은 반드시 **"Foxglove WebSocket"** 이다. Rosbridge를 고르면 핸드셰이크가
+깨지고 서버 로그에 `Dropping client ...: handshake`가 남는다.
+
+개발용으로 평문이 필요하면 `viz_up.sh viz_tls:=false`로 띄운다. 그 상태로는 관제
+웹의 지도가 나오지 않는다.
+
+#### 광고되는 토픽이 여섯 개뿐이다
+
+```text
+/map  /pose  /scan  /tf  /tf_static  /robot_description
+```
+
+`viz_topic_whitelist`의 기본값이다. 카메라 원본은 관제 웹에서 보므로 뺐다. 넓히려면
+인자로 준다.
+
+**이 제한이 부하 문제를 없앤다.** bridge를 켜기 전에는 전체 토픽을 직렬화해 CPU
+경합이 우려됐는데(S15P11A301-131의 오디오 손실), 여섯 개로 줄인 뒤 실측하니 탐지
+FPS 중앙값이 5.90(켜짐) 대 5.80(꺼짐)이었다 — 차이가 잡음 범위이고 부호도 반대다.
+
+#### 쓰기가 막혀 있다
+
+`viz_capabilities` 기본값이 `[connectionGraph]`다. bridge 기본값에는
+`clientPublish`·`services`·`parameters`가 들어 있어 접속만 하면 토픽을 발행하고
+서비스를 부르고 파라미터를 바꿀 수 있었다. 지금은 읽기만 된다.
+
+**읽기는 열려 있다.** 젯슨이 공인 IP에 있어 인터넷에서 지도와 로봇 위치를 읽을 수
+있다. 학생 프로젝트 범위에서 수용한 결정이다. 닫으려면 `viz_up.sh --local`로 띄우고
+SSH 터널을 쓴다(그때는 관제 웹의 지도도 안 나온다).
+
+#### 브라우저 첫 접속이 조금 느릴 수 있다
+
+`foxglove_bridge`가 인증서 체인에서 **leaf 하나만 보낸다**(파일에는 3개가 있고
+같은 파일을 쓰는 MediaMTX는 전부 보낸다 — bridge 구현 한계다). 브라우저는 leaf의
+AIA 주소에서 중간 인증서를 스스로 받아 채운다.
+
+```text
+CA Issuers - URI:http://yr1.i.lencr.org/    (HTTP 200, 필요한 중간 인증서)
+```
+
+그래서 브라우저는 동작하지만 **AIA를 하지 않는 클라이언트는 실패한다**(예: 파이썬
+`ssl` 기본 설정). 시연 망에서 `lencr.org`로 나가는 HTTP가 막히면 인증서 검증이
+깨지므로, 그때는 앞단에 TLS 종단(nginx 등)을 두는 것이 대안이다.
 
 #### 3D 패널 설정 (S15P11A301-221)
 

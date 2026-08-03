@@ -41,7 +41,6 @@
 | `sentinel_voice/session_gate.py` | 신규 STT 세션 시작 전 GMS 가용성 게이트 |
 | `sentinel_voice/encounter.py` | 비전 Encounter 계약 검증과 encounter당 음성 세션 1회 조정 |
 | `sentinel_voice/report_delivery.py` | 관제 전송 대기/대기열 인계 상태 계약 |
-| `sentinel_voice/report_lifecycle.py` | 관제 ACK·재개 승인 상태머신 — **미배선**(ACK 부재 확정으로 전제 불성립) |
 | `sentinel_voice/pipeline.py` | 엔드투엔드 실행(다턴 대화 세션 조립·보고). 모델은 첫 사용 시 지연 로딩 |
 | `sentinel_voice/conversation.py` | 다턴 상태머신(질문 4개, 부상 우선 순서)과 VAD·STT·구조화 결과 4분류. 재질문은 INTRO 무응답 1회뿐 |
 | `sentinel_voice/session_runner.py` | 상태머신에 실제 마이크·STT·GMS·안내 음성을 연결하는 어댑터 |
@@ -202,7 +201,7 @@ python -m sentinel_voice.pipeline  # 1=마이크 8초, 2=파일 / 트리거는 V
 
 1. **STT int8** — `config.py`가 젯슨에서 자동으로 `int8` 선택(float16 대비 메모리 절반).
    강제하려면 `SENTINEL_COMPUTE=int8`.
-2. **안내 음성 사전녹음** — ✅ 재생·검증 코드 적용됨. 실제 승인 WAV는 녹음·청취 검수 후 포함(MeloTTS 미탑재).
+2. **안내 음성 사전녹음** — ✅ 적용됨. 문구 v2 WAV 6개 생성·변환·형식 검증 완료(2026-08-03). 블루투스 청취 검수는 실기에서.
 3. **LLM 미탑재** — ✅ 적용됨. GMS API 호출로 젯슨 LLM RAM 0 (구 로컬 3b는 피크 5.62GB였음).
 
 ### STEP 5 — 측정 (보고서 핵심 수치)

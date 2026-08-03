@@ -12,12 +12,16 @@
 - peak -1dBFS 이하
 - RMS -32~-12dBFS
 
-전체 파일과 형식은 다음 명령으로 검사한다.
+MiniMax 원본(`ai/stt/mini_*.wav`, 커밋 대상 아님)을 변환해 만든다. 변환은 PyAV로
+하며 ffmpeg 실행 파일이 필요하지 않다.
 
 ```bash
 python -m tools.convert_guide_assets --source-dir . --force
 python -m tools.validate_guide_assets --report results/guide-assets.json
 ```
+
+**문구를 바꿀 때는 자산도 같은 커밋에서 함께 바꾼다.** 코드가 새 문구로 대조하는데
+스피커가 구 문구를 재생하면 에코 가드가 무력해진다(S15P11A301-165).
 
 실제 파일 목록과 녹음·장비 검증 절차는
 [`../docs/README.md` §6 안내 음성 자산](../docs/README.md)를 따른다.

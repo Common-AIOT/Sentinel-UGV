@@ -19,6 +19,7 @@ from launch.actions import (
     DeclareLaunchArgument,
     ExecuteProcess,
     LogInfo,
+    OpaqueFunction,
     RegisterEventHandler,
     TimerAction,
 )
@@ -52,10 +53,101 @@ def _repo_root() -> str:
         current = parent
 
 
+# 시스템 파이썬 패키지 경로. TensorRT 10.3.0 이 여기 있다.
+#
+# `.venv` 가 `include-system-site-packages = false` 라 그대로는 보이지 않는다
+# (S15P11A301-102). venv 를 열어 해결하지 않는다 — 시스템 numpy 가 섞여 들어와
+# 다른 문제를 만든다. PYTHONPATH 로만 더한다.
+#
+# **엔진을 쓸 때는 빌드와 추론 양쪽에 필요하다.** 실측에서 이것 없이 `--model` 만
+# 넘기니 ultralytics 가 `import tensorrt` 에서 실패하고, pip 로 `tensorrt-cu12` 를
+# 자동 설치하려다 그것도 실패한 뒤 노드가 exit 1 로 죽었다. 재기동 상한까지
+# 반복하므로 **PyTorch 로 도는 것보다 나쁜 상태**가 된다.
+SYSTEM_DIST_PACKAGES = '/usr/lib/python3.10/dist-packages'
+
+
+def _engine_env() -> dict:
+    """엔진 추론에 필요한 PYTHONPATH 를 만든다.
+
+    기존 값을 지우지 않고 **뒤에 붙인다.** additional_env 는 그 키를 통째로
+    대체하므로 지금 값을 먼저 읽어야 하고, ROS 가 거기에 자기 경로를 넣어 둔다.
+
+    뒤에 붙이는 것이 중요하다. 앞에 두면 시스템 numpy 가 venv 것을 가려
+    ultralytics·torch 가 다른 방식으로 깨진다. 뒤면 tensorrt(시스템에만 있다)는
+    찾아지고 나머지는 venv 것이 이긴다.
+    """
+    current = os.environ.get('PYTHONPATH', '')
+    parts = [p for p in current.split(os.pathsep) if p]
+    if SYSTEM_DIST_PACKAGES not in parts:
+        parts.append(SYSTEM_DIST_PACKAGES)
+    return {'PYTHONPATH': os.pathsep.join(parts)}
+
+
+def _resolve_model(context, detection_dir: str):
+    """쓸 Detect 모델 경로를 정한다 (S15P11A301-225).
+
+    `model` 인자가 비어 있으면 `models/yolo26n.engine`을 찾는다. 있으면 그것을
+    쓰고, 없으면 **아무것도 넘기지 않아** `src.ros_main`이 설정 파일의 기본값
+    (`models/yolo26n.pt`, PyTorch)을 쓴다.
+
+    반환값은 (cmd 에 붙일 인자 목록, 로그 액션 목록, 추가 환경변수)이다.
+
+    ## 왜 이 함수가 있는가
+
+    이 launch 가 `--model` 을 넘기지 않아 **데모가 계속 PyTorch 로 돌고 있었다.**
+    `configs/pipeline.jetson.yaml` 이 "엔진은 --model 인자로 넘긴다"고 적어
+    두었는데 넘기는 곳이 없었다. S15P11A301-186 이 TensorRT 기준으로 측정한
+    detect_ms 51 대신 PyTorch 의 74 로 돌던 것이다.
+
+    엔진을 config 기본값으로 박지 않는 이유는 그 파일의 주석에 있다 — 기기·드라이버
+    종속이라 커밋되지 않으므로, 박아 두면 엔진을 굽지 않은 기기에서 clone 직후
+    실행이 깨진다.
+
+    ## 없을 때 조용히 넘어가지 않는다
+
+    지금 문제의 정체가 정확히 "조용한 PyTorch 폴백"이다. 없으면 경고를 남기고
+    무엇을 해야 하는지 적는다. 죽이지는 않는다 — 엔진이 없는 기기에서도 데모는
+    돌아야 한다(32장 장애 격리).
+    """
+    override = LaunchConfiguration('model').perform(context).strip()
+    if override:
+        # 사람이 명시했으면 존재 여부를 판단하지 않는다. 틀렸으면 노드가 그 이유를
+        # 직접 말하는 편이 낫다.
+        return (
+            ['--model', override],
+            [LogInfo(msg=f'[detection] 지정된 모델을 쓴다: {override}')],
+            _engine_env() if override.endswith('.engine') else {},
+        )
+
+    engine_rel = os.path.join('models', 'yolo26n.engine')
+    if os.path.isfile(os.path.join(detection_dir, engine_rel)):
+        return (
+            ['--model', engine_rel],
+            [LogInfo(msg=(
+                f'[detection] TensorRT 엔진을 쓴다: {engine_rel} '
+                f'(PYTHONPATH 에 {SYSTEM_DIST_PACKAGES} 추가)'
+            ))],
+            _engine_env(),
+        )
+
+    return [], [LogInfo(msg=(
+        '[detection] TensorRT 엔진이 없어 설정 파일 기본값(PyTorch)으로 돈다. '
+        'S15P11A301-186 실측에서 detect_ms 가 51 대신 74 였다(약 45% 느림). '
+        '엔진을 구우려면 ai/detection 에서: '
+        'PYTHONPATH=/usr/lib/python3.10/dist-packages '
+        '../../.venv/bin/yolo export model=models/yolo26n.pt format=engine '
+        'half=True device=0'
+    ))], {}
+
+
 def generate_launch_description() -> LaunchDescription:
     root = _repo_root()
     detection_dir = os.path.join(root, 'ai', 'detection')
     default_python = os.path.join(root, '.venv', 'bin', 'python')
+
+    # 모델 인자와 그 결정 로그. OpaqueFunction 안에서 한 번 정하고 재기동에도
+    # 같은 값을 쓴다 — 엔진이 도중에 생기거나 사라지는 상황은 다루지 않는다.
+    resolved = {'model_args': [], 'env': {}}
 
     def make_process() -> ExecuteProcess:
         """탐지 프로세스 하나. 재기동마다 새로 만든다.
@@ -75,10 +167,12 @@ def generate_launch_description() -> LaunchDescription:
                 LaunchConfiguration('device'),
                 '--output',
                 LaunchConfiguration('output'),
+                *resolved['model_args'],
             ],
             cwd=detection_dir,
             name='ai_detection_wrapper',
             output='screen',
+            additional_env=resolved['env'],
         )
 
     # 재기동 횟수. dict로 두는 것은 클로저에서 갱신하기 위해서다.
@@ -128,7 +222,23 @@ def generate_launch_description() -> LaunchDescription:
             ),
         ]
 
-    first = make_process()
+    def setup(context, *_args, **_kwargs):
+        """모델을 정한 뒤 프로세스와 이벤트 핸들러를 만든다.
+
+        `OpaqueFunction` 이어야 한다. `model` 인자를 읽으려면 launch context 가
+        필요하고, 파일 존재 확인 결과에 따라 cmd 를 다르게 만들어야 한다.
+        """
+        model_args, logs, env = _resolve_model(context, detection_dir)
+        resolved['model_args'] = model_args
+        resolved['env'] = env
+        first = make_process()
+        return [
+            *logs,
+            first,
+            RegisterEventHandler(
+                OnProcessExit(target_action=first, on_exit=on_exit)
+            ),
+        ]
 
     return LaunchDescription(
         [
@@ -167,9 +277,15 @@ def generate_launch_description() -> LaunchDescription:
                 default_value='8.0',
                 description='재기동 대기 초. 자원 압박이 풀릴 시간을 준다',
             ),
-            first,
-            RegisterEventHandler(
-                OnProcessExit(target_action=first, on_exit=on_exit)
+            DeclareLaunchArgument(
+                'model',
+                default_value='',
+                description=(
+                    'Detect 모델 경로 (ai/detection 기준 상대 경로). 비우면 '
+                    'models/yolo26n.engine 을 찾아 쓰고, 없으면 설정 파일 '
+                    '기본값(PyTorch)으로 돌면서 경고를 남긴다'
+                ),
             ),
+            OpaqueFunction(function=setup),
         ]
     )

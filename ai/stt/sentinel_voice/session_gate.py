@@ -32,11 +32,14 @@ def check_session_gate(
 ) -> SessionGateResult:
     """GMS 설정과 실제 GMS 호스트 도달성을 기준으로 세션 시작을 결정한다."""
 
+    # 차단 시 안내 문구는 없다. NETWORK_WAIT은 146 v2에서 삭제됐고("연결되는
+    # 대로 전달하겠습니다"는 세션 데이터가 없어 지킬 수 없는 약속이었다),
+    # 차단 사실은 로그와 operator_review_required로 남는다.
     if not config.GMS_KEY:
         return SessionGateResult(
             SessionGateState.GMS_MISCONFIGURED,
             False,
-            GuideCode.NETWORK_WAIT,
+            None,
             True,
         )
 
@@ -48,7 +51,7 @@ def check_session_gate(
         return SessionGateResult(
             SessionGateState.GMS_UNAVAILABLE,
             False,
-            GuideCode.NETWORK_WAIT,
+            None,
             True,
         )
     return SessionGateResult(SessionGateState.READY, True, None, False)

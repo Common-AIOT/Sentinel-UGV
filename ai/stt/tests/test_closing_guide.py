@@ -1,12 +1,12 @@
-"""세션 종료 안내의 선택 규칙 (S15P11A301-183).
+"""세션 종료 안내의 선택 규칙 (S15P11A301-183 → 201에서 단일화).
 
-관제 ACK 어댑터가 없는 상태에서 시연용 완료형 안내를 쓰기 위해, 기존 완료+탐사
-자산(`REPORT_SUCCEEDED_DEPARTURE`)의 `requires_report_success` 잠금을 풀어 발신
-완료(QUEUED) 시점에 재생한다. 새 문구를 녹음하지 않고 자산을 재사용한다.
+2026-08-01 결정(146 v2): 종료 안내는 발신 상태와 무관하게
+`REPORT_SUCCEEDED_DEPARTURE` 하나다. 관제 ACK는 로봇 다수 투입으로 존재하지
+않고, 브리지 인계 실패는 없다고 가정한다(잔여 위험은 문서 §11).
 
-  발신 진행 중 · 재개 불가   REPORT_PENDING              잠금 없음
-  발신 완료 + 임무 진행 중    REPORT_SUCCEEDED_DEPARTURE  requires_exploration_resume
-  관제 ACK 확인 · 재개 없음   REPORT_SUCCEEDED            requires_report_success (S15P11A301-182)
+`requires_exploration_resume` 게이트는 유지한다 — E-Stop·중단 상태에서
+"다시 탐색을 시작합니다"를 말하면 거짓이 되므로, 그 경우 호출자(ros_node)가
+재생을 생략한다. CLI는 임무 상태가 없어 재개를 가정한다(pipeline).
 """
 
 import tempfile
@@ -134,23 +134,22 @@ class DocumentedTextMatchesCodeTest(unittest.TestCase):
 
 
 class DeliveryGuideSelectionTest(unittest.TestCase):
-    def test_pending_adapter_keeps_progressive_form(self):
-        """전송 어댑터가 없으면 완료형을 쓰지 않는다."""
-        result = queue_report({"sessionId": "s1"})
-        self.assertEqual(result.state, DeliveryState.PENDING)
-        self.assertEqual(result.guide_code, GuideCode.REPORT_PENDING)
+    """모든 발신 상태가 같은 종료 문구를 쓴다(146 v2). 상태 구분은 기록용."""
 
-    def test_accepted_handoff_uses_departure_form(self):
-        result = queue_report({"sessionId": "s1"}, lambda _report: True)
-        self.assertEqual(result.state, DeliveryState.QUEUED)
-        self.assertEqual(
-            result.guide_code, GuideCode.REPORT_SUCCEEDED_DEPARTURE
-        )
-
-    def test_failed_handoff_uses_network_wait(self):
-        result = queue_report({"sessionId": "s1"}, lambda _report: False)
-        self.assertEqual(result.state, DeliveryState.FAILED)
-        self.assertEqual(result.guide_code, GuideCode.NETWORK_WAIT)
+    def test_every_delivery_state_uses_the_single_departure_guide(self):
+        cases = [
+            ("어댑터 없음", None, DeliveryState.PENDING),
+            ("인계 성공", lambda _report: True, DeliveryState.QUEUED),
+            ("인계 거부", lambda _report: False, DeliveryState.FAILED),
+        ]
+        for label, enqueue, expected_state in cases:
+            with self.subTest(label=label):
+                result = queue_report({"sessionId": "s1"}, enqueue)
+                self.assertEqual(result.state, expected_state)
+                self.assertEqual(
+                    result.guide_code,
+                    GuideCode.REPORT_SUCCEEDED_DEPARTURE,
+                )
 
 
 class MissionResumeExpectationTest(unittest.TestCase):

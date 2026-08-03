@@ -11,9 +11,9 @@
 
 세션 종료 안내는 말하는 시점에 참인 문구만 재생한다.
 
-  발신 진행 중·재개 불가   REPORT_PENDING              "전달하고 있습니다"
-  발신 완료 + 임무 진행 중  REPORT_SUCCEEDED_DEPARTURE  "전달되었습니다 ... 탐사를 계속하겠습니다"
-  관제 ACK 확인·재개 없음  REPORT_SUCCEEDED            "전달되었습니다" (S15P11A301-182까지 잠금)
+  종료 안내는 단일 문구(REPORT_SUCCEEDED_DEPARTURE)다 — 146 v2, 실패 없음 가정.
+  임무 상태가 재개를 약속할 수 없으면 재생하지 않고 기록만 남긴다.
+  (관제 ACK는 로봇 다수 투입으로 존재하지 않는다 — 2026-08-01 확정)
 
 안내를 DIALOGUE_ENDED보다 먼저 재생한다. 즉시 재개 정책에서 순서를 뒤집으면
 로봇이 멀어지며 마지막 안내를 하게 되어 요구조자가 듣지 못한다.
@@ -290,13 +290,17 @@ class VoiceSessionNode(Node):
                 aborted = self._abort_state is not None
             resume_expected = not aborted and mission_resume_expected(state)
             if not resume_expected:
-                # 발신은 끝났지만 재개를 약속할 수 없다. 안전 주장이 없는
-                # 진행형 안내로 낮춘다. 대기 지시 문구는 두지 않는다.
-                code = GuideCode.REPORT_PENDING
+                # 재개를 약속할 수 없으면 탐사 문구를 재생하지 않는다.
+                # 진행형 대체 문구(REPORT_PENDING)는 146 v2에서 삭제됐다 —
+                # 지킬 수 없는 약속 대신 침묵을 택하고 기록만 남긴다.
                 self.get_logger().info(
                     f"탐사 재개를 약속하지 않는다 (임무 상태 {state}) — "
-                    "진행형 안내로 낮춤"
+                    "종료 안내 생략"
                 )
+                session_log.announcement(
+                    code.value, "SKIPPED", f"탐사 재개 약속 불가 ({state})"
+                )
+                return
         try:
             from .pipeline import guide_player
 

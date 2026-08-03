@@ -411,25 +411,33 @@ GMS가 **생성하지 않는** 필드: `responseScope`(시스템 고정) · `any
 
 > Jira: S15P11A301-112(상태머신), 157(실물 배선)
 
-### 4-1. 질문 5개 — 고정 목록을 한 번 훑는다
+### 4-1. 질문 4개 — 부상 우선 순서로 한 번 훑는다
 
 ```text
-INTRO → COUNT → MOBILITY → URGENT → CLOSING
+INTRO → URGENT → MOBILITY → COUNT → CLOSING
 ```
+
+**URGENT를 먼저 묻는다.** 세션이 조기 종료(타임아웃·중단)되어도 가장 중요한 부상
+정보부터 확보한다(S15P11A301-146 v2).
 
 | 질문 | 채우는 필드 | 청취창 | 재질문 (1회) | 재질문 문구 |
 |---|---|---|---|---|
 | INTRO | `anyResponseDetected` | 5초 | **무음일 때** | `RETRY_NO_RESPONSE` |
-| COUNT | `reportedResponsiveCount` | 6초 | **알아듣지 못했을 때** | `RETRY_UNCLEAR` |
-| MOBILITY | `mobilityStatus` | 6초 | **알아듣지 못했을 때** | `RETRY_UNCLEAR` |
-| URGENT | `urgentConditionReported` | 8초 | **알아듣지 못했을 때** | `RETRY_UNCLEAR` |
+| URGENT | `urgentConditionReported` | 8초 | 없음 | — |
+| MOBILITY | `mobilityStatus` | 6초 | 없음 | — |
+| COUNT | `reportedResponsiveCount` | 6초 | 없음 | — |
 | CLOSING | — | — | — | 종료 안내는 전송 단계가 한다(§11-7) |
 
-> **재질문 조건이 질문마다 다르다.** INTRO는 발화 존재 자체가 답이므로 이해 실패도
-> 응답으로 집계되고 재질문하지 않는다. 나머지는 필드값을 확정해야 하므로
-> **들었으나 알아듣지 못한 경우**(`VOICE_DETECTED_STT_FAILED`·`RESPONSE_UNRECOGNIZED`)에
-> 한 번 더 묻는다. 무음에는 `RETRY_UNCLEAR`("목소리가 잘 들리지 않았습니다")가 맞지
-> 않으므로 재질문하지 않는다.
+> **재질문은 INTRO 무음 1회뿐이다** (S15P11A301-201). 값을 확정하지 못한 응답
+> (`VOICE_DETECTED_STT_FAILED`·`RESPONSE_UNRECOGNIZED`)은 되묻지 않고 `UNKNOWN`으로
+> 두고 다음 질문으로 넘어간다 — 한시가 급한 상황에 "이상하게 말했으니 다시 말해
+> 달라"는 요구가 이질적이라는 컨설팅 지적에 따른 것이다.
+>
+> **트레이드오프를 숨기지 않는다.** 약한 발화("움직일 수 있어요" → STT "이럴 수
+> 있어요?")의 값은 기계 보고에서 `UNKNOWN`으로 남는다. 보상 통제는 세션 블랙박스
+> (S15P11A301-202) — 원문 전사와 녹음이 관제로 올라가 사람이 판단한다.
+> INTRO 무음만 되묻는 이유는 "안 들리는 경우"에 한 번 더 부르는 것은 사람 사이에서도
+> 자연스럽기 때문이다.
 
 **중요한 성질 세 가지.**
 

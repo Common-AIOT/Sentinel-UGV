@@ -53,9 +53,15 @@ PROMPTS = {
     QuestionCode.URGENT: GUIDE_ASSETS[GuideCode.ASK_URGENT].text,
 }
 
-# 청취가 있는 질문. CLOSING은 안내만 하고 답을 받지 않는다.
-ASKED_QUESTIONS = tuple(
-    question for question in QuestionCode if question != QuestionCode.CLOSING
+# 청취가 있는 질문의 진행 순서. CLOSING은 안내만 하고 답을 받지 않는다.
+#
+# URGENT를 먼저 묻는다. 세션이 조기 종료(타임아웃·중단)되어도 가장 중요한
+# 부상 정보부터 확보한다(S15P11A301-146 v2).
+ASKED_QUESTIONS = (
+    QuestionCode.INTRO,
+    QuestionCode.URGENT,
+    QuestionCode.MOBILITY,
+    QuestionCode.COUNT,
 )
 
 # 세션 전체 예산(초). 기본값은 여기 한 곳에만 둔다 — 두 곳에 복제했더니
@@ -69,30 +75,17 @@ FIELD_BY_QUESTION = {
     QuestionCode.URGENT: "urgentConditionReported",
 }
 
-# 들었으나 값을 확정하지 못한 응답. 한 번 더 물어볼 값어치가 있다.
-UNCLEAR_RESPONSES = frozenset(
-    {
-        ResponseClass.VOICE_DETECTED_STT_FAILED,
-        ResponseClass.RESPONSE_UNRECOGNIZED,
-    }
-)
-
 # 질문별 재질문 정책: (다시 물을 응답 분류, 재질문에 쓸 안내).
 #
-# INTRO는 발화 존재 자체가 답이므로 이해 실패는 재질문 대상이 아니다. 이미 응답이
-# 있다고 판정된다. 나머지 질문은 필드값을 확정해야 하므로, 들었으나 알아듣지 못한
-# 경우에 한 번 더 묻는다(S15P11A301-165).
-#
-# 재질문은 질문당 1회다. 세 질문이 모두 재질문해도 실측 최대 111초 + 약 30초로
-# 예산 180초 안에 있다.
+# 재질문은 INTRO 무응답 1회뿐이다. 들었으나 값을 확정하지 못한 응답(STT 실패,
+# 값 미확정)은 되묻지 않는다 — 급박한 상황에 다시 말해 달라는 요구가 이질적이라는
+# 컨설팅 지적으로 제거했다(S15P11A301-201). 확정 실패는 UNKNOWN으로 두며,
+# 원문 전사·녹음이 세션 기록에 남아 관제가 직접 판단한다(S15P11A301-202).
 RETRY_POLICY = {
     QuestionCode.INTRO: (
         frozenset({ResponseClass.NO_VOICE_DETECTED}),
         GuideCode.RETRY_NO_RESPONSE,
     ),
-    QuestionCode.COUNT: (UNCLEAR_RESPONSES, GuideCode.RETRY_UNCLEAR),
-    QuestionCode.MOBILITY: (UNCLEAR_RESPONSES, GuideCode.RETRY_UNCLEAR),
-    QuestionCode.URGENT: (UNCLEAR_RESPONSES, GuideCode.RETRY_UNCLEAR),
 }
 
 
@@ -196,7 +189,9 @@ class ConversationMachine:
             self.prompt(question, PROMPTS[question])
             self._transition(result, SessionState.TTS_RESPONDING)
 
-            retry_classes, retry_guide = RETRY_POLICY[question]
+            retry_classes, retry_guide = RETRY_POLICY.get(
+                question, (frozenset(), None)
+            )
             max_attempts = 2
             for attempt in range(1, max_attempts + 1):
                 if self._stop_if_needed(result, started_at):

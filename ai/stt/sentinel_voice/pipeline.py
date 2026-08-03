@@ -4,9 +4,9 @@
   트리거(VISION) → 세션 게이트 → 다턴 대화 세션 → 규칙 위험도 → 관제 보고 대기
                  → 안내 음성(승인된 사전녹음)
 
-대화 세션은 명세 33-3 순서를 따른다.
+대화 세션은 명세 33-3의 4분류를 따르되, 질문 순서는 부상 우선이다(S15P11A301-146 v2).
 
-  INTRO → COUNT → MOBILITY → URGENT → CLOSING
+  INTRO → URGENT → MOBILITY → COUNT → CLOSING
 
 설계 원칙
   - 순서·실패 규칙은 `conversation.ConversationMachine`, 실물 입출력 연결은
@@ -128,24 +128,39 @@ def build_dependencies() -> SessionDependencies:
 
 
 # ── 보고 ─────────────────────────────────────────────────────────
-def speak(text: str, *, report_succeeded: bool = False):
+def speak(
+    text: str,
+    *,
+    report_succeeded: bool = False,
+    exploration_resume_approved: bool = False,
+):
     """승인된 안내 음성을 재생하고 실패를 명시적으로 기록한다."""
     say(f"🔊 로봇: {text}")
-    result = guide_player.play_text(text, report_succeeded=report_succeeded)
+    result = guide_player.play_text(
+        text,
+        report_succeeded=report_succeeded,
+        exploration_resume_approved=exploration_resume_approved,
+    )
     if not result.ok:
         say(f"   ⚠️ 안내 음성 재생 실패: {result.status.value} ({result.detail})")
     return result
 
 
 def queue_and_announce(info: dict, *, session_log: SessionLog | None = None):
-    """보고서를 전송 경계에 인계하고 발신 상태에 맞는 종료 안내를 재생한다.
+    """보고서를 전송 경계에 인계하고 종료 안내를 재생한다.
 
     세션의 마지막 안내는 여기서만 나온다. 상태머신은 발신 상태를 알 수 없으므로
     종료 안내를 하지 않는다(`conversation.PROMPTS` 참고).
+
+    단독 실행(CLI)에는 임무 상태가 없어 탐사 재개를 가정하고 재생한다.
+    실기 경로의 재개 판단은 ros_node가 임무 상태로 한다.
     """
     delivery = queue_report(info)
     say(f"📨 관제 보고 상태: {delivery.state.value} ({delivery.detail})")
-    playback = speak(GUIDE_ASSETS[delivery.guide_code].text)
+    playback = speak(
+        GUIDE_ASSETS[delivery.guide_code].text,
+        exploration_resume_approved=True,
+    )
     if session_log is not None:
         session_log.announcement(
             delivery.guide_code.value, playback.status.value, delivery.detail
@@ -192,8 +207,10 @@ def run(
     # 일반 인터넷이 아니라 GMS 호스트 도달성을 본다. 실패하면 세션을 시작하지 않는다.
     gate = gate_result or check_session_gate()
     if not gate.proceed:
+        # 차단 안내 문구는 146 v2에서 삭제됐다. 차단은 로그로만 남긴다.
         say(f"⚠️ 음성 세션 시작 차단: {gate.state.value}")
-        speak(GUIDE_ASSETS[gate.guide_code].text)
+        if gate.guide_code is not None:
+            speak(GUIDE_ASSETS[gate.guide_code].text)
         say(f"⏱ E2E: {time.time() - started:.1f}s")
         return None
 

@@ -8,7 +8,7 @@
   - 전환 근거: 젯슨 실측에서 로컬 LLM(qwen2.5:3b) 피크 5.62GB·page cache OOM — [`stt/docs/measurements/메모리-예산.md`](stt/docs/measurements/메모리-예산.md)
   - **네트워크 단절이 확인되면 신규 STT 대화를 시작하지 않습니다.** 안전 안내 음성만 재생하고 관제 전송을 대기열에 보관합니다.
   - 이미 STT가 끝난 뒤 GMS 호출만 실패한 경우에 한해 명세 33-8 축소안(키워드 파서)을 사용합니다([`stt/llm.py`](stt/llm.py)).
-- TTS는 **사전녹음 wav 재생**(고정 안내 문구, RAM 절약 1순위). MeloTTS는 개발 PC에서 wav 생성용.
+- TTS는 **사전녹음 wav 재생**(고정 안내 문구, RAM 절약 1순위). 자산은 개발 PC에서 MiniMax로 생성해 16kHz mono PCM으로 변환한다(MeloTTS는 PyPI 패키징 버그로 미사용).
 - Orin Nano 8GB는 비전(YOLO)·SLAM·Nav2와 자원을 나눠 쓰므로 **경량화**가 전제입니다.
 
 ## 구성

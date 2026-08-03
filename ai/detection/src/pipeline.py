@@ -17,11 +17,11 @@ import numpy as np
 
 from .logger import PipelineLogger
 from .object_detector import ObjectDetector
+from .motion import MotionTracker
 from .persistence import PersistenceTracker
 from .pose_estimator import PoseEstimator, PoseScheduler
 from .posture_classifier import PostureClassifier, PostureSmoother
 from .schemas import (
-    POSTURE_UNKNOWN,
     FrameResult,
     PersonObservation,
     PostureResult,
@@ -194,10 +194,22 @@ class InferencePipeline:
             keypoint_confidence=self.keypoint_confidence,
             depth_tilt=posture_cfg.get("depth_tilt", True),
             torso_shoulder_ratio=posture_cfg.get("torso_shoulder_ratio", 1.3),
+            fallen_threshold=posture_cfg.get("fallen_threshold", 0.5),
+            weight_torso_angle=posture_cfg.get("weight_torso_angle", 1.0),
+            weight_vertical_extent=posture_cfg.get("weight_vertical_extent", 1.0),
+            weight_bbox_aspect=posture_cfg.get("weight_bbox_aspect", 0.8),
+            weight_inactivity=posture_cfg.get("weight_inactivity", 0.4),
+            width_torso_angle=posture_cfg.get("width_torso_angle", 12.0),
+            width_vertical_extent=posture_cfg.get("width_vertical_extent", 0.08),
+            width_bbox_aspect=posture_cfg.get("width_bbox_aspect", 0.25),
         )
-        self.smoother = PostureSmoother(
-            window=posture_cfg.get("smoothing_window", 1),
-            unknown_yields_to_known=posture_cfg.get("unknown_yields_to_known", True),
+        self.smoother = PostureSmoother(window=posture_cfg.get("smoothing_window", 1))
+
+        motion_cfg = config.get("motion") or {}
+        self.motion = MotionTracker(
+            still_ratio=motion_cfg.get("still_ratio", 0.06),
+            full_still_seconds=motion_cfg.get("full_still_seconds", 3.0),
+            forget_seconds=float((config.get("memory") or {}).get("forget_seconds", 10.0)),
         )
 
         mem_cfg = config.get("memory") or {}
@@ -287,6 +299,13 @@ class InferencePipeline:
 
         persons: list[PersonObservation] = []
         for det in detections:
+            x1, y1, x2, y2 = det.bbox_xyxy
+            center = ((x1 + x2) / 2.0, (y1 + y2) / 2.0)
+            size = max(det.width, det.height)
+            # 부동 점수는 관절과 무관하게 매 프레임 갱신한다. 누운 사람은 관절이
+            # 가려져도 움직이지 않는다는 성질을 쓴다.
+            inactivity = self.motion.update(det.track_id, center, size, timestamp_sec)
+
             pose = None
             pose_ran = det.track_id is not None and det.track_id in pose_targets
             if pose_ran:
@@ -294,24 +313,23 @@ class InferencePipeline:
                 pose = self.pose_estimator.estimate(frame, det)
                 self.stats.pose_sec += time.perf_counter() - pose_start
                 self.stats.pose_runs += 1
-                posture = self.smoother.smooth(det.track_id, self.classifier.classify(det, pose))
+
+            # Pose를 안 돌린 프레임에서도 판정한다. 관절이 없으면 형상·부동
+            # 신호만으로 계산되며 signal_count가 그 사실을 싣는다.
+            # 이전 구현은 여기서 직전 판정을 재사용하거나 POSE_UNKNOWN을 냈다.
+            posture = self.smoother.smooth(
+                det.track_id, self.classifier.classify(det, pose, inactivity=inactivity)
+            )
+            if pose_ran:
                 self.pose_scheduler.cache(det.track_id, posture)
-            else:
-                # Pose를 돌리지 않은 프레임은 직전 판정을 재사용한다.
-                # 없으면 아직 자세를 모르는 상태다(명세: 관절 정보 부족 = POSE_UNKNOWN).
-                posture = self.pose_scheduler.cached(det.track_id) or PostureResult(
-                    status=POSTURE_UNKNOWN, reason="Pose 미실행(조건부 스케줄)"
-                )
 
-
-            x1, y1, x2, y2 = det.bbox_xyxy
             state = self.persistence.update(
                 det.track_id,
                 posture.status,
                 timestamp_sec,
                 # ID가 바뀌어도 같은 자리면 지속 시간을 승계하기 위한 정보
-                center=((x1 + x2) / 2.0, (y1 + y2) / 2.0),
-                size=max(det.width, det.height),
+                center=center,
+                size=size,
             )
             if state.event_confirmed:
                 self.stats.person_events += 1
@@ -334,6 +352,7 @@ class InferencePipeline:
 
         self.persistence.prune(timestamp_sec)
         self.pose_scheduler.prune(timestamp_sec)
+        self.motion.prune(timestamp_sec)
         self.smoother.forget({d.track_id for d in detections if d.track_id is not None})
 
         result = FrameResult(
@@ -394,8 +413,14 @@ class InferencePipeline:
             person.pose = pose
             # 실제로 Pose가 돌았으므로 판정도 그 결과로 갱신한다. 그래야 pose_ran이
             # "이 관측의 자세가 실행 결과에서 나왔다"는 뜻을 유지한다.
+            # 부동 점수는 이번 프레임에서 이미 갱신됐으므로 조회만 한다.
+            inactivity = min(
+                1.0,
+                self.motion.still_seconds(det.track_id, timestamp_sec)
+                / self.motion.full_still_seconds,
+            )
             person.posture = self.smoother.smooth(
-                det.track_id, self.classifier.classify(det, pose)
+                det.track_id, self.classifier.classify(det, pose, inactivity=inactivity)
             )
             self.pose_scheduler.cache(det.track_id, person.posture)
             person.pose_ran = True
@@ -555,6 +580,7 @@ class InferencePipeline:
         self.persistence.reset()
         self.smoother.reset()
         self.pose_scheduler.reset()
+        self.motion.reset()
 
         fps = capture.get(cv2.CAP_PROP_FPS)
         if not fps or fps <= 0 or np.isnan(fps):

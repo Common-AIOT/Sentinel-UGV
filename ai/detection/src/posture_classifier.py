@@ -1,13 +1,35 @@
-"""keypoint 기반 규칙 자세 판정.
+"""쓰러짐 판정 — 다중 신호 점수 기반 이진 분류.
 
-학습 모델이 아니라 명시적인 규칙이다(AGENTS.md §10). 단일 기준으로 판정하지 않고
-최소 두 개 이상의 신호를 조합한다(AGENTS.md §15). 임계값은 configs/pipeline.yaml에서
-주입받으며 이 파일에 하드코딩하지 않는다.
+학습 모델이 아니라 명시적인 규칙이다(AGENTS.md §10). 임계값은 설정에서 주입받으며
+이 파일에 하드코딩하지 않는다.
 
-사용하는 신호
-  1. torso_angle_deg      : 어깨중점→엉덩이중점 벡터가 수직축과 이루는 각도
-  2. bbox_aspect_ratio    : bbox 가로/세로 비
-  3. vertical_extent_ratio: 어깨-엉덩이 y 차이를 사람 크기로 정규화한 값
+## 이진 분류 (2026-08-03 변경)
+
+출력은 NORMAL / FALLEN 두 값이다. 이전 3값 체계의 POSE_UNKNOWN이 관측의 약 21%를
+차지해 다섯 중 하나는 답을 내지 못했다. 재난 탐색에서 관제가 필요한 답은
+"쓰러졌나 아닌가" 하나다.
+
+확신도는 라벨이 아니라 `fallen_score`(0~1)와 `signal_count`(쓴 신호 수)로 싣는다.
+
+## 신호 4개 — 관절 없이도 판정한다
+
+  1. torso_angle_deg       : 상체 기울기. 좌우(2D)와 앞뒤(단축률) 중 큰 값   [관절 필요]
+  2. vertical_extent_ratio : 어깨-엉덩이 y 차이를 사람 크기로 정규화         [관절 필요]
+  3. bbox_aspect_ratio     : bbox 가로/세로 비                              [관절 불필요]
+  4. inactivity            : 정지 지속 시간 (MotionTracker)                 [관절 불필요]
+
+**관절이 안 잡혀도 3·4번이 남는다.** 문헌은 누운 자세가 원근 단축 왜곡과 가림 때문에
+pose 추정이 가장 안 되는 구간이라고 지적한다. 즉 관절에만 의존하면 가장 필요한
+순간에 가장 약한 신호를 쓰게 된다. 이전 구현은 관절이 부족하면 이미 계산해둔 bbox
+신호마저 버리고 POSE_UNKNOWN을 냈다.
+
+## 점수화
+
+각 신호를 임계값 기준 시그모이드로 0~1에 매핑해 가중 평균한다. 이산 투표에서는
+54도와 10도가 똑같이 "표 없음"이었지만, 점수는 이를 구분한다.
+
+⚠️ 이 점수는 **보정된 확률이 아니다.** 가중치와 임계값은 실측 근거가 없는 값이며,
+라벨 데이터 확보 후 로지스틱 회귀로 교체할 자리다(계획: 2단계).
 """
 
 from __future__ import annotations
@@ -16,13 +38,28 @@ import math
 from collections import Counter, deque
 
 from .schemas import (
-    POSTURE_STANDING,
-    POSTURE_POSSIBLE_FALLEN,
-    POSTURE_UNKNOWN,
+    POSTURE_NORMAL,
+    POSTURE_FALLEN,
     Detection,
     PoseResult,
     PostureResult,
 )
+
+
+def _sigmoid_score(value: float, threshold: float, width: float, *, higher_is_fallen: bool) -> float:
+    """값을 임계값 기준 0~1 점수로 편다.
+
+    임계값에서 정확히 0.5가 되고, width만큼 떨어지면 약 0.73/0.27이 된다.
+    width가 작을수록 예전의 이산 판정에 가까워진다.
+    """
+    if width <= 0:
+        return 1.0 if (value >= threshold) == higher_is_fallen else 0.0
+    z = (value - threshold) / width
+    if not higher_is_fallen:
+        z = -z
+    # math.exp 오버플로 방지
+    z = max(-60.0, min(60.0, z))
+    return 1.0 / (1.0 + math.exp(-z))
 
 
 class PostureClassifier:
@@ -36,6 +73,14 @@ class PostureClassifier:
         keypoint_confidence: float = 0.5,
         depth_tilt: bool = True,
         torso_shoulder_ratio: float = 1.3,
+        fallen_threshold: float = 0.5,
+        weight_torso_angle: float = 1.0,
+        weight_vertical_extent: float = 1.0,
+        weight_bbox_aspect: float = 0.8,
+        weight_inactivity: float = 0.4,
+        width_torso_angle: float = 12.0,
+        width_vertical_extent: float = 0.08,
+        width_bbox_aspect: float = 0.25,
     ) -> None:
         self.torso_horizontal_deg = torso_horizontal_deg
         self.bbox_aspect_ratio = bbox_aspect_ratio
@@ -47,6 +92,19 @@ class PostureClassifier:
         # 똑바로 선 사람의 (어깨중점→엉덩이중점 길이) / (어깨 폭) 기대비.
         # ⚠️ 해부학 통념에 따른 값이며 실측 근거가 없다. 실영상 확보 후 조정한다.
         self.torso_shoulder_ratio = torso_shoulder_ratio
+
+        # 가중 평균 점수가 이 값 이상이면 FALLEN.
+        self.fallen_threshold = fallen_threshold
+        # 신호별 가중치. inactivity는 낮게 둔다 — 가만히 서 있는 사람도 부동이라
+        # 단독으로 임계값을 넘으면 안 된다(아래 _assert 없이 설계로 보장).
+        self.weight_torso_angle = weight_torso_angle
+        self.weight_vertical_extent = weight_vertical_extent
+        self.weight_bbox_aspect = weight_bbox_aspect
+        self.weight_inactivity = weight_inactivity
+        # 시그모이드 폭. 작을수록 예전 이산 판정에 가깝다.
+        self.width_torso_angle = width_torso_angle
+        self.width_vertical_extent = width_vertical_extent
+        self.width_bbox_aspect = width_bbox_aspect
 
     @staticmethod
     def _midpoint(
@@ -95,55 +153,111 @@ class PostureClassifier:
         cos_tilt = min(1.0, max(0.0, observed / self.torso_shoulder_ratio))
         return math.degrees(math.acos(cos_tilt))
 
-    def classify(self, detection: Detection, pose: PoseResult | None) -> PostureResult:
-        signals: dict[str, float | bool | None] = {}
+    def classify(
+        self,
+        detection: Detection,
+        pose: PoseResult | None,
+        inactivity: float | None = None,
+    ) -> PostureResult:
+        """쓰러짐 점수를 계산하고 이진 라벨을 붙인다.
 
-        # bbox 신호는 pose가 없어도 계산할 수 있다.
+        inactivity는 MotionTracker가 준 부동 점수(0~1)다. None이면 그 신호를
+        빼고 계산한다. 관절이 없어도 bbox와 부동으로 판정하므로, 이 함수는
+        어떤 경우에도 NORMAL 또는 FALLEN을 반환한다.
+        """
+        signals: dict[str, float | bool | None] = {}
+        # (점수, 가중치) 쌍. 사용할 수 있는 신호만 담긴다.
+        scored: list[tuple[float, float]] = []
+
+        # --- 신호 3: bbox 가로세로비 (관절 불필요) ---
         height = detection.height
         aspect = detection.width / height if height > 0 else 0.0
         signals["bbox_aspect_ratio"] = round(aspect, 3)
-        bbox_horizontal = aspect >= self.bbox_aspect_ratio
+        s_aspect = _sigmoid_score(
+            aspect, self.bbox_aspect_ratio, self.width_bbox_aspect, higher_is_fallen=True
+        )
+        signals["score_bbox_aspect"] = round(s_aspect, 3)
+        scored.append((s_aspect, self.weight_bbox_aspect))
 
-        if pose is None:
-            return PostureResult(
-                status=POSTURE_UNKNOWN,
-                signals=signals,
-                reason="pose 결과 없음",
+        # --- 신호 4: 부동 (관절 불필요) ---
+        # 가만히 서 있는 사람도 부동이므로 가중치를 낮게 두어 단독으로는
+        # 임계값을 넘지 못하게 한다. 형상이 수평일 때 확신을 올리는 보조다.
+        if inactivity is not None:
+            signals["inactivity"] = round(inactivity, 3)
+            scored.append((inactivity, self.weight_inactivity))
+
+        # --- 관절 기반 신호 2개 ---
+        reason = ""
+        torso = self._torso_signals(detection, pose, signals)
+        if torso is None:
+            reason = "관절 부족 — 형상·부동으로 판정"
+        else:
+            torso_angle, extent = torso
+            s_angle = _sigmoid_score(
+                torso_angle, self.torso_horizontal_deg, self.width_torso_angle,
+                higher_is_fallen=True,
             )
+            s_extent = _sigmoid_score(
+                extent, self.vertical_extent_ratio, self.width_vertical_extent,
+                higher_is_fallen=False,
+            )
+            signals["score_torso_angle"] = round(s_angle, 3)
+            signals["score_vertical_extent"] = round(s_extent, 3)
+            scored.append((s_angle, self.weight_torso_angle))
+            scored.append((s_extent, self.weight_vertical_extent))
+
+        total_weight = sum(w for _, w in scored)
+        score = sum(v * w for v, w in scored) / total_weight if total_weight > 0 else 0.0
+
+        status = POSTURE_FALLEN if score >= self.fallen_threshold else POSTURE_NORMAL
+        if not reason:
+            reason = f"점수 {score:.2f} (신호 {len(scored)}개)"
+
+        return PostureResult(
+            status=status,
+            fallen_score=score,
+            signal_count=len(scored),
+            signals=signals,
+            reason=reason,
+        )
+
+    def _torso_signals(
+        self,
+        detection: Detection,
+        pose: PoseResult | None,
+        signals: dict,
+    ) -> tuple[float, float] | None:
+        """(상체 기울기 각도, 수직 신장비)를 계산한다. 못 구하면 None.
+
+        None을 돌려도 판정을 포기하지 않는다. 호출부가 형상·부동 신호로 계속
+        진행한다. 이전 구현은 여기서 POSE_UNKNOWN을 반환해 이미 계산해둔 bbox
+        신호까지 버렸다.
+        """
+        if pose is None:
+            signals["torso_reason"] = "pose 미실행"
+            return None
 
         valid = pose.valid_count(self.keypoint_confidence)
         signals["valid_keypoints"] = valid
         if valid < self.min_valid_keypoints:
-            return PostureResult(
-                status=POSTURE_UNKNOWN,
-                signals=signals,
-                reason=f"유효 keypoint 부족 ({valid} < {self.min_valid_keypoints})",
-            )
+            signals["torso_reason"] = f"유효 keypoint 부족 ({valid} < {self.min_valid_keypoints})"
+            return None
 
         conf = self.keypoint_confidence
         shoulder = self._midpoint(
             pose.get("left_shoulder", conf), pose.get("right_shoulder", conf)
         )
         hip = self._midpoint(pose.get("left_hip", conf), pose.get("right_hip", conf))
-
         if shoulder is None or hip is None:
-            # 상체 축을 못 구하면 bbox 신호 하나만 남는다.
-            # 신호가 하나뿐이면 확정하지 않는다(§15 최소 2개 조합).
-            return PostureResult(
-                status=POSTURE_UNKNOWN,
-                signals=signals,
-                reason="어깨 또는 엉덩이 keypoint 없음",
-            )
+            signals["torso_reason"] = "어깨 또는 엉덩이 keypoint 없음"
+            return None
 
         dx = hip[0] - shoulder[0]
         dy = hip[1] - shoulder[1]
         torso_len = math.hypot(dx, dy)
         if torso_len < 1e-6:
-            return PostureResult(
-                status=POSTURE_UNKNOWN,
-                signals=signals,
-                reason="상체 길이가 0에 가까움",
-            )
+            signals["torso_reason"] = "상체 길이가 0에 가까움"
+            return None
 
         # 수직축(0, 1) 기준 각도. 0도=수직(서 있음), 90도=수평(누움).
         # 이미지 좌표 기준이라 좌우 기울기만 잡힌다.
@@ -151,7 +265,6 @@ class PostureClassifier:
         signals["torso_angle_lateral_deg"] = round(torso_angle, 2)
 
         # 앞뒤(카메라 광축) 기울기를 상체 단축률로 추정해 합친다.
-        # 두 축 중 더 많이 기운 쪽을 상체 기울기로 본다.
         if self.depth_tilt:
             depth_angle = self._depth_tilt_deg(pose, torso_len, signals)
             if depth_angle is not None:
@@ -159,51 +272,29 @@ class PostureClassifier:
                 torso_angle = max(torso_angle, depth_angle)
 
         signals["torso_angle_deg"] = round(torso_angle, 2)
-        torso_horizontal = torso_angle >= self.torso_horizontal_deg
 
         # 어깨-엉덩이의 수직 거리를 사람 크기로 정규화. 누우면 작아진다.
-        scale = max(height, torso_len)
+        scale = max(detection.height, torso_len)
         extent = abs(dy) / scale if scale > 0 else 0.0
         signals["vertical_extent_ratio"] = round(extent, 3)
-        extent_horizontal = extent <= self.vertical_extent_ratio
-
-        votes = [torso_horizontal, bbox_horizontal, extent_horizontal]
-        fallen_votes = sum(votes)
-        signals["fallen_votes"] = fallen_votes
-
-        # 세 신호 중 두 개 이상이 수평을 가리키면 possible_fallen.
-        if fallen_votes >= 2:
-            return PostureResult(
-                status=POSTURE_POSSIBLE_FALLEN,
-                signals=signals,
-                reason=f"수평 신호 {fallen_votes}/3",
-            )
-
-        return PostureResult(
-            status=POSTURE_STANDING,
-            signals=signals,
-            reason=f"수평 신호 {fallen_votes}/3",
-        )
+        return torso_angle, extent
 
 
 class PostureSmoother:
     """자세 판정의 프레임 간 흔들림을 완충한다(hysteresis).
 
-    누운 사람은 팔다리가 몸에 가려져 keypoint가 한두 프레임씩 부족해지고,
-    그때마다 자세가 unknown으로 튄다. 완충이 없으면 그 순간 fallen 누적이 끊겨
-    이벤트를 놓치거나 화면이 계속 깜빡인다.
+    누운 사람은 팔다리가 몸에 가려져 keypoint가 한두 프레임씩 부족해진다. 그때마다
+    점수가 출렁여 라벨이 뒤집히면 fallen 누적이 끊겨 이벤트를 놓치거나 화면이 깜빡인다.
 
-    규칙
-      1. 최근 window 프레임의 다수결로 자세를 정한다.
-      2. unknown_yields_to_known이면, 창 안에 확정 상태(normal/possible_fallen)가
-         하나라도 있을 때 unknown은 후보에서 제외한다. 전부 unknown일 때만 unknown이다.
+    규칙: 최근 window 프레임의 다수결로 자세를 정한다. trackId별로 이력을 관리하므로
+    사람이 섞이지 않는다.
 
-    trackId별로 이력을 관리하므로 사람이 섞이지 않는다.
+    이진 라벨로 바뀌면서 unknown 예외 처리는 사라졌다(2026-08-03). 이제 판정이
+    NORMAL/FALLEN 둘뿐이라 "모름을 무시한다"는 규칙이 필요 없다.
     """
 
-    def __init__(self, *, window: int = 5, unknown_yields_to_known: bool = True) -> None:
+    def __init__(self, *, window: int = 5) -> None:
         self.window = max(1, window)
-        self.unknown_yields_to_known = unknown_yields_to_known
         self._history: dict[int, deque[str]] = {}
 
     def smooth(self, track_id: int | None, result: PostureResult) -> PostureResult:
@@ -218,21 +309,19 @@ class PostureSmoother:
         hist = self._history.setdefault(track_id, deque(maxlen=self.window))
         hist.append(result.status)
 
-        candidates = list(hist)
-        if self.unknown_yields_to_known:
-            known = [s for s in candidates if s != POSTURE_UNKNOWN]
-            if known:
-                candidates = known
-
-        status, _ = Counter(candidates).most_common(1)[0]
+        status, _ = Counter(hist).most_common(1)[0]
         if status == result.status:
             return result
 
         signals = dict(result.signals)
         signals["raw_status"] = result.status
         signals["window"] = list(hist)
+        # 점수와 신호 수는 이번 프레임의 관측 그대로 옮긴다. 완충은 라벨만 바꾸며,
+        # 여기서 빠뜨리면 완충이 걸린 관측만 점수 0 / 신호 0으로 보고된다.
         return PostureResult(
             status=status,
+            fallen_score=result.fallen_score,
+            signal_count=result.signal_count,
             signals=signals,
             reason=f"{result.reason} → 완충 적용({result.status}→{status})",
         )

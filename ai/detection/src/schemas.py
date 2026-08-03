@@ -35,16 +35,24 @@ KEYPOINT_NAMES = (
 )
 KEYPOINT_INDEX = {name: i for i, name in enumerate(KEYPOINT_NAMES)}
 
-# 자세 상태. 프로젝트 명세 25.6과 DB 컬럼 정의를 그대로 따른다.
-#   docs/04-자율주행-AI.md:435  pose_status: STANDING / POSSIBLE_FALLEN / POSE_UNKNOWN
-#   docs/04-자율주행-AI.md:775  pose_status VARCHAR NULL -- STANDING | POSSIBLE_FALLEN | POSE_UNKNOWN
-# 값을 임의로 바꾸면 백엔드가 받지 못한다.
+# 자세 상태. 2026-08-03에 3값에서 **2값(이진)** 으로 변경했다.
 #
-# POSSIBLE_FALLEN은 encounter 우선순위 상향과 관제 강조 표시에만 쓰고
-# 의료적 판정으로 사용하지 않는다(명세 457행).
-POSTURE_STANDING = "STANDING"
-POSTURE_POSSIBLE_FALLEN = "POSSIBLE_FALLEN"
-POSTURE_UNKNOWN = "POSE_UNKNOWN"
+# 재난 탐색에서 관제가 필요한 답은 "쓰러졌나 아닌가" 하나다. 이전 3값 체계는
+# POSE_UNKNOWN이 관측의 약 21%를 차지해 다섯 중 하나는 답을 내지 못했다.
+#
+# FALLEN은 "누워 있는 형태"를 뜻한다. 직전에 서 있었든 앉아 있었든 무관하게
+# 현재 형태가 수평이면 FALLEN이다.
+#
+# 판정 확신도는 라벨이 아니라 fallen_score(0~1)와 signal_count(쓴 신호 수)로
+# 따로 싣는다. 세 번째 라벨을 만들지 않고도 근거의 두께를 전달한다.
+#
+# ⚠️ 명세 개정 사항이다. docs/04-자율주행-AI.md 25.6이 규정하던
+#    STANDING / POSSIBLE_FALLEN / POSE_UNKNOWN 3값을 대체한다.
+#    POSSIBLE_FALLEN → FALLEN 개명은 확신을 높인다는 뜻이 아니다. 확신도는
+#    라벨이 아니라 fallen_score로 싣는다. "의료적 판정으로 쓰지 않는다"는
+#    명세 25.6의 원칙은 그대로 유지한다.
+POSTURE_NORMAL = "NORMAL"
+POSTURE_FALLEN = "FALLEN"
 
 
 def utc_now_iso() -> str:
@@ -117,12 +125,26 @@ class PostureResult:
     """규칙 기반 자세 판정 결과."""
 
     status: str
+    # 쓰러짐 점수 0~1. 임계값을 넘으면 status가 FALLEN이 된다.
+    # ⚠️ 보정된 확률이 아니다. "임계값에서 얼마나 떨어져 있나"를 0~1로 편 값이며,
+    # 0.7이 "이런 경우의 70%가 실제 쓰러짐"을 뜻하지 않는다. 라벨 데이터 확보 후
+    # 로지스틱 회귀로 교체하면 그때 보정된 확률이 된다.
+    fallen_score: float = 0.0
+    # 점수 계산에 실제로 기여한 신호 수(1~4). 관절이 없으면 형상·운동만 남아 2가 된다.
+    # 라벨은 이진이지만 이 값으로 근거의 두께를 전달한다.
+    signal_count: int = 0
     # 판정에 사용된 개별 신호. 임계값 조정(ISSUE-06) 시 근거로 쓴다.
     signals: dict[str, Any] = field(default_factory=dict)
     reason: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        return {"status": self.status, "signals": self.signals, "reason": self.reason}
+        return {
+            "status": self.status,
+            "fallen_score": round(self.fallen_score, 4),
+            "signal_count": self.signal_count,
+            "signals": self.signals,
+            "reason": self.reason,
+        }
 
 
 @dataclass
@@ -221,8 +243,15 @@ def build_encounter_data(
                 "confidence": round(p.detection.confidence, 4),
                 # 명세 detections 테이블의 pose_status 컬럼에 대응한다.
                 # 자세는 encounter의 트리거가 아니라 속성이다(명세 25.1, 25.6).
+                # 2026-08-03부터 NORMAL / FALLEN 이진값이다.
                 "poseStatus": p.posture.status,
-                # possible_fallen 지속 시간. 관제가 심각도를 판단할 근거로 함께 보낸다.
+                # 쓰러짐 점수(0~1)와 판정에 쓴 신호 수. 라벨이 이진이라 확신도가
+                # 사라지는 것을 막는다. signalCount가 작으면 관절 없이 형상·부동만으로
+                # 판정했다는 뜻이므로 관제가 참고 수준으로 다룰 수 있다.
+                # ⚠️ fallenScore는 보정된 확률이 아니다(AGENTS.md §15).
+                "fallenScore": round(p.posture.fallen_score, 3),
+                "signalCount": p.posture.signal_count,
+                # FALLEN 지속 시간. 관제가 심각도를 판단할 근거로 함께 보낸다.
                 "fallenSec": round(p.fallen_sec, 2) if p.fallen_sec > 0 else None,
                 "observedSec": round(p.seen_sec, 2),
             }

@@ -9,12 +9,12 @@
 
 | 항목 | 명세 근거 | 상태 |
 |---|---|---|
-| `pose_status` 3값 (STANDING/POSSIBLE_FALLEN/POSE_UNKNOWN) | 25.6, DB 775행 | ✅ |
+| `pose_status` 2값 (NORMAL/FALLEN) | 25.6 (2026-08-03 개정) | ✅ |
 | encounter 트리거 = 사람 약 1초 안정 관측 | 25.1, 개요 156행 | ✅ |
 | 조건부 Pose (3프레임 연속, 약 2FPS, 3초 중단) | 25.6 (78행) | ✅ |
 | 동일 자세 약 1.5초 | 78·444·454행 | ✅ |
 | 공통 JSON 봉투 / ENCOUNTER_CONFIRMED | 31-5, 31-6 | ✅ |
-| POSSIBLE_FALLEN을 의료 판정에 쓰지 않음 | 457행 | ✅ |
+| FALLEN을 의료 판정에 쓰지 않음 | 25.6 | ✅ |
 
 ### ⚠️ 명세 이탈 3건 — 팀 확인 필요
 
@@ -68,6 +68,24 @@
 
 **이 세 건은 AI 담당자 임의로 결정할 사안이 아니다.** 팀 논의로 명세를 개정하거나
 구현을 되돌려야 하며, 결론이 날 때까지 이 절을 지우지 않는다.
+
+### 📢 명세 개정 1건 — 팀 공지 필요 (2026-08-03)
+
+**`pose_status`를 3값에서 2값으로 바꾸고 명세를 개정했다.**
+
+```
+이전: STANDING / POSSIBLE_FALLEN / POSE_UNKNOWN
+이후: NORMAL / FALLEN   (+ fallenScore, signalCount)
+```
+
+- 개정 문서: `docs/04-자율주행-AI.md` 25.6·DB 주석, `docs/05-통신-서버-영상.md:146`
+- 사유: `POSE_UNKNOWN`이 관측의 약 21%를 차지해 다섯 중 하나는 답을 내지 못했다.
+  재난 탐색에서 관제가 필요한 답은 "쓰러졌나 아닌가" 하나다.
+- **깨지는 팀 계약은 없다**(사전 확인 완료):
+  `common/schemas/*.json`에 `poseStatus` 필드가 없고, 백엔드 Java에 파싱 코드가 없으며,
+  DB `detections.pose_status`는 `VARCHAR(32)`에 CHECK 제약이 없다. 마이그레이션 불필요.
+- 그럼에도 **명세 개정이므로 팀에 알린다.** 관제 화면이 이 값을 표시하게 될 때
+  2값 기준으로 만들어야 한다.
 
 ### 아직 구현하지 않은 항목 (이탈이 아님)
 
@@ -196,7 +214,7 @@ Optional small LLM
 → 사람을 약 1초 안정 관측  ← **이벤트 트리거**
 → (조건부) person crop → pretrained YOLO Pose 추론 → keypoint 추출
 → 규칙 기반 자세 판정
-→ STANDING / POSSIBLE_FALLEN / POSE_UNKNOWN  ← 트리거가 아니라 **속성**
+→ NORMAL / FALLEN (+ fallenScore, signalCount)  ← 트리거가 아니라 **속성**
 → ENCOUNTER_CONFIRMED 이벤트 발행 (명세 31-5 봉투)
 → JSONL 로그
 → 이벤트 이미지
@@ -224,7 +242,7 @@ Optional small LLM
 - YOLO Detect로 person 탐지 + 추적(trackId)
 - 사람 약 1초 안정 관측 시 encounter 이벤트 확정
 - 조건부 Pose(3프레임 연속·약 2FPS) → keypoint 추출
-- 규칙 기반 자세 판정(`STANDING` / `POSSIBLE_FALLEN` / `POSE_UNKNOWN`)
+- 규칙 기반 자세 판정(`NORMAL` / `FALLEN`)
 - 명세 31-5 봉투로 JSONL 로그 및 이벤트 이미지 저장
 - 결과 시각화(overlay)
 
@@ -669,7 +687,7 @@ src/candidates.py         # person_candidates 계약 변환 — 2026-07-30 추�
 
 ### posture_classifier.py
 - keypoint 기반 rule classifier + `PostureSmoother`(흔들림 완충)
-- 상태: `STANDING` / `POSSIBLE_FALLEN` / `POSE_UNKNOWN` (명세 25.6, §15)
+- 상태: `NORMAL` / `FALLEN` (명세 25.6, §15). 점수 기반 이진 판정
 - 학습 모델이 아니라 명시적인 규칙 기반 구현
 
 ### pose_estimator.py 의 PoseScheduler
@@ -685,7 +703,7 @@ src/candidates.py         # person_candidates 계약 변환 — 2026-07-30 추�
   전역 예산을 선착순으로 적용한다
 
 ### persistence.py
-- `PersistenceTracker` — trackId별 연속 관측 시간과 `POSSIBLE_FALLEN` 지속 시간 누적
+- `PersistenceTracker` — trackId별 연속 관측 시간과 `FALLEN` 지속 시간 누적
 - encounter 확정(사람 1.5초 안정 관측)과 쿨다운 판정
 - `memory.forget_seconds` 안이면 ID가 바뀌어도 시간·위치로 상태를 승계한다(§16)
 
@@ -974,42 +992,55 @@ plots=True
 
 ## 15. 자세 판정 규칙
 
-상태값은 프로젝트 명세 25.6과 DB 컬럼 정의를 그대로 쓴다. **임의로 바꾸면 백엔드가 받지 못한다.**
+상태값은 프로젝트 명세 25.6을 그대로 쓴다. **2026-08-03에 3값에서 2값으로 개정했다.**
 
 ```text
-STANDING          수직에 가까운 상체·박스 비율이 유지됨
-POSSIBLE_FALLEN   수평에 가까운 상체·박스 비율 등 쓰러짐 조건이 약 1.5초 이상 유지됨
-POSE_UNKNOWN      사람은 있지만 관절 정보가 부족함
+NORMAL   쓰러짐 점수가 임계값 미만. 서 있든 앉아 있든 포함한다
+FALLEN   쓰러짐 점수가 임계값 이상. 누워 있는 형태를 뜻하며 직전 자세와 무관하다
 ```
 
-근거: `docs/04-자율주행-AI.md:435`, `:453-455`, DB 스키마 `:775`
-(`pose_status VARCHAR NULL -- STANDING | POSSIBLE_FALLEN | POSE_UNKNOWN`)
+근거: `docs/04-자율주행-AI.md` 25.6, DB 스키마 (`pose_status VARCHAR NULL -- NORMAL | FALLEN`)
 
-**`POSSIBLE_FALLEN`은 encounter 우선순위 상향과 관제 강조 표시에만 쓰고 의료적 판정으로
-사용하지 않는다**(명세 457행). 로봇은 진단하지 않는다.
+**`FALLEN`은 encounter 우선순위 상향과 관제 강조 표시에만 쓰고 의료적 판정으로
+사용하지 않는다**(명세 25.6). 로봇은 진단하지 않는다.
 
-규칙은 다음과 같은 관절 관계를 활용할 수 있다.
-- shoulder midpoint / hip midpoint
-- knee positions
-- torso angle
-- bbox aspect ratio
-- torso horizontalness
-- hip/shoulder 높이 차
-- keypoint confidence
+### 신호 4개 — 관절이 없어도 판정한다
 
-단일 기준으로 판정하지 말고 **최소 두 개 이상의 신호 조합**을 권장한다. 정확한 threshold는
-설정 파일 또는 상수로 분리하여 `posture_classifier.py`에 하드코딩하지 않는다.
+| 신호 | 내용 | 관절 필요 |
+|---|---|---|
+| `torso_angle_deg` | 좌우(2D) / 앞뒤(어깨 폭 대비 단축률) 중 큰 값 | ✅ |
+| `vertical_extent_ratio` | 어깨-엉덩이 y 차이를 사람 크기로 정규화 | ✅ |
+| `bbox_aspect_ratio` | bbox 가로/세로 비 | ❌ |
+| `inactivity` | 정지 지속 시간 (`motion.py`) | ❌ |
 
-**⚠️ 현재 임계값은 실측 근거가 없다.** `torso_horizontal_deg: 55`, `bbox_aspect_ratio: 1.20`,
-`vertical_extent_ratio: 0.25`, `min_valid_keypoints: 4`는 임의로 정한 초기값이다.
-명세가 정한 것은 "수직/수평에 가까운 상체·박스 비율"이라는 **방향**이지 숫자가 아니다.
-실제 영상(§35의 테스트 영상 항목)으로 조정하기 전까지 이 값들을 신뢰하지 않는다.
+문헌은 **누운 자세가 원근 단축 왜곡과 가림 때문에 pose 추정이 가장 어려운 구간**이라고
+지적한다. 관절에만 의존하면 가장 필요한 순간에 가장 약한 신호를 쓰게 된다.
+이전 구현은 관절이 부족하면 `POSE_UNKNOWN`을 내며 **이미 계산해둔 bbox 신호까지 버렸다.**
+
+**부동은 단독으로 `FALLEN`을 만들지 않는다.** 가만히 서 있는 사람도 부동이다.
+가중치를 낮게 두어 형상이 수평일 때 확신을 올리는 보조로만 쓴다. 테스트로 고정했다.
+
+### 점수화
+
+각 신호를 임계값 기준 시그모이드로 0~1에 매핑해 가중 평균한다. 이산 투표에서는
+54도와 10도가 똑같이 "표 없음"이었지만 점수는 이를 구분한다.
+
+출력에 함께 싣는 값:
+- `fallen_score` (0~1) — **보정된 확률이 아니다.** 임계값에서의 거리를 편 값이다
+- `signal_count` (1~4) — 판정에 실제로 쓴 신호 수. 작으면 관절 없이 판정한 것이다
+
+라벨이 이진이라 확신도가 사라지는 것을 이 두 값이 막는다.
+
+**⚠️ 임계값과 가중치는 실측 근거가 없다.** `torso_horizontal_deg: 55`,
+`bbox_aspect_ratio: 1.20`, `vertical_extent_ratio: 0.25`, 가중치 4개, 시그모이드 폭 3개가
+전부 임의값이다. 명세가 정한 것은 "수직/수평에 가까운 상체·박스 비율"이라는 **방향**이지
+숫자가 아니다. 라벨 데이터 확보 후 **로지스틱 회귀**(입력 4개, 파라미터 5개)로 교체하며,
+그때 `fallen_score`가 보정된 확률이 된다. 그 전까지 이 값들을 "검증됨"으로 보고하지 않는다.
 
 ### 자세 흔들림 완충 (PostureSmoother)
 
-누우면 팔다리가 몸에 가려져 keypoint가 한두 프레임씩 부족해지고 `POSE_UNKNOWN`이 튄다.
-최근 N프레임 다수결로 완충하되, 창 안에 확정 상태가 하나라도 있으면 `POSE_UNKNOWN`을 무시한다.
-**전부 `POSE_UNKNOWN`일 때만 `POSE_UNKNOWN`을 보고한다.** 완충이 사실을 감추면 안 된다.
+누우면 팔다리가 가려져 점수가 출렁인다. 최근 N프레임 다수결로 라벨을 완충한다.
+**완충은 라벨만 바꾸며 `fallen_score`와 `signal_count`는 그대로 싣는다.** 완충이 근거를 감추면 안 된다.
 원본 판정은 `signals.raw_status`에 남긴다.
 
 ---
@@ -1019,8 +1050,8 @@ POSE_UNKNOWN      사람은 있지만 관절 정보가 부족함
 **이벤트 트리거는 사람 관측 시간이다. 자세가 아니다.**
 
 - 사람을 `person_confirm_seconds`(1.0초) 이상 안정 관측하면 encounter를 확정한다(명세 25.1).
-- 자세와 무관하게 확정한다. `STANDING`·`POSE_UNKNOWN`도 보고 대상이다.
-- `POSSIBLE_FALLEN` 지속 시간(`fallen_seconds`, 1.5초)은 **심각도 속성**으로 따로 잰다(명세 25.6).
+- 자세와 무관하게 확정한다. `NORMAL`도 보고 대상이다.
+- `FALLEN` 지속 시간(`fallen_seconds`, 1.5초)은 **심각도 속성**으로 따로 잰다(명세 25.6).
 - timestamp 기반으로 판정한다. 파일 입력은 영상 내 시간, 카메라는 벽시계 경과 시간을 쓴다.
 - **trackId 단위로 관리한다.** 프레임 단위로만 세면 A가 0.5초, B가 0.5초 관측됐을 때
   "1초 연속"으로 오판한다.
@@ -1089,9 +1120,9 @@ POSE_UNKNOWN      사람은 있지만 관절 정보가 부족함
     "mapPose": null,
     "personCount": 2,
     "persons": [
-      {"trackId": 1, "confidence": 0.9046, "poseStatus": "STANDING",
+      {"trackId": 1, "confidence": 0.9046, "poseStatus": "NORMAL",
        "fallenSec": null, "observedSec": 1.0},
-      {"trackId": 2, "confidence": 0.8562, "poseStatus": "POSSIBLE_FALLEN",
+      {"trackId": 2, "confidence": 0.8562, "poseStatus": "FALLEN",
        "fallenSec": 1.8, "observedSec": 3.2}
     ],
     "recordingState": null,
@@ -1362,7 +1393,7 @@ Detect-first 파이프라인, 입력과 출력, person class, Pose trigger, conf
 **정합화 시 반드시 반영할 것(§6 결정):**
 - 문서를 "이번 스프린트 범위(person 단일)"와 "다음 스프린트 이월(장애물, Exit/소화기/위험표지)"
   두 절로 명확히 분리한다. 기존 4종 클래스 기술을 **삭제하지 말고 이월 절로 옮긴다.**
-- 자세 상태는 명세 25.6의 `STANDING` / `POSSIBLE_FALLEN` / `POSE_UNKNOWN` 3값을 그대로 쓴다(§15).
+- 자세 상태는 명세 25.6의 `NORMAL` / `FALLEN` 2값을 그대로 쓴다(§15).
 - **이벤트 트리거는 사람 관측 시간이지 자세가 아님**을 명시한다(§16).
 - 장애물 탐지는 LiDAR/Nav2와 역할이 중복될 수 있음을 명시한다(§6의 역할 분담 표 참조).
 
@@ -1401,7 +1432,7 @@ bbox_height >= 80 px
   person 다양성 보강용 추가 데이터로 활용한다.
 - **C (71850, 보조)** — 안전사고 6종(침입, 싸움, **쓰러짐**, 군집, 인파밀집, 침수) 중
   **쓰러짐 이벤트 영상이 45건(15%)** 포함되어 있다. 300건으로 학습에는 부족하지만,
-  **rule-based posture classifier의 `POSSIBLE_FALLEN` 검증용 실제 영상**으로 가치가 크다.
+  **쓰러짐 판정 검증용 실제 영상**으로 가치가 크다.
   ISSUE-03의 Pose 테스트 영상(lying) 확보처로 우선 검토한다.
 - **D (71641, 사용 불가)** — 내용만 보면 keypoint와 BBOX를 모두 갖춘 최적의 데이터셋이지만,
   **보건의료 데이터로 안심존을 통해서만 개방되고 IRB 심의 결과 통지서가 필요하다**(§11.1).
@@ -1509,7 +1540,7 @@ Video → Detect → Person filter → Crop → Pose → Rule
 | 2 | person 미탐지 시 Pose 미실행 | 사람 없는 영상에서 Pose 호출 0회 |
 | 3 | person 탐지 → crop | crop 이미지가 bbox 영역과 일치 |
 | 4 | keypoint 좌표 복원 | overlay가 원본 프레임의 사람 위에 정확히 겹침 |
-| 5 | posture 판정 | lying 영상에서 `POSSIBLE_FALLEN` 출력 |
+| 5 | posture 판정 | lying 영상에서 `FALLEN` 출력 |
 | 6 | persistence | 약 1초 지속 시에만 이벤트 확정, 짧은 눕기는 무시 |
 | 7 | JSONL 기록 | 한 줄당 JSON 1개, UTF-8, 스키마(§17) 일치 |
 | 8 | 이벤트 이미지 저장 | 파일 생성 + JSONL의 경로와 실제 파일 일치 |
@@ -1785,7 +1816,7 @@ AI-Hub 데이터가 끝내 확보되지 않아도 아래는 반드시 충족한�
 ```text
 입력 영상에서 person을 탐지·추적하고,
 사람을 약 1초 안정 관측하면 encounter 이벤트를 확정하며,
-조건부 Pose로 STANDING / POSSIBLE_FALLEN / POSE_UNKNOWN을 판정해 속성으로 싣고,
+조건부 Pose와 형상·부동 신호로 NORMAL / FALLEN을 판정해 속성으로 싣고,
 명세 31-5 봉투 형식의 JSONL과 이벤트 이미지를 저장할 수 있다.
 ```
 
@@ -1806,7 +1837,7 @@ AI-Hub 데이터가 끝내 확보되지 않아도 아래는 반드시 충족한�
 | 1 | AI-Hub 데이터셋 선정 및 다운로드 (`data/raw` 비어 있음) | ISSUE-03/04/05만 차단 | 사용자(본인인증·신청 필요) | §11.1, §28 |
 | 2 | 선정 데이터셋의 실제 JSON 라벨 스키마 미확인 | ISSUE-04만 차단 (parser 작성 불가) | 샘플 확보 후 에이전트 | §12, §28 |
 | 2b | **테스트 영상 4종(standing/sitting/bending/lying) 미확보** | **실영상 검증 차단** | 사용자(직접 촬영 가능) | §26, §28.1 |
-| 2c | `POSSIBLE_FALLEN` 판정이 **실제 누운 사람 영상으로 미검증** | 임계값 신뢰도 미확보 | 2b 확보 후 | §15, §28.1 |
+| 2c | `FALLEN` 판정이 **실제 누운 사람 영상으로 미검증** | 임계값·가중치 신뢰도 미확보 | 2b 확보 후 | §15, §28.1 |
 | 2d | MQTT 발행 미구현 (`paho-mqtt` 미설치, 브로커 정보 미확인) | 백엔드 연동 대기 | 사용자 + 백엔드 담당 | §11.1, 명세 31-4 |
 | 3 | ~~클래스 범위 불일치~~ → **2026-07-28 해결: person 단일, 다중 클래스는 이월** | 해결됨 | — | §6 |
 | 4 | ~~가중치 미다운로드~~ → **해결: yolo26n.pt / yolo26n-pose.pt / yolo26n-reid.onnx 확보** | 해결됨 | — | §13, §14 |

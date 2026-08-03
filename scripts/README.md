@@ -72,26 +72,69 @@ sudo systemctl disable --now sentinel-demo
 `/home/orin/projects/S15P11A301`을 기준으로 하므로 저장소 경로가 다르면 설치
 전에 해당 줄을 맞춰야 한다.
 
-### 시각화(Foxglove) 켜기
+### 시각화(Foxglove) 켜고 끄기
 
-SLAM 지도·스캔·TF를 눈으로 보는 수단이다(S15P11A301-177). **기본은 꺼져 있고**
-켜는 방법이 두 가지다.
+SLAM 지도·스캔·TF를 눈으로 보는 수단이다(S15P11A301-177). **기본은 꺼져 있다.**
 
 ```bash
-# 1) 스택을 처음 띄울 때 함께
-./scripts/demo_up.sh enable_viz:=true
+./scripts/viz_up.sh            # 켠다. 돌고 있는 스택에 붙는다
+./scripts/viz_down.sh          # 끈다. 스택은 그대로 둔다
 
-# 2) 이미 돌고 있는 스택에 붙일 때 — 이쪽은 스택을 재시작하지 않는다
-ros2 launch sentinel_bringup viz.launch.py
+./scripts/viz_up.sh --local    # 127.0.0.1 만 — 외부 노출 없이 SSH 터널로 본다
 ```
 
-**2번을 우선 고려한다.** 스택을 재시작하면 그때까지 쌓은 SLAM 지도를 잃는다.
-지도는 메모리에만 있고 임무 종료 시점에 저장되므로(S15P11A301-171), 중간에
-재시작하면 처음부터 다시 그린다.
+두 스크립트 다 두 번 연속 불러도 안전하다. 이미 켜져 있으면 두 번째를 띄우지
+않고(포트 바인딩 실패로 로그만 헷갈려진다), 이미 꺼져 있으면 그대로 성공한다.
 
-노트북 Foxglove Studio에서 `ws://jetson.sentinel-ugv.xyz:8765`로 접속하고 연결
-유형은 **"Foxglove WebSocket"** 을 고른다. Rosbridge를 고르면 핸드셰이크가 깨지고
-서버 로그에 `Dropping client ...: handshake`가 남는다.
+`viz_up.sh`는 백그라운드로 띄우므로 터미널이 묶이지 않는다. 로그는
+`/tmp/sentinel-viz.log`이고, 8765가 실제로 열릴 때까지 기다린 뒤 결과를 낸다 —
+"띄웠다"만 출력하면 실패해도 성공처럼 보인다.
+
+`viz_down.sh`는 `pkill -f foxglove_bridge`를 쓰지 않는다. 그 패턴이 호출한 셸의
+명령줄에 들어 있어 셸 자신이 함께 죽는다(S15P11A301-125에서 `stop_sentinel.sh`가
+같은 사고를 겪었다). PID를 먼저 모으고 자기 자신과 부모를 제외한다.
+
+**스택을 처음 띄울 때 함께 켜는 길도 있다**(`./scripts/demo_up.sh enable_viz:=true`).
+다만 이미 스택이 돌고 있으면 `viz_up.sh`를 쓴다. 스택을 재시작하면 그때까지 쌓은
+SLAM 지도를 잃는다 — 지도는 메모리에만 있고 임무 종료 시점에 저장되므로
+(S15P11A301-171) 중간에 재시작하면 처음부터 다시 그린다.
+
+접속은 `ws://jetson.sentinel-ugv.xyz:8765`이고 연결 유형은 반드시
+**"Foxglove WebSocket"** 이다. Rosbridge를 고르면 핸드셰이크가 깨지고 서버 로그에
+`Dropping client ...: handshake`가 남는다.
+
+#### 3D 패널에 지도가 안 보이면 Display frame부터 본다
+
+토픽을 켜도 빈 격자만 보이는 경우가 대부분 이것이다.
+
+1. 3D 패널 우측 상단 **⚙** → **Frame → Display frame**을 `map`으로 바꾼다.
+   기본값이면 지도가 로봇과 함께 회전해 읽을 수 없다.
+2. Topics에서 `/map`(점유격자), `/scan`(현재 스캔), `/robot_description`을 켠다.
+3. 화면이 비어 보이면 우클릭 → Focus 또는 fit 버튼으로 시점을 맞춘다.
+
+`/map`과 `/scan`을 함께 켜면 정합을 판정할 수 있다. 현재 스캔이 지도의 벽 위에
+겹치면 정상이고, 밀려 있거나 긴 벽이 **두 겹으로** 보이면 위치 추정이 틀어진
+것이다. 명세의 「LiDAR 검증」이 같은 기준을 쓴다 — "긴 평면 벽이 휘거나 두 겹으로
+보이지 않는지 확인한다"(docs/03-제어-캘리브레이션.md), 합격 기준 CAL-06.
+
+명세는 이 확인을 RViz로 적었지만 이 젯슨에 `rviz2`가 설치돼 있지 않다(ROS가
+`ros-base`로 깔려 GUI 패키지가 빠져 있다). 판정 기준은 도구와 무관하므로
+Foxglove의 같은 패널로 본다.
+
+#### 켠 상태는 인증이 없다
+
+`foxglove_bridge`는 8765를 인증 없이 열고, 기본 capabilities에 `clientPublish`·
+`parameters`·`services`가 들어 있다 — 접속만 하면 파라미터를 바꾸고 서비스를
+부를 수 있다. 젯슨이 공인 IP에 있어 LAN과 인터넷이 같은 인터페이스이므로
+"LAN에서만 열기"라는 선택지가 없다.
+
+그래서 **볼 때만 켜고 보고 나면 `viz_down.sh`로 끈다.** 외부에 아예 열지 않으려면
+`--local`로 켜고 노트북에서 터널을 연다.
+
+```bash
+ssh -N -L 8765:127.0.0.1:8765 orin@<젯슨 주소>
+# 그다음 Foxglove 에서 ws://localhost:8765
+```
 
 #### enable_viz를 줬는데도 안 뜨면 재빌드부터 확인한다
 

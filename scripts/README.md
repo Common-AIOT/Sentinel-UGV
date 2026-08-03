@@ -470,6 +470,7 @@ cd frontend && npm run dev
 |---|---|
 | `ci/validate_repository.sh` | 모노레포 필수 경로·파일, README 동기화, 최상위 산출물 검사 |
 | `ci/validate_schemas.py` | `common/schemas` 자체와 `common/samples` 예제가 봉투·본문 스키마를 만족하는지 |
+| `ci/validate_node_callbacks.py` | ROS 노드가 구독·타이머·서비스에 넘긴 콜백이 그 클래스에 실제로 있는지 |
 | `ci/run_contract_tests.sh` | `test:message-contract` job을 로컬에서 그대로 돌린다 |
 | `ci/contract-test-requirements.txt` | 그 job이 쓰는 파이썬 패키지 목록. CI와 위 스크립트가 같은 파일을 읽는다 |
 

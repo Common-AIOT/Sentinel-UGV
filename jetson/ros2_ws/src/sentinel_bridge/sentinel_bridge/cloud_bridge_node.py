@@ -395,6 +395,20 @@ class CloudBridgeNode(Node):
     def _on_scan(self, _message: LaserScan) -> None:
         self._scan_last_seen = self._now()
 
+    def _on_candidates(self, _message: String) -> None:
+        """탐지 노드 생존 판정 (S15P11A301-192). 도착 시각만 본다.
+
+        S15P11A301-193이 `_on_map_registered`를 추가하면서 이 메서드를 덮어써
+        지웠고, 구독 등록은 그대로 남아 `__init__`이 AttributeError로 죽었다
+        (S15P11A301-226). 노드 하나가 죽어도 스택 나머지는 계속 돌므로
+        (32장 장애 격리) 화면상 정상으로 보이는 동안 관제로 가는 telemetry·
+        state·presence·encounter가 전부 끊겨 있었다.
+
+        같은 실수를 CI가 잡도록 `scripts/ci/validate_node_callbacks.py`를 함께
+        넣었다.
+        """
+        self._candidates_last_seen = self._now()
+
     def _on_odometry(self, message: Odometry) -> None:
         """엔코더 오도메트리 (S15P11A301-213).
 

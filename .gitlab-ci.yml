@@ -91,6 +91,25 @@ validate:repository-structure:
   script:
     - sh scripts/ci/validate_repository.sh
 
+# ROS 노드가 구독·타이머·서비스에 넘긴 콜백이 실제로 정의돼 있는지 검사합니다
+# (S15P11A301-226).
+#
+# cloud_bridge 가 develop 에서 기동 즉시 죽고 있었습니다. S15P11A301-193 이 다른
+# 메서드를 추가하며 _on_candidates 를 덮어써 지웠는데 구독 등록은 남아
+# AttributeError 가 났습니다.
+#
+# **아무 신호가 없었습니다.** 이 저장소의 파이썬 시험은 rclpy 를 import 하지 않는
+# 모듈만 다루고(그것이 CI 에서 돌 수 있는 이유입니다), demo.launch.py 는 노드 하나가
+# 죽어도 나머지를 계속 돌립니다(32장 장애 격리). 관제로 가는 telemetry 가 전부 끊긴
+# 채로 스택이 정상으로 보였습니다.
+#
+# 타입 정보 없이 AST 로 잡을 수 있는 결함이라 rclpy 없는 컨테이너에서 돕니다.
+validate:node-callbacks:
+  stage: lint
+  image: python:3.10-alpine
+  script:
+    - python scripts/ci/validate_node_callbacks.py
+
 # 각 모듈이 자체 관리하는 Docker Compose 파일의 문법과 변수 치환을 검사합니다.
 # config --quiet는 컨테이너를 실행하지 않고 최종 Compose 설정의 유효성만 확인합니다.
 # 프런트엔드·Jetson 등 다른 모듈의 Compose 파일이 추가되면 아래 목록에 함께 등록합니다.

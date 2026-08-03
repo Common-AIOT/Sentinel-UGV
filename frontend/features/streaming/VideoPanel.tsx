@@ -195,19 +195,30 @@ export default function VideoPanel({ isMain = false, onSwap }: VideoPanelProps) 
           지연은 수신 지연이며 카메라 노출·인코딩이 빠져 있어 체감보다 작다 —
           자세한 것은 툴팁에 있다. VID-01은 타임코드 촬영으로 측정한다.
 
-          **사이드바(작은 화면)에서는 띄우지 않는다.** 폭이 308px이라 통계 줄이
-          두 줄로 접히면서 우측 상단 버튼(다시 연결·설정·확대)을 덮었다. 작은
-          화면은 참조용이고 조작 버튼이 가려지는 쪽이 손해가 크다.
-          연결이 끊긴 상태는 중앙 오버레이가 그대로 알리므로 정보가 사라지지
-          않는다. */}
-      {isMain && (
+          ## 사이드바에서는 경로만 남긴다 (S15P11A301-212)
+
+          폭이 308px이라 수치를 모두 넣으면 줄이 두 줄로 접히면서 우측 상단
+          버튼(다시 연결·설정·확대)을 덮는다. 접히게 만드는 것은 해상도·fps·
+          비트레이트·지연이므로 그것만 메인으로 제한하고 경로는 남긴다.
+
+          S15P11A301-210에서는 스택 전체를 숨겼는데, 그러면 지금 보고 있는
+          영상이 로컬인지 원격인지 화면에서 알 수 없다. 줄을 짧게 줄이는 것과
+          없애는 것을 혼동한 것이다.
+
+          재생 중이 아니면 사이드바에서도 상태를 붙인다. `연결 중 · LOCAL`은
+          짧아서 접히지 않고, 검은 화면의 이유를 알려준다.
+
+          탐지 줄은 메인에만 둔다. 발견 시각이 붙어 길고, 사이드바는 참조
+          화면이다. 툴팁은 양쪽 모두 유지해 상세 지표를 볼 경로를 남긴다. */}
       <OverlayStack>
         <OverlayLine
           kind="STREAM"
           tone={STATE_TONE[status.state]}
           title={statsTooltip(status)}
         >
-          {showVideo ? (
+          {!showVideo ? (
+            `${STATE_LABEL[status.state]} · ${path}`
+          ) : isMain ? (
             <>
               {path}
               {status.width !== null &&
@@ -220,12 +231,11 @@ export default function VideoPanel({ isMain = false, onSwap }: VideoPanelProps) 
                 ` · 지연 ${Math.round(status.receiveLatencyMs)}ms`}
             </>
           ) : (
-            `${STATE_LABEL[status.state]} · ${path}`
+            path
           )}
         </OverlayLine>
-        <DetectionLine />
+        {isMain && <DetectionLine />}
       </OverlayStack>
-      )}
 
       {/* 버튼은 항상 보이되 hover에서 선명해진다. hover에만 나타나면
           전환 기능이 있다는 것을 알기 어렵다. */}

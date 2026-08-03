@@ -11,6 +11,8 @@ import org.springframework.stereotype.Service;
 
 import com.sentinel.backend.messaging.dto.EncounterData;
 import com.sentinel.backend.messaging.dto.MessageEnvelope;
+import com.sentinel.backend.realtime.EncounterChangedMessage;
+import com.sentinel.backend.realtime.RealtimeBroadcaster;
 
 /**
  * ENCOUNTER_CONFIRMED 를 {@code encounters} 에 적재한다 (명세 13.2·29.3).
@@ -53,9 +55,11 @@ public class EncounterWriter {
             """;
 
     private final JdbcTemplate jdbc;
+    private final RealtimeBroadcaster broadcaster;
 
-    public EncounterWriter(JdbcTemplate jdbc) {
+    public EncounterWriter(JdbcTemplate jdbc, RealtimeBroadcaster broadcaster) {
         this.jdbc = jdbc;
+        this.broadcaster = broadcaster;
     }
 
     public void write(MessageEnvelope envelope, EncounterData data) {
@@ -63,7 +67,7 @@ public class EncounterWriter {
         Timestamp detectedAt = Timestamp.from(
                 data.detectedAt() != null ? data.detectedAt() : Instant.now());
 
-        switch (data.phase()) {
+        boolean applied = switch (data.phase()) {
             case EncounterData.PHASE_CONFIRMED -> insertConfirmed(envelope, data, detectedAt);
             case EncounterData.PHASE_APPROACHED -> updateOrWarn(data,
                     jdbc.update(UPDATE_APPROACHED, data.phase(), detectedAt, encounterId));
@@ -73,7 +77,21 @@ public class EncounterWriter {
                     jdbc.update(UPDATE_REDETECTED, data.phase(), encounterId));
             case EncounterData.PHASE_LOST -> updateOrWarn(data,
                     jdbc.update(UPDATE_LOST, data.phase(), detectedAt, encounterId));
-            default -> log.warn("알 수 없는 encounter phase: {} (encounterId={})", data.phase(), encounterId);
+            default -> {
+                log.warn("알 수 없는 encounter phase: {} (encounterId={})", data.phase(), encounterId);
+                yield false;
+            }
+        };
+
+        // DB 반영 직후 관제로 푸시(31-8). QoS 1 중복으로 반영이 없었으면 알림도 없다.
+        UUID missionId = envelope.missionId() != null ? envelope.missionId() : data.missionId();
+        if (applied && missionId != null) {
+            EncounterData.Pose pose = data.pose();
+            broadcaster.encounterChanged(missionId, new EncounterChangedMessage(
+                    encounterId, data.phase(), data.personCount(),
+                    pose == null ? null : pose.x(),
+                    pose == null ? null : pose.y(),
+                    detectedAt.toInstant()));
         }
     }
 
@@ -84,33 +102,34 @@ public class EncounterWriter {
      * {@code encounters.mission_id} 가 NOT NULL FK 이고, 임무 없는 encounter 는 관제
      * 화면에서 붙을 곳이 없다.
      */
-    private void insertConfirmed(MessageEnvelope envelope, EncounterData data, Timestamp detectedAt) {
+    private boolean insertConfirmed(MessageEnvelope envelope, EncounterData data, Timestamp detectedAt) {
         UUID missionId = envelope.missionId() != null ? envelope.missionId() : data.missionId();
         if (missionId == null) {
             log.warn("missionId 없는 encounter 는 적재하지 않는다 (encounterId={})", data.encounterId());
-            return;
+            return false;
         }
         Boolean missionExists = jdbc.queryForObject(
                 "SELECT EXISTS(SELECT 1 FROM missions WHERE id = ?)", Boolean.class, missionId);
         if (!Boolean.TRUE.equals(missionExists)) {
             log.warn("서버가 모르는 임무의 encounter 는 적재하지 않는다 (encounterId={}, missionId={})",
                     data.encounterId(), missionId);
-            return;
+            return false;
         }
 
         EncounterData.Pose pose = data.pose();
-        jdbc.update(INSERT_CONFIRMED,
+        return jdbc.update(INSERT_CONFIRMED,
                 data.encounterId(), missionId, data.phase(),
                 pose == null ? null : pose.x(),
                 pose == null ? null : pose.y(),
                 pose == null ? null : pose.yaw(),
-                data.personCount(), detectedAt);
+                data.personCount(), detectedAt) > 0;
     }
 
-    private void updateOrWarn(EncounterData data, int updatedRows) {
+    private boolean updateOrWarn(EncounterData data, int updatedRows) {
         if (updatedRows == 0) {
             log.warn("CONFIRMED 없이 온 encounter phase: {} (encounterId={})",
                     data.phase(), data.encounterId());
         }
+        return updatedRows > 0;
     }
 }

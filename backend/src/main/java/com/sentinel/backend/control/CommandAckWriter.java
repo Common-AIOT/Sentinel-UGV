@@ -13,6 +13,7 @@ import org.springframework.stereotype.Service;
 import com.sentinel.backend.messaging.dto.CommandAckData;
 import com.sentinel.backend.messaging.dto.MessageEnvelope;
 import com.sentinel.backend.messaging.dto.MissionCommandData;
+import com.sentinel.backend.realtime.RealtimeBroadcaster;
 
 /**
  * COMMAND_ACK 를 {@code control_commands.result} 에 반영한다 (명세 27.6 "명령 요청부터
@@ -52,9 +53,11 @@ public class CommandAckWriter {
             """;
 
     private final JdbcTemplate jdbc;
+    private final RealtimeBroadcaster broadcaster;
 
-    public CommandAckWriter(JdbcTemplate jdbc) {
+    public CommandAckWriter(JdbcTemplate jdbc, RealtimeBroadcaster broadcaster) {
         this.jdbc = jdbc;
+        this.broadcaster = broadcaster;
     }
 
     public void write(MessageEnvelope envelope, CommandAckData data) {
@@ -85,16 +88,25 @@ public class CommandAckWriter {
 
     private void applyMissionTransition(CommandRow command, Instant ackAt) {
         Timestamp at = Timestamp.from(ackAt);
-        switch (command.type()) {
-            case MissionCommandData.TYPE_START -> jdbc.update(
-                    "UPDATE missions SET status = 'EXPLORING', started_at = COALESCE(started_at, ?) WHERE id = ?",
-                    at, command.missionId());
-            case MissionCommandData.TYPE_PAUSE -> jdbc.update(
-                    "UPDATE missions SET status = 'PAUSED' WHERE id = ?", command.missionId());
-            case MissionCommandData.TYPE_RESUME -> jdbc.update(
-                    "UPDATE missions SET status = 'EXPLORING' WHERE id = ?", command.missionId());
-            case MissionCommandData.TYPE_RETURN -> jdbc.update(
-                    "UPDATE missions SET status = 'RETURNING' WHERE id = ?", command.missionId());
+        String newStatus = switch (command.type()) {
+            case MissionCommandData.TYPE_START -> {
+                jdbc.update(
+                        "UPDATE missions SET status = 'EXPLORING', started_at = COALESCE(started_at, ?) WHERE id = ?",
+                        at, command.missionId());
+                yield "EXPLORING";
+            }
+            case MissionCommandData.TYPE_PAUSE -> {
+                jdbc.update("UPDATE missions SET status = 'PAUSED' WHERE id = ?", command.missionId());
+                yield "PAUSED";
+            }
+            case MissionCommandData.TYPE_RESUME -> {
+                jdbc.update("UPDATE missions SET status = 'EXPLORING' WHERE id = ?", command.missionId());
+                yield "EXPLORING";
+            }
+            case MissionCommandData.TYPE_RETURN -> {
+                jdbc.update("UPDATE missions SET status = 'RETURNING' WHERE id = ?", command.missionId());
+                yield "RETURNING";
+            }
             case MissionCommandData.TYPE_STOP -> {
                 jdbc.update(
                         """
@@ -104,8 +116,16 @@ public class CommandAckWriter {
                         at, command.missionId());
                 jdbc.update(INSERT_RESULTS,
                         command.missionId(), command.missionId(), command.missionId());
+                yield "COMPLETED";
             }
-            default -> log.warn("알 수 없는 명령 type 의 ACK: {}", command.type());
+            default -> {
+                log.warn("알 수 없는 명령 type 의 ACK: {}", command.type());
+                yield null;
+            }
+        };
+        // DB 반영 직후 관제로 푸시 — 폴링 없이도 상태카드가 즉시 바뀐다(31-8).
+        if (newStatus != null) {
+            broadcaster.missionStatus(command.missionId(), newStatus);
         }
     }
 

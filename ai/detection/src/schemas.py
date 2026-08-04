@@ -46,7 +46,7 @@ KEYPOINT_INDEX = {name: i for i, name in enumerate(KEYPOINT_NAMES)}
 # 판정 확신도는 라벨이 아니라 fallen_score(0~1)와 signal_count(쓴 신호 수)로
 # 따로 싣는다. 세 번째 라벨을 만들지 않고도 근거의 두께를 전달한다.
 #
-# ⚠️ 명세 개정 사항이다. docs/04-자율주행-AI.md 25.6이 규정하던
+# ⚠️ 명세 개정 사항이다. docs/07-AI-탐지-음성.md 25.6이 규정하던
 #    STANDING / POSSIBLE_FALLEN / POSE_UNKNOWN 3값을 대체한다.
 #    POSSIBLE_FALLEN → FALLEN 개명은 확신을 높인다는 뜻이 아니다. 확신도는
 #    라벨이 아니라 fallen_score로 싣는다. "의료적 판정으로 쓰지 않는다"는

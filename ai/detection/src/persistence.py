@@ -4,7 +4,7 @@
 프로젝트 명세를 따른다.
   docs/01-프로젝트-개요.md:156 "YOLO와 ByteTrack이 한 명 이상의 사람을 약 1초간
   안정적으로 확인하면 encounter를 생성하고 탐사를 일시정지한다"
-  docs/04-자율주행-AI.md:80 "person confidence ≥ threshold AND ByteTrack 약 1초
+  docs/04-자율주행.md 8.1 "person confidence ≥ threshold AND ByteTrack 약 1초
   안정 관측 → 탐사 일시정지·encounter 후보 생성"
 
 재난 현장에서는 서 있거나 앉아 있는 요구조자도 구조 대상이므로, 쓰러진 사람만
@@ -14,7 +14,7 @@
 따로 재서 페이로드에 싣는다(명세 DB의 detections.pose_status에 대응).
 
 ByteTrack/BoT-SORT는 사람이 가려지면 새 trackId를 부여하므로, 시간·위치의 단순
-조건으로 상태를 승계한다(docs/04-자율주행-AI.md:404가 허용하는 범위. 외형은 쓰지 않는다).
+조건으로 상태를 승계한다(docs/07-AI-탐지-음성.md 25.4가 허용하는 범위. 외형은 쓰지 않는다).
 """
 
 from __future__ import annotations

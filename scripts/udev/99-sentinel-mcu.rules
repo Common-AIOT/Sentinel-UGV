@@ -1,0 +1,52 @@
+# ESP32 두 보드(모터·센서)에 고정 이름을 준다 (S15P11A301-214)
+#
+# 설치 (기기당 한 번, sudo):
+#   sudo cp scripts/udev/99-sentinel-mcu.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+#   ls -la /dev/sentinel_mcu_*      # 심링크 확인
+#
+# 확인 (보드가 붙어 있을 때):
+#   udevadm info -q property -n /dev/sentinel_mcu_sensor | grep DEVPATH
+#
+# ## 왜 by-path 인가 — by-id 를 쓸 수 없다
+#
+# 두 보드가 같은 CH340(1a86:7523)이고 **이 칩은 시리얼 번호가 없다.** 실측으로
+# 확인했다 — `udevadm info -a` 에 `ATTRS{serial}` 이 아예 나오지 않는다(라이다의
+# CP2102 는 `serial=="0001"` 이 있어서 99-sentinel-lidar.rules 가 by-id 로 간다).
+# VID·PID 만으로는 두 보드를 구분할 수 없으므로 물리 포트가 유일한 식별자다.
+#
+# ## 대가와 이득
+#
+# 대가는 "정해진 USB 포트에만 꽂아야 한다" 는 운영 제약이다. 그런데 우리가 실제로
+# 겪는 실패는 그것이 아니다.
+#
+# 2026-08-04 하루에 센서 보드가 USB 재열거로 세 번 이름이 바뀌었다
+# (ttyUSB3 → ttyUSB2 → ttyUSB0). dmesg 상 **물리 경로는 전부 `usb 1-2.3` 로
+# 고정**이었다. 즉 by-path 는 자주 일어나는 실패(재열거)를 막고, 일어나지 않는
+# 상황(포트 옮겨 꽂기 — 하네스가 고정되면 케이블이 그 포트에 묶인다)에만 제약을
+# 얹는다.
+#
+# 이름이 없으면 `demo_up.sh sensor_port:=/dev/ttyUSB2` 로 띄웠는데 보드가 ttyUSB0 에
+# 있어 **조용히 연결 실패**한다. `esp32_bridge.yaml` 이 이미 아래 이름을 기본값으로
+# 쓰고 있으므로, 규칙을 넣으면 포트 인자 없이 그냥 뜬다.
+#
+# ## 포트 배정
+#
+#   1-2.3  센서 보드 (MT6701 엔코더 ×2 · MPU6050 · DHT-11 · HC-SR04)
+#   1-2.4  모터 보드 (BTS7960 ×2)
+#
+# 센서(2.3)는 실측으로 확인했다. **모터(2.4)는 미확인이다** — 2026-08-04 14:02:27
+# 에 `usb 1-2.4` 가 빠진 dmesg 이력으로 추정했고, 그때 모터 보드를 떼어 갔다.
+# 보드가 돌아오면 그 포트에 꽂아 `ls /dev/sentinel_mcu_motor` 로 확인하고, 다른
+# 포트에 붙었으면 아래 devpath 를 고친다.
+#
+# 포트가 바뀌었을 때 확인법:
+#   udevadm info -a -n /dev/ttyUSB0 | grep -m1 'ATTRS{devpath}'
+#
+# 심링크가 안 생기면 **아무 일도 일어나지 않는다** — 브리지가 없는 장치를 열려다
+# 실패하고 로그에 남는다. 엉뚱한 보드에 붙는 것보다 이 실패가 낫다. 모터 보드에
+# 센서 프로토콜을 말하면 handshake 에서 board_role 불일치로 걸리지만, 그 전에
+# 포트를 잘못 여는 것 자체를 막는 것이 낫다.
+
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", ATTRS{devpath}=="2.3", SYMLINK+="sentinel_mcu_sensor", MODE="0660", GROUP="dialout"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", ATTRS{devpath}=="2.4", SYMLINK+="sentinel_mcu_motor", MODE="0660", GROUP="dialout"

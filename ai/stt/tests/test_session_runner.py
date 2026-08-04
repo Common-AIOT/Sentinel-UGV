@@ -74,7 +74,7 @@ def build_runner(
     def transcribe(wav):
         return text, no_speech_prob
 
-    def extract(value):
+    def extract(value, question=None):
         return FakeExtraction(
             extraction
             if extraction is not None
@@ -207,7 +207,7 @@ class SessionRunnerTest(unittest.TestCase):
             record=lambda seconds: speech(),
             has_speech=lambda wav: True,
             transcribe=lambda wav: ("네", 0.1),
-            extract=lambda text: FakeExtraction({}, "GMS"),
+            extract=lambda text, question=None: FakeExtraction({}, "GMS"),
             player=player,
         )
         runner = VoiceSessionRunner(

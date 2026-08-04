@@ -85,14 +85,23 @@ def request_options(model: str) -> dict:
     return {}
 
 
-def llm_extract(text, model=None):
-    """GMS 응답을 허용 필드만 남긴 33-6 보고값으로 반환한다."""
+def llm_extract(text, question=None, model=None):
+    """GMS 응답을 허용 필드만 남긴 33-6 보고값으로 반환한다.
+
+    `question`은 로봇이 직접 물은 문구다(`conversation.PROMPTS`). 프롬프트가 이것을 받아
+    뭉개진 받아쓰기를 되돌리는 데 쓴다 — "다친 곳이 있으십니까?"에 대한 답이라면
+    "비가 계속 나요"는 "피가 계속 나요"로 읽는다.
+
+    질문을 넘기지 않으면 빈 문자열이 들어가고 프롬프트는 되돌리기 근거를 잃는다.
+    호출자가 질문을 아는 경우에는 반드시 넘긴다(S15P11A301-251).
+    """
     selected_model = model or config.LLM_MODEL
+    filled = PROMPT.replace("{question_text}", question or "").replace(
+        "{input_text}", text
+    )
     response = _gms().chat.completions.create(
         model=selected_model,
-        messages=[
-            {"role": "user", "content": PROMPT.replace("{input_text}", text)}
-        ],
+        messages=[{"role": "user", "content": filled}],
         response_format={"type": "json_object"},
         max_completion_tokens=300,
         **request_options(selected_model),
@@ -168,11 +177,20 @@ def keyword_extract(text):
     )
 
 
-def extract_with_status(text) -> GmsCallResult:
-    """GMS 호출 결과와 재시도 횟수·분류된 실패 원인을 함께 반환한다."""
+def extract_with_status(text, question=None) -> GmsCallResult:
+    """GMS 호출 결과와 재시도 횟수·분류된 실패 원인을 함께 반환한다.
+
+    `question`은 GMS 주 경로에만 전달된다. 33-8 키워드 폴백은 정규식이라 발음이
+    비슷한 표현을 되돌릴 수 없다 — 질문을 줘도 쓸 곳이 없다.
+
+    **두 경로가 이 지점에서 어긋난다.** GMS가 되돌리는 발화를 폴백은 놓치므로 장애 시
+    보고가 더 낮은 등급으로 나간다(과소보고 방향). 폴백에 발음 규칙을 넣는 것은 근거를
+    재기 전에는 하지 않는다 — "비가"를 무조건 "피가"로 읽으면 실제 비를 긴급으로 만든다.
+    후속 검토 대상으로 S15P11A301-251에 남겼다.
+    """
 
     extraction, attempts, failure = call_with_limited_retry(
-        lambda: llm_extract(text),
+        lambda: llm_extract(text, question),
         max_attempts=config.GMS_MAX_ATTEMPTS,
         retry_delay_seconds=config.GMS_RETRY_DELAY,
     )
@@ -186,8 +204,8 @@ def extract_with_status(text) -> GmsCallResult:
     return GmsCallResult(keyword_extract(text), "FALLBACK", attempts, failure)
 
 
-def extract(text):
+def extract(text, question=None):
     """기존 호출자를 위한 `(추출값, 출처)` 호환 진입점."""
 
-    result = extract_with_status(text)
+    result = extract_with_status(text, question)
     return result.extraction, result.source

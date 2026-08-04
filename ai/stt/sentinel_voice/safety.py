@@ -98,7 +98,17 @@ def guide_echo_match(
 
 
 def is_valid_stt(text, no_speech_prob, prompt_text=""):
-    """STT 출력이 유효한 발화인지 보수적으로 판정한다."""
+    """STT 출력이 유효한 발화인지 보수적으로 판정한다.
+
+    「프롬프트 복사」 가드는 `config.STT_PROMPT`가 제거되어(S15P11A301-251) 실제로는
+    돌지 않는다. 남겨 둔 이유는 프라이밍을 다시 켜는 경우를 대비한 것이다.
+
+    이 가드에는 원래 위험이 하나 있었다 — 요구조자가 실제로 "살려주세요 도와주세요
+    다쳤어요"라고 말하면 적중 3개로 **정상 발화를 거부한다.** 프라이밍이 없는 지금은
+    `prompt_text`가 비어 이 분기를 타지 않으므로 그 위험도 사라졌다. 프라이밍을 다시
+    도입한다면 이 오거부를 먼저 해결해야 한다.
+    """
+    prompt_text = prompt_text or ""
     if not text or not text.strip():
         return False, "빈 출력"
     if no_speech_prob > 0.7:

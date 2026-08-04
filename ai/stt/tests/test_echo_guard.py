@@ -51,7 +51,7 @@ def build_runner(*, text, sleeps=None, listen_delay=None):
         record=lambda seconds: speech(),
         has_speech=lambda wav: True,
         transcribe=lambda wav: (text, 0.1),
-        extract=lambda value: StubExtraction(
+        extract=lambda value, question=None: StubExtraction(
             {
                 "reportedResponsiveCount": 2,
                 "mobilityStatus": "NO",
@@ -291,7 +291,9 @@ class ListenDelayTest(unittest.TestCase):
             record=lambda seconds: (order.append("record"), speech())[1],
             has_speech=lambda wav: True,
             transcribe=lambda wav: ("네 들려요", 0.1),
-            extract=lambda value: StubExtraction({"mobilityStatus": "YES"}),
+            extract=lambda value, question=None: StubExtraction(
+                {"mobilityStatus": "YES"}
+            ),
             player=StubPlayer(),
         )
         runner = VoiceSessionRunner(

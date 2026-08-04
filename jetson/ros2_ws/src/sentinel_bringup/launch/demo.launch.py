@@ -169,6 +169,10 @@ def generate_launch_description():
         # 손실로 겪었다). 그래서 viz.launch.py 가 토픽을 여섯 개로 제한한다 —
         # 화이트리스트가 없으면 카메라 원본까지 직렬화한다.
         DeclareLaunchArgument('enable_viz', default_value='true'),
+        # Nav2 는 기본 꺼짐 (S15P11A301-235). 통합 자원 계측(S15P11A301-249)이
+        # 끝나기 전에는 데모 기본 구성을 건드리지 않는다 — 탐지가 이미 10.80FPS
+        # 로 목표 미달이라, 얹었을 때 얼마나 깎이는지 수치 없이 켤 수 없다.
+        DeclareLaunchArgument('enable_nav2', default_value='false'),
         # 데모 기본은 TLS다. 관제 웹(HTTPS)이 평문 WHEP를 혼합 콘텐츠로
         # 차단한다(32-4, S15P11A301-145). 인증서가 없는 개발 기기에서만 끈다.
         DeclareLaunchArgument('webrtc_encryption', default_value='true'),
@@ -203,6 +207,11 @@ def generate_launch_description():
                          LaunchConfiguration('enable_esp32')
                      ),
                  }),
+        # SLAM(4초) 뒤에 띄운다. global costmap 의 static layer 가 /map 을
+        # 기다리는데, 먼저 뜨면 lifecycle activate 가 지도 없이 완료돼 빈
+        # costmap 으로 시작한다 — latched 구독이라 회복은 되지만 로그가 어지럽다.
+        _include('sentinel_bringup', 'nav2.launch.py',
+                 'enable_nav2', 8.0),
         _include('sentinel_streaming', 'streaming.launch.py',
                  'enable_streaming', 4.0,
                  {'webrtc_encryption': LaunchConfiguration('webrtc_encryption')}),

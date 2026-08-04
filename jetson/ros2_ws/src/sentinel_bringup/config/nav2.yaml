@@ -1,0 +1,182 @@
+# Nav2 구성 (S15P11A301-235, 명세 24.1).
+#
+# 컨트롤러는 rotation shim 이 RPP 를 감싼다. 전방 수동 캐스터의 회전 슬립이
+# 오도메트리 yaw 를 갉아먹는데(03장 캘리브레이션 절), DWB 는 궤적 시뮬레이션이
+# 그 품질에 민감하다. RPP + shim 은 "제자리에서 방향 맞추고 직진"에 가까워
+# 슬립에 관용적이다 — 24.1 v2.0 확정.
+#
+# 속도 상한(0.25m/s·0.6rad/s)은 24.2 자율 탐사 행이다. 사람 접근 0.10m/s 는
+# 여기서 다루지 않는다 — 그 감속은 접근 노드(S15P11A301-247)와 안전 체인
+# (S15P11A301-237)의 몫이고, 두 곳에 두면 언젠가 한쪽만 바뀐다.
+#
+# robot_radius 0.20 은 잠정값이다(TBD-HW-006 실측 전). 실측이 오면 여기와
+# inflation_radius 만 바꾼다.
+
+bt_navigator:
+  ros__parameters:
+    use_sim_time: false
+    global_frame: map
+    robot_base_frame: base_footprint
+    # /wheel/odometry 는 enable_esp32 일 때만 나온다. static identity 로 돌 때는
+    # 이 토픽이 없어 속도 추정이 0 으로 남는데, 경로 계획·추종 검증에는 지장이
+    # 없다. 실차에서는 esp32 가 켜지므로 실측 속도가 들어온다.
+    odom_topic: /wheel/odometry
+    bt_loop_duration: 10
+    default_server_timeout: 20
+
+controller_server:
+  ros__parameters:
+    use_sim_time: false
+    # 20Hz 기본에서 10Hz 로 낮춘다. 0.25m/s 에서 주기당 2.5cm — 충분하고,
+    # Jetson 은 YOLO·SLAM·인코딩과 대역폭을 나눠 쓴다(8.1 LPDDR5).
+    controller_frequency: 10.0
+    min_x_velocity_threshold: 0.001
+    min_theta_velocity_threshold: 0.001
+    failure_tolerance: 0.5
+    progress_checker_plugin: "progress_checker"
+    goal_checker_plugins: ["general_goal_checker"]
+    controller_plugins: ["FollowPath"]
+
+    progress_checker:
+      plugin: "nav2_controller::SimpleProgressChecker"
+      required_movement_radius: 0.1
+      # 기본 10초. 저속(0.25m/s) 로봇이라 여유를 준다 — 너무 짧으면 정상
+      # 저속 주행이 정체로 오판돼 recovery 가 돈다.
+      movement_time_allowance: 15.0
+
+    general_goal_checker:
+      plugin: "nav2_controller::SimpleGoalChecker"
+      stateful: true
+      xy_goal_tolerance: 0.15
+      yaw_goal_tolerance: 0.30
+
+    FollowPath:
+      plugin: "nav2_rotation_shim_controller::RotationShimController"
+      primary_controller: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
+      # 목표 방향과 45° 이상 어긋나면 제자리 회전으로 먼저 맞춘다.
+      angular_dist_threshold: 0.785
+      forward_sampling_distance: 0.3
+      rotate_to_heading_angular_vel: 0.5
+      max_angular_accel: 1.5
+      simulate_ahead_time: 1.0
+
+      # ── RPP ──
+      desired_linear_vel: 0.25          # 24.2 자율 탐사 상한
+      lookahead_dist: 0.4
+      min_lookahead_dist: 0.25
+      max_lookahead_dist: 0.6
+      use_velocity_scaled_lookahead_dist: false
+      transform_tolerance: 0.2
+      min_approach_linear_velocity: 0.05
+      approach_velocity_scaling_dist: 0.5
+      use_collision_detection: true
+      max_allowed_time_to_collision_up_to_carrot: 1.0
+      use_regulated_linear_velocity_scaling: true
+      use_cost_regulated_linear_velocity_scaling: false
+      regulated_linear_scaling_min_radius: 0.4
+      regulated_linear_scaling_min_speed: 0.1
+      use_rotate_to_heading: true
+      rotate_to_heading_min_angle: 0.785
+      max_robot_pose_search_dist: 1.0
+
+planner_server:
+  ros__parameters:
+    use_sim_time: false
+    expected_planner_frequency: 1.0
+    planner_plugins: ["GridBased"]
+    GridBased:
+      plugin: "nav2_navfn_planner/NavfnPlanner"
+      tolerance: 0.25
+      use_astar: false
+      # 미지 통과 금지. 23.3 도달성 판정("plan 생성 불가 후보 제거")이 이 값에
+      # 기대고 있다 — 미지를 통과시키면 벽 뒤 frontier 도 도달 가능으로 나온다.
+      allow_unknown: false
+
+behavior_server:
+  ros__parameters:
+    use_sim_time: false
+    costmap_topic: local_costmap/costmap_raw
+    footprint_topic: local_costmap/published_footprint
+    cycle_frequency: 10.0
+    behavior_plugins: ["spin", "backup", "wait"]
+    spin:
+      plugin: "nav2_behaviors/Spin"
+    backup:
+      plugin: "nav2_behaviors/BackUp"
+    wait:
+      plugin: "nav2_behaviors/Wait"
+    global_frame: odom
+    robot_base_frame: base_footprint
+    transform_tolerance: 0.2
+    max_rotational_vel: 0.6             # 24.2
+    min_rotational_vel: 0.2
+    rotational_acc_lim: 1.5
+
+waypoint_follower:
+  ros__parameters:
+    use_sim_time: false
+    loop_rate: 20
+    # 한 지점 실패로 전체 복귀를 포기하지 않는다 — 빵조각 역추적(23.6 2단,
+    # S15P11A301-246)은 중간 지점 몇 개를 건너뛰어도 성립한다.
+    stop_on_failure: false
+    waypoint_task_executor_plugin: "wait_at_waypoint"
+    wait_at_waypoint:
+      plugin: "nav2_waypoint_follower::WaitAtWaypoint"
+      enabled: false
+
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      use_sim_time: false
+      update_frequency: 1.0
+      publish_frequency: 0.5
+      global_frame: map
+      robot_base_frame: base_footprint
+      robot_radius: 0.20                # TBD-HW-006 실측 전 잠정
+      resolution: 0.05
+      track_unknown_space: true
+      rolling_window: false
+      plugins: ["static_layer", "inflation_layer"]
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        map_topic: /map
+        # slam_toolbox 의 /map 이 latched(transient_local)다. 이걸 안 켜면
+        # 정지 중(지도 갱신 없음)에는 costmap 이 영영 비어 있다 — S15P11A301-172
+        # 탐사 노드에서 같은 QoS 문제를 밟았다.
+        map_subscribe_transient_local: true
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 3.0
+        inflation_radius: 0.45
+
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      use_sim_time: false
+      update_frequency: 5.0
+      publish_frequency: 2.0
+      global_frame: odom
+      robot_base_frame: base_footprint
+      rolling_window: true
+      width: 3
+      height: 3
+      resolution: 0.05
+      robot_radius: 0.20
+      plugins: ["obstacle_layer", "inflation_layer"]
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: true
+        observation_sources: scan
+        scan:
+          topic: /scan
+          max_obstacle_height: 2.0
+          clearing: true
+          marking: true
+          raytrace_max_range: 3.0
+          raytrace_min_range: 0.0
+          obstacle_max_range: 2.5
+          obstacle_min_range: 0.0
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 3.0
+        inflation_radius: 0.45

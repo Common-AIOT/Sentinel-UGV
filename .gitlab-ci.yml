@@ -311,6 +311,7 @@ test:message-contract:
         - common/schemas/**/*
         - common/samples/**/*
         - jetson/ros2_ws/src/sentinel_bridge/**/*
+        - jetson/ros2_ws/src/sentinel_drive/**/*
         - jetson/ros2_ws/src/sentinel_mission/**/*
         - jetson/ros2_ws/src/sentinel_recorder/**/*
         - jetson/ros2_ws/src/sentinel_perception/**/*
@@ -332,6 +333,7 @@ test:message-contract:
     #    패키지를 각각 지정합니다. 최상위에서 pytest를 돌리면 rclpy가 필요한
     #    다른 디렉터리까지 수집해 실패합니다.
     - python -m pytest jetson/ros2_ws/src/sentinel_bridge/test -q
+    - python -m pytest jetson/ros2_ws/src/sentinel_drive/test -q
     - python -m pytest jetson/ros2_ws/src/sentinel_mission/test -q
     - python -m pytest jetson/ros2_ws/src/sentinel_recorder/test -q
     # sentinel_streaming은 ring_buffer만 시험합니다. 파이프라인 문자열을 만드는

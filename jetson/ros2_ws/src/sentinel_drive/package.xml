@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>sentinel_drive</name>
+  <version>0.1.0</version>
+  <description>/cmd_vel 차동 구동 역운동학 (S15P11A301-234). 자율 명령을 esp32_motor_bridge 의 좌·우 mm/s JSON 계약으로 변환한다. 부호 규약의 근거는 esp32_bridge/wheel_odometry.py 의 정운동학이다.</description>
+  <maintainer email="team@example.com">Sentinel Team</maintainer>
+  <license>Apache-2.0</license>
+
+  <depend>rclpy</depend>
+  <depend>geometry_msgs</depend>
+  <depend>std_msgs</depend>
+
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

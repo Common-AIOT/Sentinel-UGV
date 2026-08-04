@@ -23,6 +23,7 @@ REQUIREMENTS="scripts/ci/contract-test-requirements.txt"
 # 검증 대상 패키지. .gitlab-ci.yml 의 script 와 같아야 한다.
 PACKAGES=(
   sentinel_bridge
+  sentinel_drive
   sentinel_mission
   sentinel_recorder
   sentinel_streaming

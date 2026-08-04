@@ -111,27 +111,44 @@ export default function GCSPage() {
     <div className="h-screen w-full flex flex-col overflow-hidden bg-background text-foreground">
       <TopBar />
 
-      <div className="flex-1 flex overflow-hidden">
-        <div className="flex-1 relative overflow-hidden flex flex-col">
-          {videoMain ? (
-            <VideoPanel isMain onSwap={() => setMainView("map")} />
-          ) : (
-            /* 메인도 같은 실시간 지도다. 예전에는 목업 격자(LidarMap)를 띄워서
-               키우면 실시간 지도가 사라졌다(S15P11A301-227). */
-            <LiveMap variant="full" />
-          )}
+      <div className="flex-1 flex flex-col overflow-hidden">
+        <div className="flex min-h-0 flex-1 overflow-hidden">
+          <div
+            className={
+              videoMain
+                ? "relative h-full flex-none aspect-video overflow-hidden flex flex-col"
+                : "flex-1 relative overflow-hidden flex flex-col"
+            }
+          >
+            {videoMain ? (
+              <VideoPanel isMain onSwap={() => setMainView("map")} />
+            ) : (
+              /* 메인도 같은 실시간 지도다. 예전에는 목업 격자(LidarMap)를 띄워서
+                 키우면 실시간 지도가 사라졌다(S15P11A301-227). */
+              <LiveMap variant="full" />
+            )}
+          </div>
+
+          <div
+            className={`flex flex-col border-l border-border bg-card overflow-y-auto ${
+              videoMain ? "min-w-0 flex-1" : "flex-shrink-0"
+            }`}
+            style={videoMain ? undefined : { width: 308 }}
+          >
+            {videoMain ? (
+              <MiniMapSlot />
+            ) : (
+              <VideoPanel onSwap={() => setMainView("video")} />
+            )}
+            <ModeRow />
+            <StatusPanel />
+            <SensorDashboard />
+          </div>
         </div>
 
-        <div className="flex flex-col border-l border-border bg-card flex-shrink-0 overflow-y-auto" style={{ width: 308 }}>
-          {videoMain ? (
-            <MiniMapSlot />
-          ) : (
-            <VideoPanel onSwap={() => setMainView("video")} />
-          )}
-          <ModeRow />
-          <StatusPanel />
-          <SensorDashboard />
-        </div>
+        {videoMain && (
+          <div aria-hidden="true" className="h-10 flex-shrink-0 border-t border-border bg-background" />
+        )}
       </div>
     </div>
   );

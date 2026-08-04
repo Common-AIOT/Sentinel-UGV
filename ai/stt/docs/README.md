@@ -1081,7 +1081,7 @@ python -m bench.gms_model_bench --models <목록> --runs 2 --confirm-live
 | 항목 | 왜 남았나 |
 |---|---|
 | **C 무응답 경로 (`anyResponseDetected=false`)** | **결과가 가장 무거운 경로인데 미검증** (§11-3) |
-| STT WER · 핵심 표현 보존율 | 라벨 데이터셋 필요 (Jira 120) |
+| STT WER · 핵심 표현 보존율 | 라벨 데이터셋 확보 중 (Jira 232) → 측정·판정은 120. 직접 녹음 대신 KsponSpeech(AI Hub) 채택 |
 | GMS 왕복 지연 P50/P95 · 일관성 | bench 재실행 |
 | **통합 구동 (비전+SLAM 동시)** | **가장 중요.** 안전 게이트 §9-5 |
 | `jetson_clocks` 적용 상태 재측정 | sudo 권한 필요 |

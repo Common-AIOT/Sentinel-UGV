@@ -164,6 +164,16 @@ export interface CommandResponse {
   status: string;
 }
 
+/** 명령 처리 결과 (#207). result: PENDING → ACCEPTED/EXECUTED 또는 REJECTED/EXPIRED/FAILED. */
+export interface CommandStatus {
+  commandId: string;
+  type: string;
+  result: string;
+  /** 거부·실패 사유 (ROBOT_BUSY 등). 성공·대기면 null. */
+  reasonCode: string | null;
+  requestedAt: string;
+}
+
 // ── 엔드포인트 ──────────────────────────────────────────────────────────────
 
 export const api = {
@@ -183,6 +193,9 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ type }),
     }),
+
+  missionCommands: (missionId: string) =>
+    request<CommandStatus[]>(`/api/v1/missions/${missionId}/commands`),
 
   missionEncounters: (missionId: string) =>
     request<EncounterSummary[]>(`/api/v1/missions/${missionId}/encounters`),

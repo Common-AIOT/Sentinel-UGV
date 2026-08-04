@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>sentinel_exploration</name>
+  <version>0.1.0</version>
+  <description>Frontier·관측 목표 선택과 카메라 커버리지 장부 (S15P11A301-172). 판단은 rclpy 없는 순수 모듈에 있고, Nav2 연결은 S15P11A301-235 에서 Navigator 인터페이스 뒤에 꽂는다.</description>
+  <maintainer email="team@example.com">Sentinel Team</maintainer>
+  <license>Apache-2.0</license>
+
+  <depend>rclpy</depend>
+  <depend>nav_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>tf2_ros_py</depend>
+  <depend>python3-numpy</depend>
+
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

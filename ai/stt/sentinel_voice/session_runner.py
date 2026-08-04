@@ -28,6 +28,7 @@ import numpy as np
 from . import config
 from .audio import normalize, rms
 from .conversation import (
+    PROMPTS,
     SESSION_TIMEOUT_SECONDS,
     AudioObservation,
     ConversationMachine,
@@ -249,7 +250,9 @@ class VoiceSessionRunner:
         if field_name is None:
             return None
 
-        result = self.deps.extract(text)
+        # 무엇을 물었는지 함께 넘긴다. 받아쓰기가 뭉개졌을 때 그 질문에 대한 답으로
+        # 되돌릴 근거가 된다(S15P11A301-251). 승인된 문구 그대로를 쓴다.
+        result = self.deps.extract(text, PROMPTS.get(question))
         extraction = getattr(result, "extraction", result) or {}
         source = getattr(result, "source", None)
         self._diagnostic(question).extraction_source = source

@@ -53,7 +53,7 @@ def build_runner(session_log, *, audio=None, has_speech=True, text="네"):
         record=lambda seconds: speech() if audio is None else audio,
         has_speech=lambda wav: has_speech,
         transcribe=lambda wav: (text, 0.1),
-        extract=lambda value: StubExtraction(
+        extract=lambda value, question=None: StubExtraction(
             {
                 "reportedResponsiveCount": 2,
                 "mobilityStatus": "NO",

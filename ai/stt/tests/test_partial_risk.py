@@ -32,7 +32,7 @@ def _silent_dependencies():
         record=lambda seconds: None,
         has_speech=lambda wav: False,
         transcribe=lambda wav: ("", 1.0),
-        extract=lambda text: None,
+        extract=lambda text, question=None: None,
         player=None,
     )
 

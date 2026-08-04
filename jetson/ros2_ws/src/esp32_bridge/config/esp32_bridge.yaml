@@ -63,7 +63,14 @@ esp32_sensor_bridge:
     # 진동·bias 실측(TBD-HW-012) 전 임시값이다. 데이터시트 잡음 밀도만 보면
     # gyro는 3e-7 (rad/s)^2 수준이지만, 실제로는 차체 진동과 온도 bias 변동이
     # 지배하므로 보수적으로 (0.02 rad/s)^2 = 4e-4, accel은 (0.2 m/s^2)^2 = 4e-2로
-    # 둔다. EKF 융합을 켜기 전에 정지·주행 로그로 다시 잡을 값이다.
+    # 둔다.
+    #
+    # **2026-08-04 정지 실측(S15P11A301-236): gyro_z 표준편차 0.00715 rad/s →
+    # 분산 5.1e-05.** 지금 값(4e-4)의 약 1/8 이다. 그래도 낮추지 않는다 — 이
+    # 측정은 IMU 가 차체에 고정되지 않고 로봇이 정지한 조건이라, 위 주석이 지목한
+    # 지배 항(차체 진동)이 빠져 있다. 낮추면 실차에서 IMU 를 과신한다.
+    # **5.1e-05 는 하한이다.** 주행 로그로 재측정해 그 사이 값으로 확정한다
+    # (S15P11A301-248).
     imu_angular_velocity_variance: 4.0e-04
     imu_linear_acceleration_variance: 4.0e-02
     # CALIBRATING·RANGE_ERROR·clock offset 미안정 구간에 싣는 값. 값은 Foxglove로

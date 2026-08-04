@@ -45,12 +45,13 @@ from launch.actions import (
     DeclareLaunchArgument,
     GroupAction,
     IncludeLaunchDescription,
+    SetLaunchConfiguration,
     LogInfo,
     TimerAction,
 )
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, NotSubstitution
+from launch.substitutions import AndSubstitution, LaunchConfiguration, NotSubstitution
 from launch_ros.actions import Node
 
 SECRETS_PATH = Path.home() / '.config' / 'sentinel' / 'secrets.yaml'
@@ -173,6 +174,20 @@ def generate_launch_description():
         # 끝나기 전에는 데모 기본 구성을 건드리지 않는다 — 탐지가 이미 10.80FPS
         # 로 목표 미달이라, 얹었을 때 얼마나 깎이는지 수치 없이 켤 수 없다.
         DeclareLaunchArgument('enable_nav2', default_value='false'),
+        # EKF 도 기본 꺼짐 (S15P11A301-236). 입력이 ESP32 센서 보드의 휠
+        # 오도메트리·IMU 라, 보드 없이 켜면 예측만으로 0 을 내고 그것이 TF 로
+        # 나가 로봇이 영원히 원점에 있는 것으로 보인다. 아래에서 enable_esp32 와
+        # AND 로 묶어 그 조합을 구조적으로 막는다.
+        DeclareLaunchArgument('enable_ekf', default_value='false'),
+        # EKF 실효 조건 = enable_ekf AND enable_esp32. 아래 3자 배타표의 두 번째
+        # 행(esp32 없이 ekf 만 켠 경우)을 여기서 구조적으로 걸러낸다.
+        SetLaunchConfiguration(
+            '_effective_ekf',
+            AndSubstitution(
+                LaunchConfiguration('enable_ekf'),
+                LaunchConfiguration('enable_esp32'),
+            ),
+        ),
         # 데모 기본은 TLS다. 관제 웹(HTTPS)이 평문 WHEP를 혼합 콘텐츠로
         # 차단한다(32-4, S15P11A301-145). 인증서가 없는 개발 기기에서만 끈다.
         DeclareLaunchArgument('webrtc_encryption', default_value='true'),
@@ -187,19 +202,37 @@ def generate_launch_description():
                  {
                      'motor_port': LaunchConfiguration('motor_port'),
                      'sensor_port': LaunchConfiguration('sensor_port'),
-                     # 아래 slam 의 publish_static_odom 과 **정확히 반대**여야 한다.
-                     'publish_odom_tf': LaunchConfiguration('enable_esp32'),
+                     # 브리지가 TF 를 내는 것은 ESP32 가 있고 **EKF 가 없을 때**
+                     # 뿐이다. EKF 가 켜지면 EKF 가 같은 TF 를 내므로 여기를
+                     # 끈다 — 아래 3자 배타표를 보라.
+                     'publish_odom_tf': AndSubstitution(
+                         LaunchConfiguration('enable_esp32'),
+                         NotSubstitution(LaunchConfiguration('_effective_ekf')),
+                     ),
                  }),
-        # odom→base_footprint 발행자를 하나로 유지한다 (S15P11A301-222).
+        # odom→base_footprint 발행자를 하나로 유지한다
+        # (S15P11A301-222 의 2자 배타를 236 에서 3자로 확장).
         #
-        # 이 TF 를 낼 수 있는 곳이 둘이다 — esp32_bridge 의 휠 오도메트리와
-        # slam.launch.py 의 static identity. 둘 다 켜지면 같은 TF 를 다투어 위치가
-        # 흔들리고, 둘 다 꺼지면 slam_toolbox 가 지도를 아예 만들지 않는다.
-        # 어느 쪽이든 증상이 "지도가 이상하다"로만 보여 원인을 찾기 어렵다.
+        # 이 TF 를 낼 수 있는 곳이 셋이다 — esp32_bridge 의 휠 오도메트리,
+        # slam.launch.py 의 static identity, 그리고 ekf.launch.py 의 EKF.
+        # 둘 이상이면 같은 TF 를 다투어 위치가 흔들리고, 하나도 없으면
+        # slam_toolbox 가 지도를 아예 만들지 않는다. 어느 쪽이든 증상이
+        # "지도가 이상하다"로만 보여 원인을 찾기 어렵다.
         #
-        # 그래서 규약으로 두지 않고 구조로 묶는다. static 은 enable_esp32 의
-        # 부정이므로 발행자가 항상 정확히 하나다. ESP32 가 없는 구성
-        # (enable_esp32:=false)에서는 예전처럼 identity 로 돌아 SLAM 이 계속 된다.
+        # 그래서 규약으로 두지 않고 구조로 묶는다. 네 조합 전부에서 발행자가
+        # 정확히 하나다.
+        #
+        #   esp32 | ekf | 발행자          | 근거
+        #   ------+-----+-----------------+---------------------------------
+        #     F   |  F  | slam static     | 보드 없음 — identity 로 SLAM 유지
+        #     F   |  T  | slam static     | EKF 가 안 뜬다(_effective_ekf=F).
+        #         |     |                 | 입력이 없으니 켜도 0 만 낸다
+        #     T   |  F  | esp32_bridge    | 휠 오도메트리 단독
+        #     T   |  T  | EKF             | 브리지 TF 는 위에서 꺼진다
+        # SLAM 보다 먼저 띄운다. slam_toolbox 가 odom→base_footprint 를 요구하므로
+        # 이쪽이 늦으면 "Failed to compute odom pose" 를 반복하며 그동안 지도를
+        # 만들지 않는다 — esp32_bridge 를 먼저 띄우는 것과 같은 이유다.
+        _include('sentinel_bringup', 'ekf.launch.py', '_effective_ekf', 0),
         _include('sentinel_bringup', 'slam.launch.py',
                  'enable_slam', 4.0,
                  {

@@ -343,3 +343,23 @@ recorder   상한=580MB → recorder.yaml이 실제로 로드됨 (충돌 수정�
 
 **재부팅 자동 기동은 아직 검증 전입니다.** 유닛을 enable한 상태의 재부팅
 시험은 장비를 공유하는 다른 작업이 없는 시점에 합니다(티켓의 시점 제약).
+
+## EKF (S15P11A301-236)
+
+엔코더 `vx` 와 IMU `vyaw` 를 융합해 `odom → base_footprint` 를 낸다. 목적은
+캐스터 슬립이 갉아먹는 yaw 보정이다. 설계 근거는 `docs/04-자율주행.md` 23.2.
+
+```bash
+# 데모 스택과 함께 (센서 보드 필수 — enable_ekf 는 enable_esp32 와 AND 로 묶인다)
+./scripts/demo_up.sh enable_esp32:=true enable_ekf:=true sensor_port:=/dev/ttyUSB2
+
+# 단독 검증 (돌고 있는 스택의 TF 를 건드리지 않는다)
+ros2 launch sentinel_bringup ekf.launch.py
+ros2 topic echo /odometry/filtered --once
+```
+
+**기본은 꺼짐이다.** IMU 기판 장착 방향이 확정되기 전에 켜면 EKF 가 회전을 반대로
+융합할 수 있고, 그 오류는 SLAM 의 `map→odom` 보정이 덮어서 화면에 안 보인다.
+장착 후 23.2 「켜기 전 확인」 3단계를 먼저 밟는다.
+
+`odom → base_footprint` 발행자는 항상 정확히 하나다 — 배타표는 23.2.

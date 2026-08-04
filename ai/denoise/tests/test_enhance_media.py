@@ -21,7 +21,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from enhance_media import (  # noqa: E402
     DF_SAMPLE_RATE,
     NoAudioTrack,
+    SilentAudioTrack,
     _match_length,
+    enhance_media,
     extract_audio,
     write_m4a,
     write_wav,
@@ -197,6 +199,35 @@ def voiced_like(seconds: float) -> np.ndarray:
         voiced += amp * np.sin(k * phase)
     syllable = 0.5 + 0.5 * np.sin(2 * np.pi * 3.5 * t - 1.2)
     return (0.2 * voiced * syllable).astype(np.float32)
+
+
+def test_silent_track_is_rejected_before_denoise(tmp_path):
+    """트랙이 있는데 내용이 0이면 잡음 제거 전에 걸러낸다.
+
+    2026-08-04 리허설 영상이 이 상태였다 — 295초 전체 peak 0. 원인은 젯슨의
+    기본 입력 소스가 마이크가 아닌 빈 아날로그 단자였다(S15P11A301-257).
+    무음을 제거해도 무음이고, 그것을 올리면 마이크 사망이 완료로 덮인다.
+
+    모델을 쓰지 않는다 — 판정이 `denoise` 호출보다 앞이라 모델 없는 환경에서도
+    이 경로가 검증된다.
+    """
+    source = tmp_path / "silent_event.mp4"
+    make_mp4(source, np.zeros(DF_SAMPLE_RATE * 2, dtype=np.float32))
+
+    # 트랙 자체는 정상적으로 존재한다. NoAudioTrack이 아니라는 점이 핵심이다.
+    assert len(extract_audio(source)) > 0
+
+    with pytest.raises(SilentAudioTrack):
+        enhance_media(source, tmp_path / "out.m4a", quiet=True)
+
+    # 실패했으므로 결과물을 남기지 않는다.
+    assert not (tmp_path / "out.m4a").exists()
+
+
+def test_silent_track_is_not_confused_with_missing_track(tmp_path):
+    """두 예외는 갈라져 있어야 한다 — 하나는 정상 경로, 하나는 장치 사망이다."""
+    assert not issubclass(SilentAudioTrack, NoAudioTrack)
+    assert not issubclass(NoAudioTrack, SilentAudioTrack)
 
 
 def test_denoise_suppresses_pure_noise():

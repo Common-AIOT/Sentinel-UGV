@@ -133,6 +133,41 @@ STT_PROMPT: str | None = None
 # 원본(정규화 전) RMS가 이보다 작으면 사실상 무음으로 판정
 SILENCE_RMS = 0.005
 
+# 디지털 무음 판정 — "조용한 방"이 아니라 "캡처 경로가 죽었다"는 서명이다.
+#
+# 살아 있는 마이크는 조용한 방에서도 정확히 0을 내지 않는다. 열잡음·양자화 오차가
+# 항상 있다. 우리 실측에서 조용하다고 판정된 구간도 rms 0.0038이었다(0이 아니다).
+# 반대로 다음 경우에는 전 구간이 정확히 0이 된다.
+#
+#   - 입력 소스가 아무것도 연결되지 않은 단자로 지정돼 있다
+#   - 소스가 출력 모니터(스피커로 나가는 소리를 되받는 가상 장치)로 잡혀 있다
+#   - 소스가 음소거되어 있거나 볼륨이 0이다
+#
+# 2026-08-04 젯슨에서 첫 경우가 실제로 났다(S15P11A301-257). PulseAudio 기본
+# 소스가 BRIO가 아니라 보드의 빈 아날로그 입력이었고, 리허설 이벤트 영상 295초가
+# 전부 peak 0이었다. 음성 세션도 같은 기본값을 쓰므로 같은 무음을 받는다.
+#
+# **이 상황을 무음으로 판정하면 안 된다.** 무음 → anyResponseDetected=false →
+# riskLevel=IMMEDIATE가 되어, 마이크 사망이 "의식 없는 요구조자"로 보고된다.
+# README 10-3 치명 오류 목록의 "시스템 장애를 요구조자 무응답으로 변환"이다.
+#
+# 부동소수 변환 잔차를 감안해 정확히 0이 아니라 아주 작은 값으로 둔다. 이 값과
+# SILENCE_RMS(0.005) 사이는 세 자리 이상 벌어져 있어 진짜 무응답을 삼키지 않는다.
+SILENT_INPUT_PEAK = float(os.getenv("SENTINEL_SILENT_INPUT_PEAK", "1e-6"))
+
+# 녹음 입력 장치. None이면 PortAudio 기본 장치를 쓴다(현행 동작).
+#
+# 젯슨에서는 이름으로 BRIO를 지목할 수 없다 — PulseAudio가 USB 카드를 독점해
+# ALSA 직접 접근이 막히고, PortAudio 목록에 hw:0이 아예 나타나지 않는다. 그쪽에서
+# 실효가 있는 수단은 PulseAudio 소스를 지정하는 것이다(PULSE_SOURCE 환경변수 또는
+# pactl set-default-source). 이 값은 장치 이름을 노출하는 환경(윈도우 등)과
+# 인덱스로 지목하는 경우를 위한 것이다.
+#
+# 숫자면 인덱스로, 그 밖이면 이름 문자열로 sounddevice에 넘긴다.
+INPUT_DEVICE: str | int | None = os.getenv("SENTINEL_INPUT_DEVICE") or None
+if isinstance(INPUT_DEVICE, str) and INPUT_DEVICE.lstrip("-").isdigit():
+    INPUT_DEVICE = int(INPUT_DEVICE)
+
 # 정규화 목표 RMS
 NORM_TARGET_RMS = 0.08
 

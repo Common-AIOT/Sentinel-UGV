@@ -48,9 +48,28 @@ OVERLAP_SECONDS = 1.0
 ATTEN_LIMIT_DB: float | None = None
 
 
+# 디지털 무음 판정 임계값. 살아 있는 마이크는 조용해도 정확히 0을 내지 않으므로,
+# 이 값 이하는 "조용했다"가 아니라 "마이크가 아닌 것을 녹음했다"는 뜻이다.
+# ai/stt의 `config.SILENT_INPUT_PEAK`와 같은 근거다(S15P11A301-257).
+SILENT_PEAK = 1e-6
+
+
 class NoAudioTrack(ValueError):
     """입력에 오디오 트랙이 없다. 오디오 없는 이벤트 영상도 유효한 입력이므로
     호출자가 '처리 불가'와 '처리 실패'를 구분할 수 있게 따로 둔다."""
+
+
+class SilentAudioTrack(ValueError):
+    """오디오 트랙은 있으나 전 구간이 디지털 무음이다.
+
+    `NoAudioTrack`과 갈라 둔 이유가 있다. 트랙이 없는 것은 정상 경로일 수 있지만
+    (젯슨이 마이크를 못 열면 비디오만 기록한다), **트랙이 있는데 내용이 0인 것은
+    캡처 경로 사망이다.** 마이크가 아닌 것을 녹음하고 있다는 뜻이다.
+
+    2026-08-04 리허설 영상 295초가 이 상태였다. 그때 이 구분이 없어서 무음을
+    잡음 제거해 무음을 업로드했고, 스캔은 그 발견을 영구히 완료로 표시했다.
+    아무도 마이크 사망을 몰랐다.
+    """
 
 
 def extract_audio(path: str | Path, rate: int = DF_SAMPLE_RATE) -> np.ndarray:
@@ -221,6 +240,13 @@ def enhance_media(
 
     wav = extract_audio(source)
     seconds = len(wav) / DF_SAMPLE_RATE
+    # 잡음 제거보다 먼저 본다. 무음을 제거해도 무음이고, 그 결과를 올리면 마이크
+    # 사망이 조용한 성공으로 덮인다. CPU도 아낀다.
+    peak = float(np.max(np.abs(wav))) if len(wav) else 0.0
+    if peak <= SILENT_PEAK:
+        raise SilentAudioTrack(
+            f"오디오 트랙 전체가 디지털 무음(peak {peak:.8f}, {seconds:.1f}초): {source}"
+        )
     t0 = time.perf_counter()
     cleaned = denoise(wav, atten_lim_db=atten_lim_db)
     elapsed = time.perf_counter() - t0

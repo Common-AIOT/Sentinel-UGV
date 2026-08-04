@@ -26,7 +26,7 @@ from typing import Any, Callable
 import numpy as np
 
 from . import config
-from .audio import normalize, rms
+from .audio import is_silent_input, normalize, peak, rms
 from .conversation import (
     PROMPTS,
     SESSION_TIMEOUT_SECONDS,
@@ -202,6 +202,21 @@ class VoiceSessionRunner:
 
         raw_rms = rms(wav)
         diagnostic.raw_rms = raw_rms
+
+        # 무음 판정보다 **먼저** 캡처 경로 사망을 가른다. 순서가 뒤바뀌면
+        # 마이크가 죽은 것이 요구조자 무응답으로 기록된다.
+        #
+        # 조용한 방과 죽은 경로는 다르다. 조용한 방은 작은 신호가 있고(실측 rms
+        # 0.0038), 죽은 경로는 전 구간이 정확히 0이다. 아래는 후자만 잡는다.
+        # 근거와 실제 사례는 config.SILENT_INPUT_PEAK 주석에 있다.
+        if is_silent_input(wav):
+            self.on_event(
+                f"[FAIL] {question.value}: 입력이 디지털 무음이다 "
+                f"(peak={peak(wav):.8f}) — 마이크가 아니라 빈 경로를 읽고 있다. "
+                "무응답이 아니라 장치 오류로 종료한다"
+            )
+            return AudioObservation(False, None, audio_error=True)
+
         if raw_rms < config.SILENCE_RMS:
             self.on_event(f"[NOVOICE] {question.value}: 무음 rms={raw_rms:.4f}")
             return AudioObservation(False)

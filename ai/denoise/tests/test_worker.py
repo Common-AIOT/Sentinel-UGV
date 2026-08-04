@@ -235,6 +235,31 @@ def test_video_without_audio_track_is_not_a_failure(monkeypatch):
     assert not any(method == "PUT" for method, _ in session.calls)
 
 
+def test_silent_audio_track_is_not_uploaded_and_alerts(monkeypatch, capsys):
+    """무음 트랙은 성공이 아니다. 올리면 마이크 사망이 완료로 덮인다.
+
+    2026-08-04 리허설 영상 295초가 전부 peak 0이었는데 시스템은 조용했다
+    (S15P11A301-257). 업로드하지 않고 경보를 남기는 것이 이 테스트의 대상이다.
+    """
+    from enhance_media import SilentAudioTrack
+
+    def raising(*_args, **_kwargs):
+        raise SilentAudioTrack("오디오 트랙 전체가 디지털 무음(peak 0.00000000, 295.0초)")
+
+    monkeypatch.setattr(worker_module, "enhance_media", raising)
+    session = FakeSession()
+    api = MediaApi("http://backend:8080", session=session)
+
+    outcome = process_encounter(api, ENCOUNTER_ID)
+
+    assert outcome.status == "SILENT_AUDIO"
+    # NO_AUDIO와 섞이면 정상 경로로 묻힌다.
+    assert outcome.status != "NO_AUDIO"
+    assert not any(method == "PUT" for method, _ in session.calls)
+    # scan.log에 남는 이 줄이 유일한 경보다.
+    assert "[ALERT]" in capsys.readouterr().err
+
+
 def test_complete_409_counts_as_success(fake_enhance):
     session = FakeSession(overrides={"complete": FakeResponse(status_code=409, payload={})})
     api = MediaApi("http://backend:8080", session=session)

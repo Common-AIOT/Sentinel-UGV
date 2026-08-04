@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 import com.sentinel.backend.common.exception.BusinessException;
 import com.sentinel.backend.common.exception.ErrorCode;
 import com.sentinel.backend.control.dto.CommandResponse;
+import com.sentinel.backend.control.dto.CommandStatusResponse;
 import com.sentinel.backend.messaging.MqttGateway;
 import com.sentinel.backend.messaging.dto.MessageEnvelope;
 import com.sentinel.backend.messaging.dto.MissionCommandData;
@@ -81,6 +82,34 @@ public class MissionCommandService {
             throw e;
         }
         return new CommandResponse(commandId, "PENDING");
+    }
+
+    /**
+     * 임무의 명령 이력 조회 (S15P11A301-207). 최신 요청부터 내려준다.
+     *
+     * <p>result 는 발급 시 PENDING 으로 시작해 젯슨 ACK 가 갱신한다(27.6). 과거에
+     * result 없이 적재된 행이 있어도 PENDING 으로 노출한다 — 화면이 null 을 해석하게
+     * 두지 않는다.
+     */
+    public List<CommandStatusResponse> findCommands(UUID missionId) {
+        Boolean exists = jdbc.queryForObject(
+                "SELECT EXISTS(SELECT 1 FROM missions WHERE id = ?)", Boolean.class, missionId);
+        if (!Boolean.TRUE.equals(exists)) {
+            throw new BusinessException(ErrorCode.MISSION_NOT_FOUND);
+        }
+        return jdbc.query("""
+                        SELECT command_id, type, result, reason_code, requested_at
+                        FROM control_commands
+                        WHERE mission_id = ?
+                        ORDER BY requested_at DESC
+                        """,
+                (rs, i) -> new CommandStatusResponse(
+                        rs.getObject("command_id", UUID.class),
+                        rs.getString("type"),
+                        rs.getString("result") == null ? "PENDING" : rs.getString("result"),
+                        rs.getString("reason_code"),
+                        rs.getTimestamp("requested_at").toInstant()),
+                missionId);
     }
 
     private record MissionRow(String robotName, boolean ended) {

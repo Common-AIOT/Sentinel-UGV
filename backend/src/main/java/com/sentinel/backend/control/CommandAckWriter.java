@@ -62,9 +62,11 @@ public class CommandAckWriter {
     }
 
     public void write(MessageEnvelope envelope, CommandAckData data) {
+        // 사유는 거부·실패 ACK 에만 실려 온다(성공이면 null). 함께 남겨 관제가
+        // "왜 거부됐는지"를 보여줄 수 있게 한다(S15P11A301-207).
         int updated = jdbc.update(
-                "UPDATE control_commands SET result = ? WHERE command_id = ?",
-                data.status(), data.commandId());
+                "UPDATE control_commands SET result = ?, reason_code = ? WHERE command_id = ?",
+                data.status(), data.reasonCode(), data.commandId());
         if (updated == 0) {
             log.warn("모르는 명령의 ACK: commandId={}, status={}", data.commandId(), data.status());
             return;

@@ -51,7 +51,14 @@ def speech(level=0.2, seconds=1.0):
     return np.full(int(config.FS * seconds), level, dtype=np.float32)
 
 
-SILENCE = np.zeros(config.FS, dtype=np.float32)
+# 조용한 방 — **정확히 0이 아니다.** 살아 있는 마이크는 조용해도 작은 신호를 낸다.
+# 0.0038은 2026-08-04 실기에서 조용하다고 판정된 구간의 실측 rms다. SILENCE_RMS
+# (0.005) 아래이므로 무음으로 분류되지만 캡처 경로는 살아 있다.
+QUIET_ROOM = np.full(config.FS, 0.0038, dtype=np.float32)
+
+# 캡처 경로 사망 — 전 구간이 정확히 0. 마이크가 아니라 빈 입력을 읽고 있는 상태다
+# (S15P11A301-257). 무음과 구분해야 한다.
+DEAD_INPUT = np.zeros(config.FS, dtype=np.float32)
 
 
 def build_runner(
@@ -135,7 +142,7 @@ class SessionRunnerTest(unittest.TestCase):
 
     def test_silence_is_no_voice_detected(self):
         """무음이면 재질문 후 무응답으로 기록한다."""
-        runner, player = build_runner(audio=SILENCE)
+        runner, player = build_runner(audio=QUIET_ROOM)
         result = runner.run()
 
         intro_turns = [
@@ -147,6 +154,40 @@ class SessionRunnerTest(unittest.TestCase):
         )
         self.assertFalse(result.fields["anyResponseDetected"])
         self.assertIn(GuideCode.RETRY_NO_RESPONSE, player.played)
+
+    def test_dead_input_is_device_error_not_no_response(self):
+        """입력이 디지털 무음이면 장치 오류다. 요구조자 무응답으로 보고하지 않는다.
+
+        2026-08-04 젯슨에서 PulseAudio 기본 소스가 빈 아날로그 단자로 잡혀 있어
+        리허설 영상 295초가 전부 peak 0이었다(S15P11A301-257). 그대로면 마이크
+        사망이 `anyResponseDetected=false` → `IMMEDIATE`로 보고된다. README 10-3
+        치명 오류 목록의 "시스템 장애를 요구조자 무응답으로 변환"이다.
+        """
+        runner, _ = build_runner(audio=DEAD_INPUT)
+        result = runner.run()
+
+        self.assertEqual(result.state, SessionState.FAILED_AUDIO)
+        self.assertEqual(result.termination_reason, "AUDIO_DEVICE_ERROR")
+        # 무응답으로 단정하지 않았다. false가 새어 들어가면 위 오류가 되살아난다.
+        self.assertNotEqual(result.fields.get("anyResponseDetected"), False)
+
+    def test_quiet_room_is_still_no_response(self):
+        """무음 감지가 진짜 무응답 경로를 삼켜서는 안 된다.
+
+        조용한 방(실측 rms 0.0038)은 여전히 무응답이다. 이 값과 디지털 무음
+        임계값(1e-6) 사이는 세 자리 이상 벌어져 있다.
+        """
+        runner, _ = build_runner(audio=QUIET_ROOM)
+        result = runner.run()
+
+        self.assertEqual(result.state, SessionState.COMPLETED)
+        self.assertFalse(result.fields["anyResponseDetected"])
+        intro_turns = [
+            turn for turn in result.turns if turn.question == QuestionCode.INTRO
+        ]
+        self.assertEqual(
+            intro_turns[0].response_class, ResponseClass.NO_VOICE_DETECTED
+        )
 
     def test_audio_device_error_ends_session(self):
         """마이크 오류는 요구조자 상태가 아니라 관찰 실패로 종료한다."""

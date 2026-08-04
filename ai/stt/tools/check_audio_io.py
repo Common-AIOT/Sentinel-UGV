@@ -1,7 +1,14 @@
 """Jetson 음성 입출력 장치 점검 및 증적 수집 도구.
 
-기본 실행은 장치 목록만 조회한다. ``--record-seconds``를 지정하면 BRIO 100
-마이크를 녹음하고, 선택적으로 같은 샘플을 블루투스 스피커로 재생한다.
+기본 실행은 장치 목록만 조회한다. ``--record-seconds``를 지정하면 입력 장치를
+녹음하고, 선택적으로 같은 샘플을 블루투스 스피커로 재생한다.
+
+입력 장치 기본값은 플랫폼마다 다르다 — 윈도우는 ``BRIO``, 리눅스는 ``pulse``다.
+리눅스에서 이름으로 USB 마이크를 지목할 수 없는 이유는 ``DEFAULT_INPUT_MATCH``
+주석에 있다(S15P11A301-257).
+
+녹음 결과가 전 구간 디지털 무음이면 **실패로 끝낸다.** 조용한 것이 아니라 마이크가
+아닌 경로를 읽고 있다는 뜻이다.
 """
 
 from __future__ import annotations
@@ -20,9 +27,26 @@ import numpy as np
 import sounddevice as sd
 import soundfile as sf
 
+from sentinel_voice import config
 
-DEFAULT_INPUT_MATCH = "BRIO"
+
 DEFAULT_SAMPLE_RATE = 16_000
+
+# 입력 장치를 이름으로 지목할 수 있는가는 플랫폼마다 다르다.
+#
+# 윈도우에서는 PortAudio가 `Microphone (BRIO 100)`처럼 장치명을 그대로 노출한다.
+# 젯슨(리눅스)에서는 노출하지 않는다 — PulseAudio가 USB 카드를 독점하면 ALSA
+# 직접 접근(`hw:0`)이 막히고, PortAudio 목록에 그 카드가 **아예 나타나지 않는다.**
+# 2026-08-04 실측에서 `arecord -l`은 `card 0: B100 [Brio 100]`을 보여주는데
+# PortAudio 목록은 `hw:1`(HDMI)부터 시작했다(S15P11A301-257).
+#
+# 그래서 리눅스 기본값을 `BRIO`로 두면 이 도구는 젯슨에서 **항상 실패한다.**
+# PulseAudio를 거치는 `pulse`를 기본으로 쓰고, 어느 소스로 가는지는 PulseAudio가
+# 정한다(`pactl info`의 Default Source · `PULSE_SOURCE`).
+DEFAULT_INPUT_MATCH = "BRIO" if platform.system() == "Windows" else "pulse"
+
+# 위 기본값이 없는 환경을 위한 폴백 순서. 앞에서부터 먼저 잡히는 것을 쓴다.
+INPUT_FALLBACKS = ("pulse", "default")
 
 
 def _device_rows() -> list[dict[str, Any]]:
@@ -51,8 +75,20 @@ def _matching_device(
         if needle in device["name"].casefold() and device[channel_key] > 0
     ]
     if not matches:
+        hint = ""
+        if channel_key == "max_input_channels" and platform.system() != "Windows":
+            hint = (
+                "\n  리눅스에서는 PulseAudio가 USB 카드를 독점해 PortAudio가 그"
+                " 장치를 이름으로 노출하지 않습니다."
+                f"\n  대신 {' 또는 '.join(INPUT_FALLBACKS)}를 지정하고, 어느"
+                " 마이크로 갈지는 PulseAudio에서 정하세요."
+                "\n    pactl info | grep -i 'default source'"
+                "\n    pactl set-default-source <소스 이름>"
+                "\n  (S15P11A301-257)"
+            )
         raise RuntimeError(
-            f"'{name_part}' 문자열과 일치하는 {channel_key} 장치를 찾지 못했습니다."
+            f"'{name_part}' 문자열과 일치하는 {channel_key} 장치를 찾지"
+            f" 못했습니다.{hint}"
         )
     if len(matches) > 1:
         candidates = ", ".join(
@@ -109,7 +145,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--input-match",
         default=DEFAULT_INPUT_MATCH,
-        help="입력 장치명에 포함될 문자열(기본: BRIO)",
+        help=(
+            f"입력 장치명에 포함될 문자열(이 환경 기본: {DEFAULT_INPUT_MATCH})."
+            " 리눅스에서는 PortAudio가 USB 마이크를 이름으로 노출하지 않으므로"
+            " pulse를 거친다"
+        ),
     )
     parser.add_argument(
         "--output-match",
@@ -220,6 +260,19 @@ def main() -> int:
             f"[OK] 녹음 저장: {args.wav} "
             f"(RMS {metrics['rms_dbfs']}dBFS, peak {metrics['peak_dbfs']}dBFS)"
         )
+        # 디지털 무음은 "조용했다"가 아니라 "마이크가 아닌 것을 읽었다"는 뜻이다.
+        # 이 판정이 없어서 2026-08-04까지 빈 입력을 5분 녹음한 사실을 아무도
+        # 몰랐다. 여기서 바로 반환하지 않는다 — 증적 JSON을 남겨야 진단이 된다.
+        silent_input = metrics["peak"] <= config.SILENT_INPUT_PEAK
+        report["recording"]["silent_input"] = silent_input
+        if silent_input:
+            print(
+                "[FAIL] 전 구간이 디지털 무음입니다(peak 0). 조용한 것이 아니라"
+                " 마이크가 아닌 경로를 읽고 있습니다.\n"
+                "       pactl info | grep -i 'default source' 로 기본 소스를"
+                " 확인하고 실제 마이크로 바꾸세요. (S15P11A301-257)",
+                file=sys.stderr,
+            )
 
         if args.playback:
             assert output_device is not None
@@ -238,7 +291,8 @@ def main() -> int:
         encoding="utf-8",
     )
     print(f"[OK] JSON 증적 저장: {args.report}")
-    return 0
+    # 디지털 무음이면 증적을 남긴 뒤에 실패로 끝낸다.
+    return 1 if (report.get("recording") or {}).get("silent_input") else 0
 
 
 if __name__ == "__main__":

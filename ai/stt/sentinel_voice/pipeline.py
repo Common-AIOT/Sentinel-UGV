@@ -85,9 +85,25 @@ def load_models() -> tuple:
 
 # ── 실물 입출력 구현 ──────────────────────────────────────────────
 def record_microphone(seconds: float) -> np.ndarray:
-    """BRIO 100 등 기본 입력 장치에서 동기 녹음한다."""
+    """입력 장치에서 동기 녹음한다.
+
+    장치를 지정하지 않으면 PortAudio 기본 장치를 쓴다. 젯슨에서 그 기본은
+    `default`(ALSA)이고, 그것은 PulseAudio를 거쳐 **PulseAudio 기본 소스**로
+    간다. 즉 이 함수의 입력은 녹화 파이프라인(`pulsesrc`)과 같은 기본값을
+    공유한다 — 한쪽이 어긋나면 양쪽이 같이 어긋난다(S15P11A301-257).
+
+    지정하려면 `SENTINEL_INPUT_DEVICE`를 쓴다. 젯슨에서는 PortAudio가 BRIO를
+    이름으로 노출하지 않으므로 `PULSE_SOURCE` 또는 `pactl set-default-source`가
+    실효 수단이다. 자세한 사정은 `config.INPUT_DEVICE` 주석에 있다.
+    """
     frames = int(seconds * FS)
-    wav = sd.rec(frames, samplerate=FS, channels=1, dtype="float32")
+    wav = sd.rec(
+        frames,
+        samplerate=FS,
+        channels=1,
+        dtype="float32",
+        device=config.INPUT_DEVICE,
+    )
     sd.wait()
     return wav.reshape(-1)
 

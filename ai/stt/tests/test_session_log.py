@@ -39,7 +39,12 @@ def speech(level=0.2, seconds=1.0):
 
 
 def silence():
-    return np.zeros(config.FS, dtype=np.float32)
+    """조용한 방. **정확히 0이 아니다** — 살아 있는 마이크는 조용해도 신호를 낸다.
+
+    0.0038은 실측 값이고 `SILENCE_RMS`(0.005) 아래다. 정확히 0으로 두면
+    디지털 무음(캡처 경로 사망) 판정에 걸려 장치 오류가 된다(S15P11A301-257).
+    """
+    return np.full(config.FS, 0.0038, dtype=np.float32)
 
 
 class StubExtraction:

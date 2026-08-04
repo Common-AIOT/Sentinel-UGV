@@ -49,7 +49,12 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from enhance_media import ATTEN_LIMIT_DB, NoAudioTrack, enhance_media  # noqa: E402
+from enhance_media import (  # noqa: E402
+    ATTEN_LIMIT_DB,
+    NoAudioTrack,
+    SilentAudioTrack,
+    enhance_media,
+)
 
 # 백엔드가 이 kind를 받아야 5단계가 통과한다. 아직 없으면 400이 나며, 그때는
 # 재시도해도 같으므로 선행 조건 미충족으로 구분해 알린다.
@@ -80,7 +85,11 @@ class WorkerError(RuntimeError):
 class Outcome:
     """처리 결과. `status`로 무엇이 일어났는지 구분한다."""
 
-    status: str  # UPLOADED · ALREADY_DONE · NO_AUDIO · NO_VIDEO · DRY_RUN
+    # UPLOADED · ALREADY_DONE · NO_AUDIO · SILENT_AUDIO · NO_VIDEO · DRY_RUN
+    #
+    # NO_AUDIO와 SILENT_AUDIO는 갈라 둔다. 앞은 정상 경로(오디오 없는 영상)이고
+    # 뒤는 마이크 사망이다. 둘 다 업로드하지 않지만 뒤는 경보를 남긴다.
+    status: str
     detail: str = ""
     media_id: str | None = None
     seconds: float | None = None
@@ -345,6 +354,23 @@ def process_encounter(
             # 마이크가 없거나 열리지 않으면 젯슨이 비디오만 기록한다
             # (sentinel_streaming이 오디오를 끄고 재구성). 정상 경로다.
             return Outcome("NO_AUDIO", str(error)[:120])
+        except SilentAudioTrack as error:
+            # 트랙은 있는데 내용이 0이다. 정상 경로가 아니라 캡처 경로 사망이다.
+            #
+            # 업로드하지 않는다. 무음을 올리면 스캔이 그 발견을 완료로 표시해
+            # 마이크 사망이 영구히 덮인다. 올리지 않으면 스캔이 "rc 0인데 자산
+            # 없음"으로 보고 skip 처리하므로(deploy/denoise_scan.py) 무한 재스캔도
+            # 나지 않는다 — NO_AUDIO와 같은 취급이다.
+            #
+            # 대신 소리를 낸다. 이 줄이 scan.log에 남는 것이 유일한 경보다.
+            print(
+                f"[ALERT] 마이크 점검 필요 — {error}\n"
+                "        젯슨에서 기본 입력 소스가 실제 마이크인지 확인한다:\n"
+                "          pactl info | grep -i 'default source'\n"
+                "        (S15P11A301-257)",
+                file=sys.stderr,
+            )
+            return Outcome("SILENT_AUDIO", str(error)[:120])
 
         sha256, size_bytes = sha256_of(result.path)
         if dry_run:

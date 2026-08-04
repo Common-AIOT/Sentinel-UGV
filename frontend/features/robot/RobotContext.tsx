@@ -199,44 +199,56 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  // ── 센서 실측 폴링 (S15P11A301-205) ─────────────────────────────────────
-  // 임무 중에만 값이 있다 — 텔레메트리 조회가 임무 단위라서다. 최근 60초 창의
-  // 마지막 버킷을 현재값으로 쓴다. null 은 그대로 결측으로 넘긴다(0 변환 금지).
+  // ── 센서 실측 폴링 (S15P11A301-205·255) ──────────────────────────────────
+  // 임무 중에는 임무 텔레메트리의 마지막 버킷을, 대기 중에는 임무 무관 최신값
+  // (/telemetry/latest)을 쓴다 — 차량이 임무 없이 켜져 있는 시간이 길어서다.
+  // 어느 쪽이든 60초 넘게 오래된 값은 결측으로 보여준다 — 죽은 센서를 살아 있는
+  // 것처럼 보여주지 않는다(젯슨 6초 null 규칙과 같은 원칙). 대기 값은 시각이
+  // 그룹별(온습도·MCU)로 따로 오므로 각각 판정한다.
   useEffect(() => {
-    if (!missionId) {
-      setSensors(INITIAL_SENSORS); // 임무가 없으면 "모름"으로 되돌린다.
-      return;
-    }
     let cancelled = false;
+    const FRESH_MS = 60_000;
+    const fresh = (iso: string | null) => iso !== null && Date.now() - Date.parse(iso) <= FRESH_MS;
+
     const poll = async () => {
       try {
-        const from = new Date(Date.now() - 60_000).toISOString();
-        const points = await api.missionTelemetry(missionId, 10, from);
-        if (cancelled) return;
-        if (points.length === 0) {
-          // 60초 넘게 보고가 없으면 마지막 값을 붙들지 않는다 — 죽은 센서를
-          // 살아 있는 것처럼 보여주지 않는다(젯슨의 6초 null 규칙과 같은 원칙).
-          setSensors(INITIAL_SENSORS);
-          setStatus(s => ({ ...s, health: { ...s.health, mcuConnected: null } }));
+        if (missionId) {
+          const from = new Date(Date.now() - FRESH_MS).toISOString();
+          const points = await api.missionTelemetry(missionId, 10, from);
+          if (cancelled) return;
+          if (points.length === 0) {
+            setSensors(INITIAL_SENSORS);
+            setStatus(s => ({ ...s, health: { ...s.health, mcuConnected: null } }));
+            return;
+          }
+          const last = points[points.length - 1];
+          setSensors({
+            temperature: last.temperature,
+            humidity: last.humidity,
+            mcuConnected: last.mcuConnected,
+            updatedAt: Date.parse(last.time),
+          });
+          // MCU 연결은 상태판 건강 표시와도 같은 사실이어야 한다.
+          setStatus(s => ({ ...s, health: { ...s.health, mcuConnected: last.mcuConnected } }));
           return;
         }
-        const last = points[points.length - 1];
+
+        const d = await api.telemetryLatest();
+        if (cancelled) return;
+        const envFresh = fresh(d.environmentTime);
+        const mcu = fresh(d.mcuTime) ? d.mcuConnected : null;
         setSensors({
-          temperature: last.temperature,
-          humidity: last.humidity,
-          mcuConnected: last.mcuConnected,
-          updatedAt: Date.parse(last.time),
+          temperature: envFresh ? d.temperature : null,
+          humidity: envFresh ? d.humidity : null,
+          mcuConnected: mcu,
+          updatedAt: envFresh && d.environmentTime !== null ? Date.parse(d.environmentTime) : null,
         });
-        // MCU 연결은 상태판 건강 표시와도 같은 사실이어야 한다.
-        setStatus(s => ({
-          ...s,
-          health: { ...s.health, mcuConnected: last.mcuConnected },
-        }));
+        setStatus(s => ({ ...s, health: { ...s.health, mcuConnected: mcu } }));
       } catch {
         // 일시적 오류는 다음 폴링에 맡긴다. 마지막 표시값은 유지된다.
       }
     };
-    void poll(); // 임무 진입 즉시 한 번 — 첫 5초를 결측으로 비워두지 않는다.
+    void poll(); // 진입 즉시 한 번 — 첫 5초를 결측으로 비워두지 않는다.
     const timer = setInterval(poll, 5000);
     return () => { cancelled = true; clearInterval(timer); };
   }, [missionId]);

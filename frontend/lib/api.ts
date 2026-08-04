@@ -130,6 +130,15 @@ export interface TelemetryPoint {
   mcuConnected: boolean | null;
 }
 
+/** 임무 무관 최신 센서 값 (#255). 시각이 그룹별로 따로 온다 — 신선도 판정은 화면 몫. */
+export interface TelemetryLatest {
+  environmentTime: string | null;
+  temperature: number | null;
+  humidity: number | null;
+  mcuTime: string | null;
+  mcuConnected: boolean | null;
+}
+
 export interface MapView {
   mapId: string;
   pgmUrl: string;
@@ -213,6 +222,8 @@ export const api = {
     request<Trajectory>(
       `/api/v1/missions/${missionId}/trajectory${maxPoints ? `?maxPoints=${maxPoints}` : ""}`,
     ),
+
+  telemetryLatest: () => request<TelemetryLatest>("/api/v1/telemetry/latest"),
 
   missionTelemetry: (missionId: string, bucketSeconds = 10, from?: string) =>
     request<TelemetryPoint[]>(

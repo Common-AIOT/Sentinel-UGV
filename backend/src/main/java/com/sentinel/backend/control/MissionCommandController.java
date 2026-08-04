@@ -1,8 +1,10 @@
 package com.sentinel.backend.control;
 
+import java.util.List;
 import java.util.UUID;
 
 import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -12,6 +14,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.sentinel.backend.common.response.ApiResponse;
 import com.sentinel.backend.control.dto.CommandResponse;
+import com.sentinel.backend.control.dto.CommandStatusResponse;
 import com.sentinel.backend.control.dto.IssueCommandRequest;
 
 import io.swagger.v3.oas.annotations.Operation;
@@ -44,5 +47,17 @@ public class MissionCommandController {
             @PathVariable UUID missionId,
             @Valid @RequestBody IssueCommandRequest request) {
         return ApiResponse.success(commandService.issue(missionId, request.type()));
+    }
+
+    /** 보낸 명령들이 수락·실행·거부됐는지 조회한다 (S15P11A301-207). */
+    @Operation(summary = "명령 처리 결과 조회",
+            description = "이 임무로 보낸 명령들의 처리 상태를 최신순으로 줍니다. "
+                    + "result: PENDING(로봇 회신 대기) → ACCEPTED/EXECUTED(수락·실행) 또는 "
+                    + "REJECTED(거부)·EXPIRED(만료)·FAILED(전달 실패). "
+                    + "거부·실패면 reasonCode(ROBOT_BUSY·NOT_IMPLEMENTED 등)에 이유가 담기고, 성공이면 null 입니다. "
+                    + "202 를 받은 명령이 실제로 어떻게 끝났는지는 여기서 확인합니다. 없는 임무면 404.")
+    @GetMapping
+    public ApiResponse<List<CommandStatusResponse>> list(@PathVariable UUID missionId) {
+        return ApiResponse.success(commandService.findCommands(missionId));
     }
 }

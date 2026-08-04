@@ -122,18 +122,24 @@ def generate_launch_description():
         # /environment/* 가 **아예 발행되지 않았다.** cloud_bridge 가 그것을
         # 구독해 telemetry 를 채우게 만든 S15P11A301-213 이 그래서 값을 못 받고
         # 있었다 — 구독은 성공하고 값만 안 오므로 로그에도 남지 않는다.
-        # **기본은 꺼짐이다.** 켜면 static identity 가 꺼지므로(아래 slam 참고)
-        # 보드가 없을 때 odom TF 발행자가 0개가 되고 slam_toolbox 가 지도를 아예
-        # 만들지 않는다. 지금 이 젯슨에 붙은 시리얼 장치는 라이다 하나뿐이다
-        # (/dev/sentinel-lidar -> ttyUSB0, CP2102). 기본을 켜면 잘 도는 스택이
-        # 깨진다.
+        # **이 파일의 기본은 꺼짐이다.** 켜면 static identity 가 꺼지므로(아래 slam
+        # 참고) 보드가 없을 때 odom TF 발행자가 0개가 되고 slam_toolbox 가 지도를
+        # 아예 만들지 않는다. 보드 유무를 모르는 이 파일에서는 끄는 쪽이 안전하다.
         #
-        # 보드를 물린 뒤에 이렇게 켠다:
-        #   ./scripts/demo_up.sh enable_esp32:=true \
-        #       motor_port:=/dev/ttyUSB1 sensor_port:=/dev/ttyUSB2
+        # 다만 사람이 매번 기억할 일은 아니다. `scripts/demo_up.sh` 가
+        # `/dev/sentinel_mcu_sensor` 존재로 판단해 이 인자를 붙인다
+        # (S15P11A301-256). 그 스크립트로 띄우면 손으로 켤 필요가 없고, 인자를
+        # 명시하면 감지를 이긴다. 직접 `ros2 launch` 를 부를 때만 아래처럼 켠다:
         #
-        # 어느 포트가 모터/센서인지는 HELLO_ACK.board_role 로 확정한다
-        # (esp32_bridge/TESTING.md). 역할이 어긋나면 핸드셰이크 로그에 오류가 난다.
+        #   ros2 launch sentinel_bringup demo.launch.py enable_esp32:=true
+        #
+        # 포트는 udev 별칭이 있어 보통 안 넘긴다(S15P11A301-214). 별칭이 없는
+        # 장비에서는 실제 경로를 넘긴다:
+        #   ... enable_esp32:=true motor_port:=/dev/ttyUSB1 sensor_port:=/dev/ttyUSB2
+        #
+        # 별칭이 devpath 로 역할을 고정하지만, 배선을 바꿨을 때의 최종 확인은
+        # HELLO_ACK.board_role 이다(esp32_bridge/TESTING.md). 역할이 어긋나면
+        # 핸드셰이크 로그에 오류가 난다.
         #
         # **켰는데 보드가 없으면 조용히 실패한다.** 노드는 죽지 않고 1초마다
         # 재시도하므로(SerialTransport 재시도) 프로세스는 살아 있고 토픽도
@@ -145,10 +151,14 @@ def generate_launch_description():
         #   ros2 run tf2_ros tf2_echo odom base_footprint   → 조회 실패
         #   demo 로그에 "not available ... retrying in 1.0s"
         DeclareLaunchArgument('enable_esp32', default_value='false'),
-        # udev 별칭이 이 저장소에 없다. CP2102 클론 보드는 idVendor:idProduct:serial
-        # 이 겹칠 수 있어 별칭으로 역할을 보장할 수 없고, HELLO_ACK.board_role 로
-        # 확인하는 쪽을 신뢰한다는 것이 S15P11A301-174 의 판단이다. 빈 값이면
-        # esp32_bridge.yaml 의 기본값(/dev/sentinel_mcu_*)을 쓴다.
+        # 빈 값이면 esp32_bridge.yaml 의 기본값(/dev/sentinel_mcu_*)을 쓴다. 그
+        # 별칭은 S15P11A301-214 가 만들었다 — 두 MCU 보드는 CH340(1a86:7523)이고
+        # 시리얼 번호가 아예 없어서 by-id 가 불가능하다. 그래서 USB 물리 경로
+        # (devpath 2.3=센서, 2.4=모터)로 고정한다. ttyUSB 번호는 기동마다
+        # 뒤바뀌지만 물리 경로는 안 바뀐다.
+        #
+        # 포트를 바꿔 꽂았다면 별칭이 역할까지 보장해 주지는 않는다 — 그 확인은
+        # HELLO_ACK.board_role 이다(S15P11A301-174 의 판단이 이 부분은 유효하다).
         #   ./scripts/demo_up.sh motor_port:=/dev/ttyUSB0 sensor_port:=/dev/ttyUSB1
         DeclareLaunchArgument('motor_port', default_value=''),
         DeclareLaunchArgument('sensor_port', default_value=''),

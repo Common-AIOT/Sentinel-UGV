@@ -1,13 +1,14 @@
 # esp32_bridge 기본 설정 (S15P11A301-84)
 #
-# udev 별칭(/dev/sentinel_mcu_motor, /dev/sentinel_mcu_sensor)이 아직 이
-# 저장소에 없다(계획 §8, 열린 리스크 1·4·5). 별칭을 만들기 전까지는 launch
-# 인자(motor_port/sensor_port)로 실제 /dev/ttyUSB* 경로를 넘긴다.
+# 아래 별칭은 scripts/udev/99-sentinel-mcu.rules 가 만든다(S15P11A301-214).
+# 두 보드는 CH340(1a86:7523)이고 시리얼 번호가 없어서 by-id 로는 구분할 수
+# 없다. 그래서 USB 물리 경로로 고정한다 - devpath 2.3=센서, 2.4=모터.
+# ttyUSB 번호는 기동마다 뒤바뀌지만 물리 경로는 안 바뀐다. 규칙을 설치하지
+# 않은 장비에서는 launch 인자(motor_port/sensor_port)로 실제 경로를 넘긴다.
 #
-# CP2102 클론 보드는 idVendor/idProduct/serial이 겹칠 수 있어 udev 별칭만으로는
-# 어느 포트가 모터/센서인지 보장할 수 없다 - HELLO_ACK.board_role로 실제
-# 역할을 확인하는 쪽(esp32_hello_check, 노드 로그의 핸드셰이크 오류)을 우선
-# 신뢰할 것.
+# 별칭은 "어느 USB 구멍에 꽂혔나"를 고정할 뿐 보드의 역할을 보장하지는 않는다.
+# 배선을 바꿔 꽂았다면 HELLO_ACK.board_role 로 실제 역할을 확인하는 쪽
+# (esp32_hello_check, 노드 로그의 핸드셰이크 오류)을 우선 신뢰할 것.
 esp32_motor_bridge:
   ros__parameters:
     port: /dev/sentinel_mcu_motor

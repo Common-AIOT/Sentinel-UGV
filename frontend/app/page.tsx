@@ -150,6 +150,37 @@ export default function GCSPage() {
           <div aria-hidden="true" className="h-10 flex-shrink-0 border-t border-border bg-background" />
         )}
       </div>
+
+      <CommandAlertToast />
+    </div>
+  );
+}
+
+/**
+ * 명령 결과 알림 (S15P11A301-207). 거부·실패·무응답을 사유와 함께 보여준다 —
+ * 202 만 믿고 조용히 원상복귀하던 화면이 이유를 말하게 된다. 8초 뒤 자동으로
+ * 사라지고, 새 알림이 오면 시계가 다시 돈다.
+ */
+function CommandAlertToast() {
+  const { commandAlert, dismissCommandAlert } = useRobot();
+
+  useEffect(() => {
+    if (!commandAlert) return;
+    const timer = setTimeout(dismissCommandAlert, 8000);
+    return () => clearTimeout(timer);
+  }, [commandAlert, dismissCommandAlert]);
+
+  if (!commandAlert) return null;
+  return (
+    <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3
+                    border border-accent/50 bg-background/95 rounded px-4 py-2.5 shadow-lg">
+      <span className="font-mono text-xs text-accent">⚠ {commandAlert}</span>
+      <button
+        onClick={dismissCommandAlert}
+        className="font-mono text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+      >
+        닫기
+      </button>
     </div>
   );
 }

@@ -26,6 +26,15 @@ export const USE_MOCK = true;
 /** 확정 로봇 이름 (mqtt-setup·mvp-week-plan). */
 const ROBOT_ID = "SENTINEL-01";
 
+/** 명령 거부 사유 → 관제 표현 (#207). 모르는 코드는 원문 그대로 보여준다. */
+const REASON_LABEL: Record<string, string> = {
+  ROBOT_BUSY: "로봇이 다른 동작을 처리 중",
+  NOT_IMPLEMENTED: "로봇이 지원하지 않는 명령",
+};
+const COMMAND_LABEL: Record<string, string> = {
+  START: "시작", PAUSE: "일시정지", RESUME: "재개", RETURN: "복귀", STOP: "정지",
+};
+
 /** 서버 missions.status → 관제 화면 MissionState. 서버는 5개 상태만 가진다. */
 const SERVER_MISSION_STATE: Record<string, MissionState> = {
   CREATED: "SAFE_IDLE",
@@ -52,6 +61,9 @@ interface RobotContextValue {
   sendCommand: (type: string) => Promise<void>;
   // Mission
   missionId: string | null;
+  // 명령 결과 알림 (S15P11A301-207) — 거부·실패·무응답을 화면이 설명한다.
+  commandAlert: string | null;
+  dismissCommandAlert: () => void;
   // Video
   videoConnected: boolean;
   videoQuality: "1080p" | "720p";
@@ -97,6 +109,39 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
   // 유예 안에 "명령 이전과 같은 상태"가 오면 무시하고, 새 상태는 즉시 반영한다.
   const pendingCommand = useRef<{ before: MissionState; at: number } | null>(null);
   const COMMAND_GRACE_MS = 10_000;
+
+  // ── 명령 결과 감시 (S15P11A301-207) ──────────────────────────────────────
+  // 202 는 "보냈다"일 뿐이라, 거부되면 화면이 조용히 원래 상태로 되돌아가기만
+  // 했다. 발급 후 2·5·10초에 결과를 확인해 거부·실패는 사유와 함께, 10초
+  // 무응답은 "로봇 응답 없음"으로 알린다 — 꺼진 로봇에 명령한 경우가 그 예다.
+  const [commandAlert, setCommandAlert] = useState<string | null>(null);
+  const dismissCommandAlert = useCallback(() => setCommandAlert(null), []);
+
+  const watchCommand = useCallback((mid: string, commandId: string, type: string) => {
+    const name = COMMAND_LABEL[type] ?? type;
+    const checkAt = [2000, 5000, 10_000];
+    const check = async (idx: number) => {
+      try {
+        const found = (await api.missionCommands(mid)).find(c => c.commandId === commandId);
+        if (!found || found.result === "PENDING") {
+          if (idx + 1 < checkAt.length) {
+            setTimeout(() => void check(idx + 1), checkAt[idx + 1] - checkAt[idx]);
+          } else {
+            setCommandAlert(`${name} 명령에 로봇이 응답하지 않습니다 — 로봇 전원·연결을 확인하세요`);
+          }
+          return;
+        }
+        if (found.result === "ACCEPTED" || found.result === "EXECUTED") return; // 성공은 조용히
+        const reason = found.reasonCode
+          ? (REASON_LABEL[found.reasonCode] ?? found.reasonCode)
+          : found.result === "FAILED" ? "전달 실패" : found.result;
+        setCommandAlert(`${name} 명령이 거부되었습니다 — ${reason}`);
+      } catch {
+        // 조회 실패는 알림을 만들지 않는다 — 상태 폴링·푸시가 진실을 따라잡는다.
+      }
+    };
+    setTimeout(() => void check(0), checkAt[0]);
+  }, []);
 
   // ── Mock simulation ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -239,7 +284,8 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
           : resuming ? "RESUME"
           : "START";
         pendingCommand.current = { before: mockMission.current, at: Date.now() };
-        await api.issueCommand(mid, cmd);
+        const issued = await api.issueCommand(mid, cmd);
+        watchCommand(mid, issued.commandId, cmd); // 결과 감시 — 거부·무응답이면 알림(#207)
       }
     }
 
@@ -307,7 +353,7 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
         speed: stopped ? 0 : s.speed,
       };
     });
-  }, []);
+  }, [watchCommand]);
 
   // ── 실시간 반영 ──────────────────────────────────────────────────────────
   // 주 채널은 STOMP 푸시(S15P11A301-204), REST 폴링은 끊김 대비 저빈도 백업이다.
@@ -459,6 +505,7 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
       detections,
       sendControl, sendCommand,
       missionId,
+      commandAlert, dismissCommandAlert,
       videoConnected, videoQuality, setVideoQuality,
       wsConnected,
     }}>

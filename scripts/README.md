@@ -20,6 +20,34 @@
 `required_patches`가 관리하며 사유는
 [`jetson/ros2_ws/patches/README.md`](../jetson/ros2_ws/patches/README.md)에 있다.
 
+### 시리얼 장치 고정 이름 (udev)
+
+`/dev/ttyUSB*` 번호는 열거 순서에 따라 바뀐다. 라이다와 ESP32 두 보드가 같은
+젯슨에 붙어 있으므로 설정에 번호를 박을 수 없다.
+
+```bash
+sudo cp scripts/udev/99-sentinel-lidar.rules scripts/udev/99-sentinel-mcu.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules && sudo udevadm trigger
+ls -la /dev/sentinel-lidar /dev/sentinel_mcu_*     # 심링크 확인
+```
+
+| 심링크 | 장치 | 매칭 |
+|---|---|---|
+| `/dev/sentinel-lidar` | YDLIDAR X4 Pro | by-id (CP2102 는 시리얼 번호가 있다) |
+| `/dev/sentinel_mcu_sensor` | 센서 ESP32 | **by-path `1-2.3`** |
+| `/dev/sentinel_mcu_motor` | 모터 ESP32 | **by-path `1-2.4`** |
+
+ESP32 두 보드는 같은 CH340(1a86:7523)이고 **이 칩은 시리얼 번호가 없어** by-id 로
+구분할 수 없다. 그래서 물리 포트로 매칭하며, **정해진 USB 포트에 꽂아야 한다.**
+
+그 제약을 받아들이는 이유는 실제로 겪는 실패가 다른 쪽이기 때문이다 —
+2026-08-04 하루에 센서 보드가 USB 재열거로 세 번 이름이 바뀌었고(ttyUSB3 → 2 → 0)
+**물리 경로는 `usb 1-2.3` 로 고정이었다.** 자세한 근거는 규칙 파일 주석에 있다.
+
+이름이 없으면 `demo_up.sh sensor_port:=/dev/ttyUSB2` 로 띄웠는데 보드가 ttyUSB0 에
+있어 **조용히 연결 실패**한다. 규칙을 넣으면 `esp32_bridge.yaml` 기본값이 그 이름
+이므로 포트 인자 없이 뜬다.
+
 ## 젯슨 ROS 스택 실행
 
 | 스크립트 | 하는 일 |

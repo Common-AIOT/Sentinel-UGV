@@ -32,11 +32,13 @@ source "${REPO_ROOT}/scripts/ros_env.sh"
 viz_enabled=1
 viz_port=8765
 viz_tls=true   # demo.launch.py → viz.launch.py 의 viz_tls 기본값
+esp32_specified=0
 for arg in "$@"; do
   case "${arg}" in
     enable_viz:=false|enable_viz:=False|enable_viz:=0) viz_enabled=0 ;;
     viz_port:=*) viz_port="${arg#viz_port:=}" ;;
     viz_tls:=*) viz_tls="${arg#viz_tls:=}" ;;
+    enable_esp32:=*) esp32_specified=1 ;;
   esac
 done
 if [[ "${viz_enabled}" -eq 1 ]]; then
@@ -49,6 +51,35 @@ if [[ "${viz_enabled}" -eq 1 ]]; then
   if [[ "${viz_scheme}" == "wss" ]]; then
     echo "  ws:// 로 붙으면 핸드셰이크가 끊기고 오류에 이유가 안 남는다."
   fi
+fi
+
+# ESP32 센서 보드 자동 감지 (S15P11A301-256).
+#
+# demo.launch.py 의 enable_esp32 기본값은 false 다. 그 이유는 켜면 slam 의
+# static identity 가 꺼지기 때문이다 — 보드가 없는데 켜면 odom TF 발행자가
+# 0개가 되고 slam_toolbox 가 지도를 아예 만들지 않는다. 브리지는 죽지 않고
+# 재접속을 재시도하므로 프로세스와 토픽은 정상으로 보이고, 증상은 "지도가
+# 안 나온다" 하나뿐이다. 그래서 기본을 꺼 두는 것이 옳았다.
+#
+# 그 기본값의 대가는 사람이 매번 enable_esp32:=true 를 기억해야 한다는 것이고,
+# 잊으면 /environment/* 가 조용히 안 나온다(S15P11A301-213 이 값을 못 받던
+# 이유가 그것이다). S15P11A301-214 가 udev 별칭을 만든 뒤로는 보드 유무를
+# 장치 경로로 확인할 수 있으므로, 기억이 아니라 하드웨어가 결정하게 한다.
+#
+# 센서 보드를 보는 이유: odom TF 를 내는 쪽이 esp32_sensor_bridge 다
+# (/wheel/odometry 와 /tf 를 그것이 발행한다). 모터 보드는 static identity
+# 판단과 무관하므로 감지 조건에 넣지 않는다.
+SENSOR_DEV=/dev/sentinel_mcu_sensor   # scripts/udev/99-sentinel-mcu.rules
+if [[ "${esp32_specified}" -eq 1 ]]; then
+  # 사람이 명시했으면 그것이 이긴다. 보드가 없는 채로 켜서 실패를 재현하는
+  # 것도 정당한 사용이다(위 오진 경로 확인).
+  echo "ESP32: 인자로 지정됨 — 자동 감지를 건너뛴다."
+elif [[ -e "${SENSOR_DEV}" ]]; then
+  set -- "$@" enable_esp32:=true
+  echo "ESP32: 센서 보드 감지(${SENSOR_DEV}) — enable_esp32:=true 로 켠다."
+else
+  echo "ESP32: 센서 보드 없음(${SENSOR_DEV}) — 끈 채로 간다." \
+       "SLAM 은 static identity 로 돌고 /environment/* 는 발행되지 않는다."
 fi
 
 exec ros2 launch sentinel_bringup demo.launch.py "$@"

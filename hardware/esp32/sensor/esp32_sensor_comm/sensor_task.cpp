@@ -2,17 +2,48 @@
 
 #include <Arduino.h>
 #include <Wire.h>
+#include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <math.h>
+#include <string.h>
 
 #include <fault_codes.h>
+#include <message_ids.h>
 #include "board_state.h"
 
 // 주의: 이 UART는 바이너리 프로토콜 전용이므로 여기에 Serial.print() 디버그를
 // 추가하지 말 것(README 참고). 상태 확인은 GPIO/LED 또는 Serial2로 한다.
 
 namespace {
+
+// ------------------------------------------------------------
+// 공용 I2C 헬퍼 (MT6701 · MPU6050이 GPIO21/22 버스를 공유한다)
+// ------------------------------------------------------------
+bool readRegister(uint8_t address, uint8_t reg, uint8_t& value) {
+  Wire.beginTransmission(address);
+  Wire.write(reg);
+  if (Wire.endTransmission(false) != 0) return false;
+  if (Wire.requestFrom(address, static_cast<uint8_t>(1), true) != 1) return false;
+  value = Wire.read();
+  return true;
+}
+
+bool readRegisters(uint8_t address, uint8_t reg, uint8_t* out, uint8_t count) {
+  Wire.beginTransmission(address);
+  Wire.write(reg);
+  if (Wire.endTransmission(false) != 0) return false;
+  if (Wire.requestFrom(address, count, true) != count) return false;
+  for (uint8_t i = 0; i < count; ++i) out[i] = Wire.read();
+  return true;
+}
+
+bool writeRegister(uint8_t address, uint8_t reg, uint8_t value) {
+  Wire.beginTransmission(address);
+  Wire.write(reg);
+  Wire.write(value);
+  return Wire.endTransmission() == 0;
+}
 
 // ------------------------------------------------------------
 // MT6701 좌/우 구동 엔코더 (단일 I2C 버스, 주소로 구분)
@@ -38,7 +69,7 @@ constexpr float RIGHT_DIRECTION_SIGN = 1.0f;
 constexpr float WHEEL_DIAMETER_MM = 120.0f;
 constexpr float WHEEL_CIRCUMFERENCE_MM = WHEEL_DIAMETER_MM * 3.14159265f;
 
-constexpr uint32_t ENCODER_RECONNECT_INTERVAL_MS = 1000;
+constexpr uint32_t I2C_RECONNECT_INTERVAL_MS = 1000;
 
 struct DriveEncoderChannel {
   uint8_t address;
@@ -54,15 +85,6 @@ DriveEncoderChannel g_leftEncoder{LEFT_ENCODER_ADDRESS, LEFT_GEAR_RATIO, LEFT_DI
                                    0, false, false, 0};
 DriveEncoderChannel g_rightEncoder{RIGHT_ENCODER_ADDRESS, RIGHT_GEAR_RATIO, RIGHT_DIRECTION_SIGN,
                                     0, false, false, 0};
-
-bool readRegister(uint8_t address, uint8_t reg, uint8_t& value) {
-  Wire.beginTransmission(address);
-  Wire.write(reg);
-  if (Wire.endTransmission(false) != 0) return false;
-  if (Wire.requestFrom(address, static_cast<uint8_t>(1), true) != 1) return false;
-  value = Wire.read();
-  return true;
-}
 
 bool readMT6701Raw(uint8_t address, uint16_t& rawAngle) {
   uint8_t highByte = 0;
@@ -119,6 +141,210 @@ void reconnectEncoderChannel(DriveEncoderChannel& ch) {
     ch.online = true;
     ch.previousValid = false;
   }
+}
+
+// ------------------------------------------------------------
+// MPU6050 차체 IMU (같은 I2C 버스, AD0=GND → 0x68)
+// MT6701 0x06/0x46과 주소가 겹치지 않아 GPIO21/22를 그대로 공유한다.
+// ------------------------------------------------------------
+constexpr uint8_t MPU6050_ADDRESS = 0x68;
+
+constexpr uint8_t MPU_REG_SMPLRT_DIV = 0x19;
+constexpr uint8_t MPU_REG_CONFIG = 0x1A;
+constexpr uint8_t MPU_REG_GYRO_CONFIG = 0x1B;
+constexpr uint8_t MPU_REG_ACCEL_CONFIG = 0x1C;
+constexpr uint8_t MPU_REG_ACCEL_XOUT_H = 0x3B;  // accel(6) + temp(2) + gyro(6) 연속 14바이트
+constexpr uint8_t MPU_REG_PWR_MGMT_1 = 0x6B;
+constexpr uint8_t MPU_REG_WHO_AM_I = 0x75;
+
+constexpr uint8_t MPU_PWR_DEVICE_RESET = 0x80;
+constexpr uint8_t MPU_PWR_CLOCK_PLL_X = 0x01;  // 내부 8MHz RC보다 드리프트가 작다
+constexpr uint8_t MPU_DLPF_CFG_44HZ = 0x03;    // accel 44Hz / gyro 42Hz, gyro 출력 1kHz
+constexpr uint8_t MPU_SMPLRT_DIV_100HZ = 9;    // 1000Hz / (1 + 9)
+constexpr uint8_t MPU_GYRO_FS_500DPS = 0x08;   // FS_SEL=1
+constexpr uint8_t MPU_ACCEL_FS_4G = 0x08;      // AFS_SEL=1
+
+constexpr float GYRO_LSB_PER_DPS = 65.5f;     // ±500dps
+constexpr float ACCEL_LSB_PER_G = 8192.0f;    // ±4g
+// Arduino.h가 DEG_TO_RAD를 double 매크로로 정의하고 있어(comm_task.cpp의 min() 주석과
+// 같은 문제) 이름을 겹치지 않게 두고 float으로 계산한다.
+constexpr float IMU_DEG_TO_RAD = 3.14159265f / 180.0f;
+constexpr float STANDARD_GRAVITY_MPS2 = 9.80665f;
+
+// 장착 방향 보정: REP-103 축[0]=x 전방, [1]=y 좌측, [2]=z 상방 각각이 MPU6050 칩
+// 축(0=X, 1=Y, 2=Z) 중 무엇에 대응하는지와 부호를 적는다. 기판 실크스크린 축이
+// 그대로 전방/좌측/상방이면 아래 항등 설정을 유지한다. 예를 들어 기판을 90° 돌려
+// 칩 +Y가 전방을 보게 달았다면 SOURCE={1, 0, 2}, SIGN={1, -1, 1}이 된다.
+constexpr uint8_t IMU_AXIS_SOURCE[3] = {0, 1, 2};
+constexpr float IMU_AXIS_SIGN[3] = {1.0f, 1.0f, 1.0f};
+
+// 자이로 바이어스 수집: 정지 상태 2초. 이 동안 status_flags에 CALIBRATING을 세워
+// Jetson이 EKF에 넣지 않게 한다(§34-5).
+constexpr uint32_t IMU_CALIBRATION_SAMPLES = 200;
+// 수집 중 이 값을 넘는 각속도가 보이면 차체가 움직이는 것으로 보고 처음부터 다시 모은다.
+constexpr float IMU_CALIBRATION_MOTION_LIMIT_RADPS = 20.0f * IMU_DEG_TO_RAD;
+
+// 연속 I2C 실패 횟수 - 이 이상이면 FAULT_IMU_SENSOR_FAULT로 본다(100ms 상당).
+constexpr uint32_t IMU_FAULT_STREAK_THRESHOLD = 10;
+// 14바이트 원시값이 완전히 동일한 샘플이 이만큼 이어지면 "sample timestamp 정지"로
+// 판단한다(§34-9 row 13). 실제 동작 중에는 accel 노이즈 때문에 나올 수 없는 값이다.
+constexpr uint32_t IMU_STUCK_STREAK_THRESHOLD = 100;
+
+struct ImuSample {
+  uint64_t sampleTimeUs;
+  float gyroRadps[3];   // REP-103 정렬 + 바이어스 보정 완료
+  float accelMps2[3];   // REP-103 정렬
+  int16_t temperatureCentiC;
+  uint16_t statusFlags;
+};
+
+struct ImuChannel {
+  bool online;
+  bool calibrated;
+  uint32_t calibrationCount;
+  float gyroBiasRadps[3];
+  float gyroBiasAccum[3];
+  uint32_t failStreak;
+  uint32_t stuckStreak;
+  bool previousRawValid;
+  uint8_t previousRaw[14];
+};
+
+ImuChannel g_imu{};
+
+// 초기화는 리셋 대기 100ms를 두 단계로 쪼개 진행한다. 100Hz 태스크 안에서
+// delay(110)을 돌면 그 사이 MT6701 델타 계수가 반 바퀴를 넘어 aliasing될 수 있어,
+// 재접속 경로에서는 블로킹하지 않는다(재접속 주기 1s가 리셋 대기를 대신한다).
+enum class ImuInitPhase : uint8_t {
+  IDLE,            // 다음 시도는 probe + DEVICE_RESET부터
+  AWAITING_RESET,  // DEVICE_RESET을 보냈고 설정 쓰기만 남았다
+};
+
+ImuInitPhase g_imuInitPhase = ImuInitPhase::IDLE;
+
+// WHO_AM_I로 존재를 확인하고 DEVICE_RESET을 보낸다.
+bool imuProbeAndReset() {
+  uint8_t whoAmI = 0;
+  if (!readRegister(MPU6050_ADDRESS, MPU_REG_WHO_AM_I, whoAmI)) return false;
+  // 정품은 0x68, 호환 칩(MPU6052/클론)은 0x70·0x72·0x98 등을 돌려준다. 레지스터
+  // 맵이 같으므로 응답이 오기만 하면 진행하고, 0x00/0xFF만 배선 불량으로 거른다.
+  if (whoAmI == 0x00 || whoAmI == 0xFF) return false;
+  return writeRegister(MPU6050_ADDRESS, MPU_REG_PWR_MGMT_1, MPU_PWR_DEVICE_RESET);
+}
+
+// DEVICE_RESET 후 최소 100ms가 지난 다음에 호출해야 한다.
+bool imuApplyConfig() {
+  if (!writeRegister(MPU6050_ADDRESS, MPU_REG_PWR_MGMT_1, MPU_PWR_CLOCK_PLL_X)) return false;
+  if (!writeRegister(MPU6050_ADDRESS, MPU_REG_CONFIG, MPU_DLPF_CFG_44HZ)) return false;
+  if (!writeRegister(MPU6050_ADDRESS, MPU_REG_SMPLRT_DIV, MPU_SMPLRT_DIV_100HZ)) return false;
+  if (!writeRegister(MPU6050_ADDRESS, MPU_REG_GYRO_CONFIG, MPU_GYRO_FS_500DPS)) return false;
+  if (!writeRegister(MPU6050_ADDRESS, MPU_REG_ACCEL_CONFIG, MPU_ACCEL_FS_4G)) return false;
+  // PLL 안정화 10ms는 첫 판독까지의 태스크 주기(10ms 이상)로 충족된다.
+  return true;
+}
+
+// setup()에서만 쓰는 블로킹 버전 - 태스크가 아직 없어 delay를 써도 안전하다.
+bool configureImuBlocking() {
+  if (!imuProbeAndReset()) return false;
+  delay(100);  // 데이터시트 권장 리셋 대기
+  return imuApplyConfig();
+}
+
+void resetImuCalibration(ImuChannel& imu) {
+  imu.calibrated = false;
+  imu.calibrationCount = 0;
+  for (int i = 0; i < 3; ++i) {
+    imu.gyroBiasAccum[i] = 0.0f;
+    imu.gyroBiasRadps[i] = 0.0f;
+  }
+  imu.previousRawValid = false;
+  imu.stuckStreak = 0;
+}
+
+int16_t beI16(const uint8_t* buf) {
+  return static_cast<int16_t>((static_cast<uint16_t>(buf[0]) << 8) | buf[1]);
+}
+
+// 칩 축 3개를 REP-103 축으로 재배치한다(부호 있는 축 치환이므로 바이어스에도 그대로 쓴다).
+void remapToRep103(const float chipAxes[3], float out[3]) {
+  for (int i = 0; i < 3; ++i) {
+    out[i] = IMU_AXIS_SIGN[i] * chipAxes[IMU_AXIS_SOURCE[i]];
+  }
+}
+
+// 한 샘플을 읽어 sampleOut을 채운다. I2C가 죽었으면 false(호출자가 online을 내린다).
+bool updateImu(ImuChannel& imu, ImuSample& sampleOut) {
+  // accel(6) + temp(2) + gyro(6)을 한 번의 버스트로 읽어 축 간 시각 차를 없앤다.
+  uint8_t raw[14];
+  if (!readRegisters(MPU6050_ADDRESS, MPU_REG_ACCEL_XOUT_H, raw,
+                     static_cast<uint8_t>(sizeof(raw)))) {
+    return false;
+  }
+  // 측정 시각은 판독 직후에 찍는다. millis()는 32비트라 49.7일에 감기므로
+  // u64 sample_time_us에는 esp_timer_get_time()을 쓴다.
+  sampleOut.sampleTimeUs = static_cast<uint64_t>(esp_timer_get_time());
+
+  const bool identical =
+      imu.previousRawValid && memcmp(raw, imu.previousRaw, sizeof(raw)) == 0;
+  imu.stuckStreak = identical ? (imu.stuckStreak + 1) : 0;
+  memcpy(imu.previousRaw, raw, sizeof(raw));
+  imu.previousRawValid = true;
+
+  const int16_t accelRaw[3] = {beI16(raw + 0), beI16(raw + 2), beI16(raw + 4)};
+  const int16_t tempRaw = beI16(raw + 6);
+  const int16_t gyroRaw[3] = {beI16(raw + 8), beI16(raw + 10), beI16(raw + 12)};
+
+  bool saturated = false;
+  for (int i = 0; i < 3; ++i) {
+    if (accelRaw[i] <= -32767 || accelRaw[i] >= 32767) saturated = true;
+    if (gyroRaw[i] <= -32767 || gyroRaw[i] >= 32767) saturated = true;
+  }
+
+  float chipGyro[3];
+  float chipAccel[3];
+  for (int i = 0; i < 3; ++i) {
+    chipGyro[i] = (gyroRaw[i] / GYRO_LSB_PER_DPS) * IMU_DEG_TO_RAD;
+    chipAccel[i] = (accelRaw[i] / ACCEL_LSB_PER_G) * STANDARD_GRAVITY_MPS2;
+  }
+  remapToRep103(chipGyro, sampleOut.gyroRadps);
+  remapToRep103(chipAccel, sampleOut.accelMps2);
+
+  // 데이터시트 6.4: T[°C] = raw/340 + 36.53.
+  sampleOut.temperatureCentiC = static_cast<int16_t>(lroundf(tempRaw / 3.4f + 3653.0f));
+
+  if (!imu.calibrated) {
+    bool moving = false;
+    for (int i = 0; i < 3; ++i) {
+      if (fabsf(sampleOut.gyroRadps[i]) > IMU_CALIBRATION_MOTION_LIMIT_RADPS) moving = true;
+    }
+    if (moving) {
+      // 차체가 움직이는 동안 모은 값은 바이어스가 아니므로 버리고 다시 시작한다.
+      imu.calibrationCount = 0;
+      for (int i = 0; i < 3; ++i) imu.gyroBiasAccum[i] = 0.0f;
+    } else {
+      for (int i = 0; i < 3; ++i) imu.gyroBiasAccum[i] += sampleOut.gyroRadps[i];
+      imu.calibrationCount++;
+      if (imu.calibrationCount >= IMU_CALIBRATION_SAMPLES) {
+        for (int i = 0; i < 3; ++i) {
+          imu.gyroBiasRadps[i] = imu.gyroBiasAccum[i] / static_cast<float>(imu.calibrationCount);
+        }
+        imu.calibrated = true;
+      }
+    }
+  }
+
+  if (imu.calibrated) {
+    for (int i = 0; i < 3; ++i) sampleOut.gyroRadps[i] -= imu.gyroBiasRadps[i];
+  }
+
+  const bool stuck = imu.stuckStreak >= IMU_STUCK_STREAK_THRESHOLD;
+  uint16_t flags = 0;
+  if (!imu.calibrated) flags |= IMU_STATUS_CALIBRATING;
+  if (saturated) flags |= IMU_STATUS_RANGE_ERROR;
+  if (stuck) flags |= IMU_STATUS_BUS_ERROR;
+  if (flags == 0) flags = IMU_STATUS_VALID;
+  sampleOut.statusFlags = flags;
+  return true;
 }
 
 // ------------------------------------------------------------
@@ -252,24 +478,30 @@ void sensorHardwareInit() {
   pinMode(HC_ECHO_PIN, INPUT);
   pinMode(DHT_DATA_PIN, INPUT_PULLUP);
 
-  // DHT-11 전원 안정화 대기(데이터시트 권장).
+  // DHT-11 전원 안정화 대기(데이터시트 권장). MPU6050 시동 시간도 함께 확보된다.
   delay(1000);
 
   Wire.beginTransmission(LEFT_ENCODER_ADDRESS);
   g_leftEncoder.online = (Wire.endTransmission() == 0);
   Wire.beginTransmission(RIGHT_ENCODER_ADDRESS);
   g_rightEncoder.online = (Wire.endTransmission() == 0);
+
+  // 바이어스 수집은 sensorTaskFn에서 CALIBRATING을 보고하며 진행한다(여기서 블로킹하지 않는다).
+  resetImuCalibration(g_imu);
+  g_imu.failStreak = 0;
+  g_imu.online = configureImuBlocking();
+  g_imuInitPhase = ImuInitPhase::IDLE;
 }
 
 void sensorTaskFn(void* pvParameters) {
   (void)pvParameters;
 
-  constexpr uint32_t SENSOR_TASK_INTERVAL_MS = 20;  // 50Hz ENCODER_STATE 송신 주기에 맞춤
+  // §34-8: IMU I2C 읽기 100Hz. 엔코더도 같은 버스라 같은 주기로 함께 읽는다
+  // (ENCODER_STATE 송신은 comm_task가 50Hz로 계속 내보낸다).
+  constexpr uint32_t SENSOR_TASK_INTERVAL_MS = 10;
   constexpr float SENSOR_TASK_INTERVAL_S = SENSOR_TASK_INTERVAL_MS / 1000.0f;
 
   uint32_t lastReconnectMs = 0;
-  uint32_t lastUltrasonicMs = 0;
-  uint32_t lastDhtMs = 0;
 
   for (;;) {
     const uint32_t now = millis();
@@ -286,11 +518,104 @@ void sensorTaskFn(void* pvParameters) {
       g_rightEncoder.online = false;
     }
 
-    if (now - lastReconnectMs >= ENCODER_RECONNECT_INTERVAL_MS) {
+    ImuSample imuSample{};
+    bool imuUpdated = false;
+    if (g_imu.online) {
+      imuUpdated = updateImu(g_imu, imuSample);
+      if (imuUpdated) {
+        g_imu.failStreak = 0;
+      } else {
+        g_imu.online = false;
+        g_imu.failStreak++;
+        g_imuInitPhase = ImuInitPhase::IDLE;
+      }
+    } else {
+      g_imu.failStreak++;
+    }
+
+    if (now - lastReconnectMs >= I2C_RECONNECT_INTERVAL_MS) {
       lastReconnectMs = now;
       reconnectEncoderChannel(g_leftEncoder);
       reconnectEncoderChannel(g_rightEncoder);
+
+      if (!g_imu.online) {
+        if (g_imuInitPhase == ImuInitPhase::AWAITING_RESET) {
+          // 이전 주기에 DEVICE_RESET을 보냈으므로 100ms 리셋 대기는 이미 지났다.
+          if (imuApplyConfig()) {
+            // 재설정 후의 바이어스는 신뢰할 수 없으므로 다시 수집한다.
+            resetImuCalibration(g_imu);
+            g_imu.online = true;
+            g_imu.failStreak = 0;
+          }
+          g_imuInitPhase = ImuInitPhase::IDLE;
+        } else if (imuProbeAndReset()) {
+          g_imuInitPhase = ImuInitPhase::AWAITING_RESET;
+        }
+      }
     }
+
+    const bool driveEncoderFault = !g_leftEncoder.online || !g_rightEncoder.online;
+    const bool imuFault = g_imu.failStreak >= IMU_FAULT_STREAK_THRESHOLD ||
+                          g_imu.stuckStreak >= IMU_STUCK_STREAK_THRESHOLD;
+
+    sensorSharedStateUpdate([&](SensorSharedState& s) {
+      s.driveEncoderTicksLeft = g_leftEncoder.accumulatedTicks;
+      s.driveEncoderTicksRight = g_rightEncoder.accumulatedTicks;
+      s.driveSpeedLeftMmps = g_leftEncoder.online ? leftSpeedMmps : 0;
+      s.driveSpeedRightMmps = g_rightEncoder.online ? rightSpeedMmps : 0;
+      // 조향 모터·조향 엔코더가 캐스터 휠로 대체되어 더 이상 존재하지 않는다.
+      s.measuredSteeringMdeg = 0;
+
+      if (driveEncoderFault) {
+        s.faultFlags |= FAULT_DRIVE_ENCODER_FAULT;
+      } else {
+        s.faultFlags &= ~FAULT_DRIVE_ENCODER_FAULT;
+      }
+
+      if (imuUpdated) {
+        s.imuSampleTimeUs = imuSample.sampleTimeUs;
+        s.imuGyroXRadps = imuSample.gyroRadps[0];
+        s.imuGyroYRadps = imuSample.gyroRadps[1];
+        s.imuGyroZRadps = imuSample.gyroRadps[2];
+        s.imuAccelXMps2 = imuSample.accelMps2[0];
+        s.imuAccelYMps2 = imuSample.accelMps2[1];
+        s.imuAccelZMps2 = imuSample.accelMps2[2];
+        s.imuTemperatureCentiC = imuSample.temperatureCentiC;
+        s.imuStatusFlags = imuSample.statusFlags;
+      } else {
+        // 판독 실패 시 마지막 값을 VALID로 다시 내보내지 않는다. 값은 그대로 두고
+        // BUS_ERROR만 세워 Jetson이 EKF 입력에서 제외하게 한다.
+        s.imuStatusFlags = IMU_STATUS_BUS_ERROR;
+      }
+
+      if (imuFault) {
+        s.faultFlags |= FAULT_IMU_SENSOR_FAULT;
+      } else if (imuUpdated) {
+        s.faultFlags &= ~FAULT_IMU_SENSOR_FAULT;
+      }
+
+      // 엔코더·IMU는 오도메트리 입력이라 로컬 DEGRADED 전이 대상이 아니다. fault만
+      // 보고하고 AUTO 중단 여부는 Jetson이 판단한다(§34-9). DEGRADED는 환경/근접
+      // 기준으로 envTaskFn이 소유한다.
+      s.lastEncoderUpdateMs = now;
+    });
+
+    vTaskDelay(pdMS_TO_TICKS(SENSOR_TASK_INTERVAL_MS));
+  }
+}
+
+void envTaskFn(void* pvParameters) {
+  (void)pvParameters;
+
+  // HC-SR04 pulseIn은 최대 30ms, DHT-11은 ~24ms(그중 4ms는 noInterrupts) 블로킹한다.
+  // §34-8에 따라 IMU·엔코더 수집을 막지 않도록 낮은 우선순위의 별도 태스크로 둔다.
+  constexpr uint32_t ENV_TASK_INTERVAL_MS = 10;
+
+  uint32_t lastUltrasonicMs = 0;
+  uint32_t lastDhtMs = 0;
+
+  for (;;) {
+    const uint32_t now = millis();
 
     bool ultrasonicUpdated = false;
     bool ultrasonicValid = false;
@@ -313,22 +638,12 @@ void sensorTaskFn(void* pvParameters) {
       g_dhtFailStreak = (dhtResult == DhtReadResult::OK) ? 0 : (g_dhtFailStreak + 1);
     }
 
-    const bool driveEncoderFault = !g_leftEncoder.online || !g_rightEncoder.online;
+    if (!ultrasonicUpdated && !dhtUpdated) {
+      vTaskDelay(pdMS_TO_TICKS(ENV_TASK_INTERVAL_MS));
+      continue;
+    }
 
     sensorSharedStateUpdate([&](SensorSharedState& s) {
-      s.driveEncoderTicksLeft = g_leftEncoder.accumulatedTicks;
-      s.driveEncoderTicksRight = g_rightEncoder.accumulatedTicks;
-      s.driveSpeedLeftMmps = g_leftEncoder.online ? leftSpeedMmps : 0;
-      s.driveSpeedRightMmps = g_rightEncoder.online ? rightSpeedMmps : 0;
-      // 조향 모터·조향 엔코더가 캐스터 휠로 대체되어 더 이상 존재하지 않는다.
-      s.measuredSteeringMdeg = 0;
-
-      if (driveEncoderFault) {
-        s.faultFlags |= FAULT_DRIVE_ENCODER_FAULT;
-      } else {
-        s.faultFlags &= ~FAULT_DRIVE_ENCODER_FAULT;
-      }
-
       if (ultrasonicUpdated) {
         if (ultrasonicValid) {
           s.frontMinDistanceMm = distanceMm;
@@ -343,6 +658,7 @@ void sensorTaskFn(void* pvParameters) {
         } else if (ultrasonicValid) {
           s.faultFlags &= ~FAULT_PROXIMITY_SENSOR_FAULT;
         }
+        s.lastProximityUpdateMs = now;
       }
 
       if (dhtUpdated) {
@@ -361,6 +677,7 @@ void sensorTaskFn(void* pvParameters) {
         } else if (dhtResult == DhtReadResult::OK) {
           s.faultFlags &= ~FAULT_ENVIRONMENT_SENSOR_FAULT;
         }
+        s.lastEnvironmentUpdateMs = now;
       }
 
       // DEGRADED는 이 태스크가 소유한다(환경/근접 fault 기준). BOOT/COMM_LOST
@@ -372,10 +689,8 @@ void sensorTaskFn(void* pvParameters) {
       } else if (s.state == SensorBoardState::DEGRADED && !degraded) {
         s.state = SensorBoardState::STREAMING;
       }
-
-      s.lastSensorUpdateMs = now;
     });
 
-    vTaskDelay(pdMS_TO_TICKS(SENSOR_TASK_INTERVAL_MS));
+    vTaskDelay(pdMS_TO_TICKS(ENV_TASK_INTERVAL_MS));
   }
 }

@@ -15,6 +15,7 @@ constexpr uint8_t FW_MINOR = 1;
 constexpr uint8_t FW_PATCH = 0;
 
 constexpr uint32_t ENCODER_STATE_INTERVAL_MS = 20;      // 50Hz (§34-5)
+constexpr uint32_t IMU_STATE_INTERVAL_MS = 10;           // 100Hz (§34-5, 50~100Hz)
 constexpr uint32_t ENVIRONMENT_STATE_INTERVAL_MS = 1000; // ~1Hz (§34-5)
 constexpr uint32_t PROXIMITY_STATE_INTERVAL_MS = 66;     // ~15Hz (§34-5, 10~20Hz)
 constexpr uint32_t DIAGNOSTIC_INTERVAL_MS = 200;         // 5Hz (§34-5)
@@ -70,11 +71,32 @@ void sendEncoderState() {
   state.driveSpeedLeftMmps = snapshot.driveSpeedLeftMmps;
   state.driveSpeedRightMmps = snapshot.driveSpeedRightMmps;
   state.measuredSteeringMdeg = snapshot.measuredSteeringMdeg;
-  state.sampleAgeMs = sampleAgeMsSince(snapshot.lastSensorUpdateMs);
+  state.sampleAgeMs = sampleAgeMsSince(snapshot.lastEncoderUpdateMs);
 
   uint8_t payload[ENCODER_STATE_BYTES];
   size_t len = packEncoderState(state, payload);
   sendFrame(MSG_ENCODER_STATE, payload, (uint16_t)len);
+}
+
+// IMU는 sample_age_ms 대신 payload의 sample_time_us(센서 ESP32 monotonic 측정 시각)를
+// 그대로 보낸다. Jetson bridge가 handshake에서 구한 clock offset으로 ROS timestamp로
+// 변환하며, 수신 시각을 측정 시각으로 대신하지 않는다(§34-5).
+void sendImuState() {
+  SensorSharedState snapshot = sensorSharedStateSnapshot();
+  ImuState state{};
+  state.sampleTimeUs = snapshot.imuSampleTimeUs;
+  state.gyroXRadps = snapshot.imuGyroXRadps;
+  state.gyroYRadps = snapshot.imuGyroYRadps;
+  state.gyroZRadps = snapshot.imuGyroZRadps;
+  state.accelXMps2 = snapshot.imuAccelXMps2;
+  state.accelYMps2 = snapshot.imuAccelYMps2;
+  state.accelZMps2 = snapshot.imuAccelZMps2;
+  state.temperatureCentiC = snapshot.imuTemperatureCentiC;
+  state.statusFlags = snapshot.imuStatusFlags;
+
+  uint8_t payload[IMU_STATE_BYTES];
+  size_t len = packImuState(state, payload);
+  sendFrame(MSG_IMU_STATE, payload, (uint16_t)len);
 }
 
 void sendEnvironmentState() {
@@ -83,7 +105,7 @@ void sendEnvironmentState() {
   state.temperatureDeciC = snapshot.temperatureDeciC;
   state.humidityDeciPct = snapshot.humidityDeciPct;
   state.statusFlags = snapshot.environmentStatusFlags;
-  state.sampleAgeMs = sampleAgeMsSince(snapshot.lastSensorUpdateMs);
+  state.sampleAgeMs = sampleAgeMsSince(snapshot.lastEnvironmentUpdateMs);
 
   uint8_t payload[ENVIRONMENT_STATE_BYTES];
   size_t len = packEnvironmentState(state, payload);
@@ -96,7 +118,7 @@ void sendProximityState() {
   state.frontMinDistanceMm = snapshot.frontMinDistanceMm;
   state.validSensorMask = snapshot.validSensorMask;
   state.protectiveStop = snapshot.protectiveStop;
-  state.sampleAgeMs = sampleAgeMsSince(snapshot.lastSensorUpdateMs);
+  state.sampleAgeMs = sampleAgeMsSince(snapshot.lastProximityUpdateMs);
 
   uint8_t payload[PROXIMITY_STATE_BYTES];
   size_t len = packProximityState(state, payload);
@@ -214,6 +236,7 @@ void commTaskFn(void* pvParameters) {
   Serial.begin(921600);
 
   uint32_t lastEncoderStateMs = 0;
+  uint32_t lastImuStateMs = 0;
   uint32_t lastEnvironmentStateMs = 0;
   uint32_t lastProximityStateMs = 0;
   uint32_t lastDiagnosticMs = 0;
@@ -226,6 +249,10 @@ void commTaskFn(void* pvParameters) {
     if (now - lastEncoderStateMs >= ENCODER_STATE_INTERVAL_MS) {
       lastEncoderStateMs = now;
       sendEncoderState();
+    }
+    if (now - lastImuStateMs >= IMU_STATE_INTERVAL_MS) {
+      lastImuStateMs = now;
+      sendImuState();
     }
     if (now - lastEnvironmentStateMs >= ENVIRONMENT_STATE_INTERVAL_MS) {
       lastEnvironmentStateMs = now;

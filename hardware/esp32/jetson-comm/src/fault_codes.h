@@ -16,6 +16,7 @@ constexpr uint16_t FAULT_INTERNAL_WATCHDOG_RESET = 1u << 9;   // 모터/센서: 
 constexpr uint16_t FAULT_PROXIMITY_SENSOR_FAULT = 1u << 10;   // 센서: 초음파 timeout·비정상값 지속
 constexpr uint16_t FAULT_ENVIRONMENT_SENSOR_FAULT = 1u << 11; // 센서: DHT-11 checksum·timeout 지속(DEGRADED 허용)
 constexpr uint16_t FAULT_COMM_TIMEOUT_SENSOR = 1u << 12;      // 센서: Jetson<->센서 ESP32 통신 300ms 초과
+constexpr uint16_t FAULT_IMU_SENSOR_FAULT = 1u << 13;         // 센서: IMU bus 오류, 범위 초과, sample timestamp 정지
 
 inline const char* faultBitToName(uint16_t bit) {
   switch (bit) {
@@ -32,6 +33,7 @@ inline const char* faultBitToName(uint16_t bit) {
     case FAULT_PROXIMITY_SENSOR_FAULT: return "PROXIMITY_SENSOR_FAULT";
     case FAULT_ENVIRONMENT_SENSOR_FAULT: return "ENVIRONMENT_SENSOR_FAULT";
     case FAULT_COMM_TIMEOUT_SENSOR: return "COMM_TIMEOUT_SENSOR";
+    case FAULT_IMU_SENSOR_FAULT: return "IMU_SENSOR_FAULT";
     default: return "UNKNOWN_FAULT";
   }
 }

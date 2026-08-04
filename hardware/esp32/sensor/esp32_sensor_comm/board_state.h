@@ -17,7 +17,8 @@ struct SensorSharedState {
   SensorBoardState state = SensorBoardState::BOOT;
   uint16_t faultFlags = 0;
 
-  // 실측 텔레메트리 값. MT6701(좌/우 구동)·DHT-11·HC-SR04 판독은 sensor_task.cpp가 채운다.
+  // 실측 텔레메트리 값. MT6701(좌/우 구동)·MPU6050·DHT-11·HC-SR04 판독은
+  // sensor_task.cpp의 sensorTaskFn/envTaskFn이 채운다.
   int32_t driveEncoderTicksLeft = 0;
   int32_t driveEncoderTicksRight = 0;
   int16_t driveSpeedLeftMmps = 0;
@@ -30,13 +31,30 @@ struct SensorSharedState {
   uint16_t humidityDeciPct = 0;
   uint8_t environmentStatusFlags = 0;
 
+  // MPU6050 차체 IMU. imuSampleTimeUs는 esp_timer_get_time() 기준 monotonic 측정
+  // 시각으로, Jetson이 수신 시각 대신 이 값을 ROS timestamp로 변환한다(§34-5).
+  // 축은 sensor_task.cpp에서 REP-103(x 전방, y 좌측, z 상방)으로 정렬한 뒤 저장한다.
+  uint64_t imuSampleTimeUs = 0;
+  float imuGyroXRadps = 0.0f;
+  float imuGyroYRadps = 0.0f;
+  float imuGyroZRadps = 0.0f;
+  float imuAccelXMps2 = 0.0f;
+  float imuAccelYMps2 = 0.0f;
+  float imuAccelZMps2 = 0.0f;
+  int16_t imuTemperatureCentiC = 0;
+  // ImuStatusFlag 비트합. 첫 샘플 전에는 0(= VALID 없음)이라 Jetson이 EKF에 넣지 않는다.
+  uint16_t imuStatusFlags = 0;
+
   uint16_t frontMinDistanceMm = 0xFFFF;
   uint8_t validSensorMask = 0;
   uint8_t protectiveStop = 0;
 
-  // sensor_task가 위 값들을 갱신한 시각 - ENCODER/ENVIRONMENT/PROXIMITY_STATE의
-  // sample_age_ms 계산에 쓰인다.
-  uint32_t lastSensorUpdateMs = 0;
+  // 각 계열이 마지막으로 갱신된 시각 - 해당 메시지의 sample_age_ms 계산에 쓰인다.
+  // 수집 주기가 100Hz(엔코더·IMU) / ~15Hz(초음파) / 0.5Hz(DHT-11)로 크게 달라
+  // 하나의 타임스탬프로 합치면 실제보다 신선한 값으로 보고된다.
+  uint32_t lastEncoderUpdateMs = 0;
+  uint32_t lastProximityUpdateMs = 0;
+  uint32_t lastEnvironmentUpdateMs = 0;
 
   // Jetson으로부터 유효한 프레임(HELLO/CONFIG 등)을 마지막으로 받은 시각 - 통신 워치독 기준.
   uint32_t lastValidJetsonRxMs = 0;

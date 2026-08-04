@@ -23,12 +23,16 @@ esp32_sensor_bridge:
 
     # ---- 토픽·프레임 (Phase 0 메시지 계약) ----
     odometry_topic: /wheel/odometry
+    imu_topic: /imu/data_raw
     range_topic: /range/front
     protective_stop_topic: /proximity/protective_stop
     temperature_topic: /environment/temperature
     relative_humidity_topic: /environment/relative_humidity
     odom_frame_id: odom
     base_frame_id: base_footprint
+    # sentinel_description의 imu_link. base_link 기준 오프셋은 아직 전부 0인
+    # placeholder다(§35-7, TBD-HW-012).
+    imu_frame_id: imu_link
     range_frame_id: ultrasonic_front_link
     environment_frame_id: base_link
 
@@ -54,6 +58,20 @@ esp32_sensor_bridge:
     # 더 키우고 IMU yaw 가중을 높인다(명세 23.2).
     odom_pose_covariance_diagonal: [0.05, 0.05, 1.0e6, 1.0e6, 1.0e6, 0.1]
     odom_twist_covariance_diagonal: [0.02, 1.0e6, 1.0e6, 1.0e6, 1.0e6, 0.05]
+
+    # ---- MPU6050 IMU (S15P11A301-244) ----
+    # 진동·bias 실측(TBD-HW-012) 전 임시값이다. 데이터시트 잡음 밀도만 보면
+    # gyro는 3e-7 (rad/s)^2 수준이지만, 실제로는 차체 진동과 온도 bias 변동이
+    # 지배하므로 보수적으로 (0.02 rad/s)^2 = 4e-4, accel은 (0.2 m/s^2)^2 = 4e-2로
+    # 둔다. EKF 융합을 켜기 전에 정지·주행 로그로 다시 잡을 값이다.
+    imu_angular_velocity_variance: 4.0e-04
+    imu_linear_acceleration_variance: 4.0e-02
+    # CALIBRATING·RANGE_ERROR·clock offset 미안정 구간에 싣는 값. 값은 Foxglove로
+    # 보이되 EKF가 융합하지 않게 하는 것이 목적이다(Inf/NaN은 구독자를 깨뜨린다).
+    imu_untrusted_variance: 1.0e+06
+    # 보드 monotonic 시계 오프셋 재동기 주기(초). 창 길이 × 크리스털 드리프트가
+    # 타임스탬프 오차 상한이다(10s·100ppm = 1ms).
+    imu_clock_resync_period_s: 10.0
 
     # ---- HC-SR04 (sensor_task.cpp의 MIN/MAX_VALID_DISTANCE_CM과 맞출 것) ----
     range_min_m: 0.02

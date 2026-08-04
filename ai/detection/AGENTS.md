@@ -20,7 +20,7 @@
 
 **이탈 1. 추적기: ByteTrack → BoT-SORT**
 
-명세는 ByteTrack을 지정한다(`docs/04-자율주행-AI.md` 370·401·440·538행).
+명세는 ByteTrack을 지정한다(`docs/07-AI-탐지-음성.md` 25.1·25.4·25.6).
 현재 구현은 BoT-SORT를 쓴다.
 
 - 사유: UGV는 주행하며 촬영하므로 카메라 움직임 보정(GMC)이 필요한데 ByteTrack에는 없다.
@@ -32,7 +32,7 @@
 명세는 정밀 재식별을 **세 곳에서 제외**한다.
 - `docs/01-프로젝트-개요.md:85` "피해자 정밀 재식별" (제외 목록)
 - `docs/01-프로젝트-개요.md:95` "다수 사람의 정밀 재식별" (제외 목록)
-- `docs/04-자율주행-AI.md:404` "정밀 재식별은 범위에서 제외한다"
+- `docs/07-AI-탐지-음성.md` 25.4 "정밀 재식별은 범위에서 제외한다"
 
 현재 `configs/tracker_sentinel.yaml`은 `with_reid: True` + `yolo26n-reid.onnx`를 쓴다.
 
@@ -49,7 +49,7 @@
 
 **이탈 3. Pose를 전체 화면이 아니라 person crop으로 실행한다 (2026-07-30)**
 
-명세 `docs/04-자율주행-AI.md:431`은 "YOLO26n Pose 조건부 실행 (약 2 FPS, **전체 화면 분석**)"이다.
+명세 `docs/07-AI-탐지-음성.md` 25.6은 "YOLO26n Pose 조건부 실행 (약 2 FPS, **전체 화면 분석**)"이다.
 현재 구현은 person bbox를 crop해서 사람별로 Pose를 돌린다.
 
 - 사유: 전체 화면 Pose는 멀리 있는 작은 사람의 keypoint 품질이 떨어진다.
@@ -78,7 +78,7 @@
 이후: NORMAL / FALLEN   (+ fallenScore, signalCount)
 ```
 
-- 개정 문서: `docs/04-자율주행-AI.md` 25.6·DB 주석, `docs/05-통신-서버-영상.md:146`
+- 개정 문서: `docs/07-AI-탐지-음성.md` 25.6·DB 주석, `docs/05-통신-서버-영상.md` 13장
 - 사유: `POSE_UNKNOWN`이 관측의 약 21%를 차지해 다섯 중 하나는 답을 내지 못했다.
   재난 탐색에서 관제가 필요한 답은 "쓰러졌나 아닌가" 하나다.
 - **깨지는 팀 계약은 없다**(사전 확인 완료):
@@ -180,7 +180,7 @@ Optional small LLM
 | 단위 테스트 31건 + 연결 검증 게이트 10건 | `tests/` | §22, §28.1 |
 | Jetson Orin Nano 8GB + USB 카메라 프로파일 | `configs/pipeline.jetson.yaml`, `configs/tracker_jetson.yaml` | §7.1 |
 | cwd 비의존 경로 해석(`_resolve_path`) | `pipeline.py` | §7.1 |
-| 문서 위치를 루트 `docs/` 기준으로 정리 | `../../docs/ai/detection/`, `04-자율주행-AI.md` 25.7 | §9 |
+| 문서 위치를 루트 `docs/` 기준으로 정리 | `../../docs/ai/detection/`, `07-AI-탐지-음성.md` 25.7 | §9 |
 
 **커밋**: `4d08b51`(구현), `629f43b`(문서 정리). 브랜치 `feat/ai/object-detection` → `develop` MR 생성 완료.
 
@@ -224,7 +224,7 @@ Optional small LLM
 **이벤트 트리거는 "사람을 찾은 것"이지 "쓰러진 것"이 아니다.** 프로젝트 명세를 따른다.
 
 > "YOLO와 ByteTrack이 한 명 이상의 사람을 약 1초간 안정적으로 확인하면 encounter를 생성하고
-> 탐사를 일시정지한다" (`docs/01-프로젝트-개요.md:156`, `docs/04-자율주행-AI.md:80`)
+> 탐사를 일시정지한다" (`docs/01-프로젝트-개요.md` 사용자 시나리오, `docs/04-자율주행.md` 8.1)
 
 재난 현장에서는 서 있거나 앉아 있는 요구조자도 구조 대상이므로 자세로 거르지 않는다.
 자세는 `pose_status` 속성으로 실어 보내고, 관제가 우선순위 판단에 참고한다.
@@ -452,11 +452,11 @@ python -m src.main --source 0 --config configs/pipeline.jetson.yaml --output run
 - 실행은 반드시 `python -m src.main`이다. `python src/main.py`는 상대 임포트 때문에 실패한다.
 - `--show`는 헤드리스 Jetson에서 쓰지 않는다(미검증).
 - **모델 가중치는 Git에 없다**(`.gitignore`가 `*.pt`/`*.onnx`를 막는다). Jetson에서는
-  `models/`에 직접 내려받아 배치한다. 절차는 `../../docs/04-자율주행-AI.md` 25.7.
+  `models/`에 직접 내려받아 배치한다. 절차는 `../../docs/07-AI-탐지-음성.md` 25.7.
 
 ### Jetson 실기기 검증 결과 (2026-07-30, S15P11A301-150)
 
-전문은 `../../docs/04-자율주행-AI.md` 25.7 "실기기 검증 결과". 요약만 옮긴다.
+전문은 `../../docs/07-AI-탐지-음성.md` 25.7 "실기기 검증 결과". 요약만 옮긴다.
 
 | 항목 | 실측값 |
 |---|---|
@@ -512,7 +512,7 @@ python scripts/bench_jetson.py --source <기준영상> \
 
 ## 7.3 Jetson 성능 실측 결론 (2026-07-31, S15P11A301-98)
 
-전문은 `../../docs/04-자율주행-AI.md` 25.7. **여기 결론을 추측으로 뒤집지 않는다.**
+전문은 `../../docs/07-AI-탐지-음성.md` 25.7. **여기 결론을 추측으로 뒤집지 않는다.**
 
 | 축 | 결론 |
 |---|---|
@@ -595,7 +595,7 @@ conda activate sentinel-yolo && python --version   # 또는 §7의 절대경로 
 
 | 문서 | 위치 |
 |---|---|
-| Jetson 실행·검증·성능·오류 대처 | `../../docs/04-자율주행-AI.md` 25.7 [구현 기준] — **단일 출처** |
+| Jetson 실행·검증·성능·오류 대처 | `../../docs/07-AI-탐지-음성.md` 25.7 [구현 기준] — **단일 출처** |
 | 객체탐지 요구사항 초안 | `../../docs/ai/detection/requirements.md` |
 | 에이전트 운영 규칙 | 이 문서 (`ai/detection/AGENTS.md`) |
 
@@ -999,7 +999,7 @@ NORMAL   쓰러짐 점수가 임계값 미만. 서 있든 앉아 있든 포함�
 FALLEN   쓰러짐 점수가 임계값 이상. 누워 있는 형태를 뜻하며 직전 자세와 무관하다
 ```
 
-근거: `docs/04-자율주행-AI.md` 25.6, DB 스키마 (`pose_status VARCHAR NULL -- NORMAL | FALLEN`)
+근거: `docs/07-AI-탐지-음성.md` 25.6, DB 스키마 (`pose_status VARCHAR NULL -- NORMAL | FALLEN`)
 
 **`FALLEN`은 encounter 우선순위 상향과 관제 강조 표시에만 쓰고 의료적 판정으로
 사용하지 않는다**(명세 25.6). 로봇은 진단하지 않는다.
@@ -1073,7 +1073,7 @@ FALLEN   쓰러짐 점수가 임계값 이상. 누워 있는 형태를 뜻하며
 ### ID 교체 시 상태 승계
 
 트래커가 새 trackId를 부여해도 **시간·위치가 가까우면** 누적 시간을 승계한다.
-명세가 허용하는 범위다(`docs/04-자율주행-AI.md:404` "시간·위치·외형의 단순 조건으로 병합").
+명세가 허용하는 범위다(`docs/07-AI-탐지-음성.md` 25.4 "시간·위치·외형의 단순 조건으로 병합").
 **외형은 쓰지 않는다.** 승계 오작동을 막기 위해 세 가지를 테스트로 고정했다 —
 멀리 떨어진 새 ID 승계 금지, 오래된 트랙 승계 금지, 한 상태의 중복 승계 금지.
 

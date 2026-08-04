@@ -12,6 +12,11 @@ import {
 } from "@/lib/api";
 import TelemetryChart from "@/features/telemetry/TelemetryChart";
 import MissionMap from "@/features/mapping/MissionMap";
+import {
+  createStompClient,
+  missionEncountersTopic,
+  type EncounterChangedMessage,
+} from "@/lib/realtime";
 
 /**
  * 임무 이력 화면. 운영 API 실데이터로 임무 목록 → 발견(encounter) 목록 → 이벤트
@@ -23,6 +28,37 @@ import MissionMap from "@/features/mapping/MissionMap";
 
 /** 잡음 제거 오디오 kind (#228 계약). 원본 오디오의 파생물 — 원본이 증거다. */
 const DENOISED_AUDIO_TYPE = "EVENT_AUDIO_DENOISED";
+
+// ── 음성 보고 한국어 표기 (S15P11A301-242) ─────────────────────────────────
+// 백엔드 요약은 "riskLevel=HIGH; mobilityStatus=..." 형식의 기계 문자열이다.
+// 관제 대원이 바로 읽게 풀되, 모르는 값·형식이면 원문을 그대로 보여준다 —
+// 필드명 정비(S15P11A301-147)로 형식이 바뀌어도 화면이 거짓말하지 않게.
+const RISK_LABEL: Record<string, string> = { HIGH: "높음", MEDIUM: "중간", LOW: "낮음" };
+const MOBILITY_LABEL: Record<string, string> = {
+  MOBILE: "자력 이동 가능", IMMOBILE: "자력 이동 불가", UNKNOWN: "이동성 미확인",
+};
+const URGENT_LABEL: Record<string, string> = { NONE: "긴급 호소 없음", BLEEDING: "출혈 호소" };
+const TERMINATION_LABEL: Record<string, string> = {
+  SESSION_COMPLETE: "대화 완료", NO_RESPONSE: "무응답 종료", PERSON_LOST: "대상 놓침",
+};
+
+function humanizeInteractionSummary(raw: string): string | null {
+  const kv: Record<string, string> = {};
+  for (const part of raw.split(";")) {
+    const [k, v] = part.split("=").map(s => s.trim());
+    if (!k || v === undefined) return null; // 모르는 형식 — 원문 표시로 폴백
+    kv[k] = v;
+  }
+  if (!kv.riskLevel) return null;
+  return [
+    `위험도 ${RISK_LABEL[kv.riskLevel] ?? kv.riskLevel}`,
+    kv.mobilityStatus ? (MOBILITY_LABEL[kv.mobilityStatus] ?? `이동성 ${kv.mobilityStatus}`) : null,
+    kv.urgentConditionReported
+      ? (URGENT_LABEL[kv.urgentConditionReported] ?? `긴급 상태 ${kv.urgentConditionReported}`)
+      : null,
+    kv.usedFallback === "true" ? "⚠ 키워드 폴백 추출(정밀도 낮을 수 있음)" : null,
+  ].filter(Boolean).join(" · ");
+}
 
 const MISSION_STATUS_LABEL: Record<string, string> = {
   CREATED: "대기",
@@ -80,6 +116,11 @@ export default function MissionHistoryPage() {
   const [videoError, setVideoError] = useState<string | null>(null);
   const [telemetry, setTelemetry] = useState<TelemetryPoint[]>([]);
 
+  // ── 음성 보고 실시간 갱신 (S15P11A301-242) ────────────────────────────────
+  // 음성 세션은 발견 확정 뒤에 끝나므로, 열려 있는 상세는 #243 신호를 받아
+  // 다시 읽어야 보고가 반영된다. 신호에는 내용이 없다 — 상세 재조회가 계약이다.
+  const detailIdRef = useRef<string | null>(null);
+
   // ── 소음 제거본 토글 — 상태 (S15P11A301-229, 실험판 이관) ────────────────
   const [denoisedUrl, setDenoisedUrl] = useState<string | null>(null);
   const [denoised, setDenoised] = useState(false);
@@ -121,6 +162,26 @@ export default function MissionHistoryPage() {
     const timer = setInterval(load, 5000);
     return () => clearInterval(timer);
   }, [selected]);
+
+  // 음성 보고 신호 구독(S15P11A301-242) — 열려 있는 상세의 보고가 갱신되면 재조회.
+  useEffect(() => {
+    if (!selected) return;
+    const client = createStompClient();
+    client.onConnect = () => {
+      client.subscribe(missionEncountersTopic(selected.id), msg => {
+        const ev = JSON.parse(msg.body) as EncounterChangedMessage;
+        if (ev.phase === "INTERACTION_REPORTED" && ev.encounterId === detailIdRef.current) {
+          api.encounterDetail(ev.encounterId).then(setDetail).catch(() => {
+            // 재조회 실패는 화면을 깨지 않는다 — 기존 표시를 유지한다.
+          });
+        }
+      });
+    };
+    client.activate();
+    return () => { void client.deactivate(); };
+  }, [selected]);
+
+  useEffect(() => { detailIdRef.current = detail?.id ?? null; }, [detail]);
 
   /** 발견 선택 → 상세(연결 미디어 포함) 조회 → AVAILABLE 영상이면 재생 링크 발급. */
   const openEncounter = useCallback(async (enc: EncounterSummary) => {
@@ -325,6 +386,13 @@ export default function MissionHistoryPage() {
                         ["감지 인원", detail.detectedPersonCount?.toString() ?? "—"],
                         ["상호작용", detail.interactionStartedAt ? `${fmtTime(detail.interactionStartedAt)}~${fmtTime(detail.interactionEndedAt)}` : "—"],
                         ["영상 개수", detail.media.length.toString()],
+                        // ── 음성 보고 (S15P11A301-242) — 요구조자 발화 기반 값이다.
+                        // responsivePersonCount 는 응답이 확인되지 않은 주변 인원까지
+                        // 포함하므로 "응답 가능"이라 쓰지 않는다. null 은 추출 실패
+                        // (GMS 장애 폴백 포함) — 0(아무도 없음)과 다르므로 "미확인".
+                        ["요구조자가 말한 인원", detail.responsivePersonCount === null ? "미확인" : `${detail.responsivePersonCount}명`],
+                        ["무응답 인원", detail.unresponsivePersonCount === null ? "미확인" : `${detail.unresponsivePersonCount}명`],
+                        ["종료 사유", detail.terminationReason ? (TERMINATION_LABEL[detail.terminationReason] ?? detail.terminationReason) : "—"],
                       ].map(([k, v]) => (
                         <div key={k} className="border border-border rounded px-2 py-1.5 bg-secondary/20">
                           <p className="font-mono text-[9px] text-muted-foreground">{k}</p>
@@ -332,6 +400,19 @@ export default function MissionHistoryPage() {
                         </div>
                       ))}
                     </div>
+                    {/* 음성 보고 요약 — 세션이 없으면 없다고 말한다(0·빈칸으로 오독 방지).
+                        한국어 표기는 표시 계층 변환일 뿐이고 원문은 title 로 보존한다. */}
+                    <p className="font-mono text-[10px] text-muted-foreground max-w-md break-words"
+                       title={detail.interactionSummary ?? undefined}>
+                      {detail.interactionSummary
+                        ? <>음성 보고: <span className={
+                            detail.interactionSummary.includes("riskLevel=HIGH")
+                              ? "text-accent" : "text-foreground"
+                          }>
+                            {humanizeInteractionSummary(detail.interactionSummary) ?? detail.interactionSummary}
+                          </span></>
+                        : "음성 보고 없음 — 대화 세션이 기록되지 않은 발견입니다"}
+                    </p>
                     <button
                       onClick={() => { setDetail(null); setVideoUrl(null); setVideoError(null); }}
                       className="font-mono text-[10px] px-2 py-1 border border-border rounded text-muted-foreground hover:text-foreground transition-colors"

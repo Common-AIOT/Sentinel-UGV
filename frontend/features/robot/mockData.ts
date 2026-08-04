@@ -15,12 +15,15 @@ function mulberry32(seed: number) {
   };
 }
 
+// 실측 전환(S15P11A301-205): null 은 "모름"이고 0 은 값이다(젯슨 계약).
+// battery·co2 는 화면에서 이미 뺐고(#200) 계측 수단도 없어 타입에서도 제거했다.
 export interface SensorReading {
-  temperature: number;
-  humidity: number;
-  battery: number;
-  co2: number;
-  timestamp: number;
+  temperature: number | null;
+  humidity: number | null;
+  /** ESP32 연결 상태 — 온습도가 비었을 때 "보드 문제 vs 센서 문제"를 가른다. */
+  mcuConnected: boolean | null;
+  /** 마지막 실측 수신 시각(ms). null 이면 아직 받은 값이 없다. */
+  updatedAt: number | null;
 }
 
 export interface DetectionEvent {
@@ -74,9 +77,6 @@ export interface ComponentHealth {
   cameraOk: boolean | null;
 }
 
-/** 탐사를 종료시키는 배터리 임계값(명세 23.4). */
-export const BATTERY_ABORT_PCT = 20;
-
 export interface RobotStatus {
   connected: boolean;
   missionState: MissionState;
@@ -91,12 +91,12 @@ export interface RobotStatus {
   infoCount: number;
 }
 
+// 시작값은 전부 "모름" — 실측이 오기 전에 그럴싸한 숫자를 보여주지 않는다(#205).
 export const INITIAL_SENSORS: SensorReading = {
-  temperature: 28.4,
-  humidity: 67.2,
-  battery: 84,
-  co2: 412,
-  timestamp: Date.now(),
+  temperature: null,
+  humidity: null,
+  mcuConnected: null,
+  updatedAt: null,
 };
 
 

@@ -1,3 +1,4 @@
+import re
 import tempfile
 import unittest
 import wave
@@ -152,6 +153,35 @@ class GuideAudioTest(unittest.TestCase):
         # 실제 검증(코드마다 원본 파일명이 하나씩 대응)의 의미가 흐려진다.
         self.assertEqual(len(actual), len(GuideCode))
         self.assertEqual(len(set(actual.values())), len(GuideCode))
+
+    def test_committed_assets_are_not_faster_than_conversation(self):
+        """안내가 일상 대화보다 빠르면 안 된다 (S15P11A301-260).
+
+        규격 검사(`validate_wav`)는 길이·레벨만 본다. "너무 빠르다"는 그것으로
+        드러나지 않아서 2026-08-04까지 최고 8.2 음절/초로 나가고 있었다. 원인은
+        MiniMax Speed 1.1이었고, 변환에서 `atempo=0.8`로 늘려 6.7 이하로 내렸다.
+
+        상한 7.0은 일상 대화 속도(5~7 음절/초)의 위쪽이다. 이 테스트가 깨지면
+        자산이 원본 속도로 되돌아갔다는 뜻이다 — 배율을 빼고 재변환한 경우다.
+        """
+        hangul = re.compile(r"[가-힣]")
+        assets_dir = config.STT_ROOT / "assets"
+        rates = {}
+        for code, asset in GUIDE_ASSETS.items():
+            path = assets_dir / asset.filename
+            if not path.is_file():  # 자산 미배치 환경에서는 검증 대상이 아니다
+                self.skipTest(f"자산 없음: {path}")
+            inspection = validate_wav(path)
+            syllables = len(hangul.findall(asset.text))
+            rates[code.value] = syllables / inspection.duration_seconds
+
+        too_fast = {code: round(r, 1) for code, r in rates.items() if r > 7.0}
+        self.assertEqual(
+            too_fast,
+            {},
+            f"7.0 음절/초를 넘는 안내가 있다: {too_fast} — "
+            "tools.convert_guide_assets의 시간 확장 배율을 확인하라",
+        )
 
 
 if __name__ == "__main__":

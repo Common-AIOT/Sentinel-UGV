@@ -17,11 +17,15 @@
 
 MiniMax 출력은 헤더의 프레임 수가 실제와 다른 경우가 있다(스트리밍 인코딩).
 디코딩한 샘플로 다시 쓰므로 그 오류는 여기서 교정된다.
+
+변환은 두 단계다 — **시간 확장(`atempo`) 다음 라우드니스 정규화(`loudnorm`)**.
+확장 배율의 근거는 `TEMPO` 주석과 `docs/README.md` §6-2에 있다.
 """
 
 from __future__ import annotations
 
 import argparse
+import re
 import wave
 from fractions import Fraction
 from pathlib import Path
@@ -35,6 +39,25 @@ from sentinel_voice.guide_audio import GUIDE_ASSETS, validate_wav
 # validate_wav의 RMS −32~−12dBFS, peak ≤ −1dBFS를 만족시키기 위한 값이다.
 LOUDNORM = "loudnorm=I=-20:TP=-2:LRA=7"
 
+# 시간 확장 배율 (S15P11A301-260). 1.0이면 원본 속도 그대로다.
+#
+# **원본이 너무 빨랐다.** MiniMax Speed 1.1로 생성한 v2 자산의 발화 속도가
+# 6.9~8.2 음절/초였다. 일상 대화가 5~7 음절/초이므로 안내 방송인데 대화보다 빨랐다.
+# 0.8을 적용하면 최고 8.2 → 6.7 음절/초가 된다(2026-08-04 청취 확정).
+#
+# **왜 MiniMax에서 다시 뽑지 않는가** — Speed를 내려 재생성하면 톤이 함께 달라진다.
+# 현재 톤은 유지하기로 했으므로 생성은 그대로 두고 변환에서 시간만 늘린다.
+#
+# **왜 atempo인가** — 음높이를 바꾸지 않고 시간만 늘린다(구간 중첩 가산). 리샘플로
+# 늘리면 음높이가 함께 내려가 톤이 변한다. 그것이 이 작업의 목적과 정반대다.
+#
+# 이 값은 **원본이 MiniMax Speed 1.1일 때** 최종 속도를 맞추는 값이다. 원본을 다른
+# Speed로 다시 뽑으면 이 값도 다시 골라야 한다. 근거는 docs/README.md §6-2.
+TEMPO = 0.8
+
+# 발화 속도 표시용. 한글 음절 블록만 센다 — 문장부호·공백은 발화 시간이 아니다.
+_HANGUL = re.compile(r"[가-힣]")
+
 
 def source_filename(output_filename: str) -> str:
     """guide_xxx.wav에 대응하는 MiniMax 원본명 mini_xxx.wav를 반환한다."""
@@ -43,8 +66,10 @@ def source_filename(output_filename: str) -> str:
     return f"mini_{output_filename.removeprefix('guide_')}"
 
 
-def convert_one(source: Path, output: Path, *, force: bool) -> None:
-    """원본을 16kHz mono PCM16으로 라우드니스 정규화해 쓴다."""
+def convert_one(
+    source: Path, output: Path, *, force: bool, tempo: float = TEMPO
+) -> None:
+    """원본을 16kHz mono PCM16으로 늘리고 라우드니스 정규화해 쓴다."""
     import av
     from av.filter import Graph
 
@@ -52,13 +77,21 @@ def convert_one(source: Path, output: Path, *, force: bool) -> None:
         raise FileExistsError(
             f"{output} 파일이 이미 있음. 교체하려면 --force를 사용하세요."
         )
+    if not 0.5 <= tempo <= 2.0:
+        # atempo 자체는 0.5~100을 받지만, 안내 음성에서 그 범위를 벗어난 값은
+        # 실수다. 규격을 벗어난 자산이 조용히 만들어지는 것을 막는다.
+        raise ValueError(f"시간 확장 배율 범위(0.5~2.0) 이탈: {tempo}")
 
     with av.open(str(source)) as container:
         stream = container.streams.audio[0]
 
         graph = Graph()
-        nodes = [
-            graph.add_abuffer(template=stream),
+        nodes = [graph.add_abuffer(template=stream)]
+        if tempo != 1.0:
+            # **순서가 중요하다.** 늘린 뒤에 라우드니스를 잰다. 반대로 하면 정규화
+            # 이후 시간축이 바뀌어 측정 근거와 결과가 어긋난다.
+            nodes.append(graph.add("atempo", f"tempo={tempo}"))
+        nodes += [
             graph.add("loudnorm", LOUDNORM.split("=", 1)[1]),
             graph.add(
                 "aformat",
@@ -119,6 +152,15 @@ def main() -> int:
         action="store_true",
         help="기존 assets/guide_*.wav를 새 파일로 교체",
     )
+    parser.add_argument(
+        "--tempo",
+        type=float,
+        default=TEMPO,
+        help=(
+            f"시간 확장 배율(기본 {TEMPO}). 1.0은 원본 속도. 음높이는 바뀌지 않는다."
+            " 기본값이 커밋된 자산을 재현하는 값이다"
+        ),
+    )
     args = parser.parse_args()
 
     try:
@@ -138,12 +180,17 @@ def main() -> int:
             continue
 
         try:
-            convert_one(source, output, force=args.force)
+            convert_one(source, output, force=args.force, tempo=args.tempo)
             inspection = validate_wav(output)
+            # 발화 속도를 함께 찍는다. 이 값이 260의 판정 대상이고, 규격 검사
+            # (길이·레벨)만으로는 "너무 빠르다"가 드러나지 않는다.
+            syllables = len(_HANGUL.findall(asset.text))
+            rate = syllables / inspection.duration_seconds
             print(
                 f"[OK]   {code.value:<29} {source.name} -> "
                 f"{output.name} "
                 f"({inspection.duration_seconds:.2f}s, "
+                f"{rate:.1f}음절/초, "
                 f"RMS={inspection.rms_dbfs:.1f}dBFS, "
                 f"peak={inspection.peak_dbfs:.1f}dBFS)"
             )
@@ -155,7 +202,10 @@ def main() -> int:
         print(f"\nFAIL {failures}개 - 원본명과 변환 오류를 확인하세요.")
         return 1
 
-    print(f"\nOK - 안내 음성 {len(GUIDE_ASSETS)}개 변환·검증 완료")
+    print(
+        f"\nOK - 안내 음성 {len(GUIDE_ASSETS)}개 변환·검증 완료 "
+        f"(시간 확장 {args.tempo})"
+    )
     return 0
 
 

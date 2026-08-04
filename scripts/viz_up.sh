@@ -13,11 +13,15 @@
 # 백그라운드로 띄운다. `ros2 launch` 는 포그라운드를 잡아서 그대로 실행하면
 # 터미널이 묶이고, 그래서 실제로는 매번 손으로 nohup 을 붙이고 있었다.
 #
-# 끄는 것은 ./scripts/viz_down.sh 다. 켠 뒤에는 8765 가 인증 없이 열려 있고
-# foxglove_bridge 의 기본 capabilities 에 clientPublish·parameters·services 가
-# 들어 있다 — 접속만 하면 파라미터를 바꾸고 서비스를 부를 수 있다. 젯슨이
-# 공인 IP 에 있으므로 LAN 과 인터넷이 같은 인터페이스이고, "LAN 에서만 열기"
-# 라는 선택지가 없다. 그래서 볼 때만 켜고 보고 나면 끈다.
+# 끄는 것은 ./scripts/viz_down.sh 다. S15P11A301-224 에서 읽기 전용으로 좁혔다
+# (capabilities=[connectionGraph], 토픽 6개 화이트리스트) — 파라미터 변경·서비스
+# 호출은 이제 안 된다. 다만 **읽기는 인증 없이 열려 있다.** 젯슨이 공인 IP 에
+# 있어 LAN 과 인터넷이 같은 인터페이스이고 "LAN 에서만 열기" 라는 선택지가 없다.
+# 그래서 볼 때만 켜고 보고 나면 끈다.
+#
+# 같은 224 에서 TLS 도 켰다. **주소는 wss:// 다.** 아래 안내 문구는 실제
+# viz_tls 값에서 계산한다 — 문자열로 박아 두면 기본값이 바뀔 때 안내만 낡고,
+# 그러면 "안내대로 했는데 안 붙는다" 가 된다(실제로 그렇게 됐다).
 set -Eeuo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -47,16 +51,32 @@ if [[ "${1:-}" == "--local" ]]; then
   shift
 fi
 
-# 호출자가 직접 viz_address·viz_port 를 준 경우 그것을 존중한다. 여기서 덮으면
-# 인자를 줬는데 왜 안 먹느냐가 되고, 그 원인은 로그만 봐서는 알 수 없다.
+# 호출자가 직접 viz_address·viz_port·viz_tls 를 준 경우 그것을 존중한다. 여기서
+# 덮으면 인자를 줬는데 왜 안 먹느냐가 되고, 그 원인은 로그만 봐서는 알 수 없다.
 address_given=0
+tls_given=0
 port="${DEFAULT_PORT}"
+tls=true   # viz.launch.py 의 viz_tls 기본값과 같아야 한다
 for arg in "$@"; do
   case "${arg}" in
     viz_address:=*) address_given=1; address="${arg#viz_address:=}" ;;
     viz_port:=*) port="${arg#viz_port:=}" ;;
+    viz_tls:=*) tls_given=1; tls="${arg#viz_tls:=}" ;;
   esac
 done
+
+# SSH 터널로 볼 때는 TLS 를 끈다. 터널이 이미 암호화하고 있어 두 겹으로 쌀
+# 이유가 없고, 무엇보다 **인증서 이름이 안 맞는다** — jetson.sentinel-ugv.xyz
+# 로 발급된 인증서를 wss://localhost 로 검증하면 브라우저가 거부한다.
+if [[ "${local_only}" -eq 1 && "${tls_given}" -eq 0 ]]; then
+  tls=false
+fi
+
+# 안내에 쓸 스킴. 문자열을 두 군데 박지 않는다.
+scheme=ws
+if [[ "${tls,,}" == "true" ]]; then
+  scheme=wss
+fi
 
 # 포트가 실제로 열렸는지 본다. "띄웠다"만 출력하고 끝내면 실패해도 성공처럼
 # 보인다 — 이 프로젝트에서 반복해서 겪은 형태다.
@@ -82,6 +102,9 @@ source "${REPO_ROOT}/scripts/ros_env.sh"
 launch_args=("$@")
 if [[ "${address_given}" -eq 0 ]]; then
   launch_args+=("viz_address:=${address}")
+fi
+if [[ "${tls_given}" -eq 0 ]]; then
+  launch_args+=("viz_tls:=${tls}")
 fi
 
 # setsid 로 세션을 끊는다. 부모 셸이 닫혀도 살아 있어야 하고, 이 스크립트를
@@ -109,10 +132,18 @@ echo
 if [[ "${local_only}" -eq 1 ]]; then
   echo "  접속 전에 노트북에서 터널을 엽니다:"
   echo "    ssh -N -L ${port}:127.0.0.1:${port} orin@<젯슨 주소>"
-  echo "  그다음 Foxglove 에서  ws://localhost:${port}"
+  echo "  그다음 Foxglove 에서  ${scheme}://localhost:${port}"
 else
-  echo "  Foxglove 에서  ws://jetson.sentinel-ugv.xyz:${port}"
-  echo "  젯슨에서 직접 보면  ws://localhost:${port}"
+  echo "  Foxglove 에서  ${scheme}://jetson.sentinel-ugv.xyz:${port}"
+  # 젯슨에서 직접 볼 때는 이름이 아니라 localhost 라서 인증서 이름이 안 맞는다.
+  # TLS 를 켠 채로는 브라우저가 거부하므로 그 경우는 안내하지 않는다.
+  if [[ "${scheme}" == "ws" ]]; then
+    echo "  젯슨에서 직접 보면  ws://localhost:${port}"
+  fi
+fi
+if [[ "${scheme}" == "wss" ]]; then
+  echo "  wss 다. ws 로 붙으면 서버가 TLS 핸드셰이크를 기다리다 끊고,"
+  echo "  Foxglove 에는 'No details provided' 만 남는다."
 fi
 echo "  연결 유형은 반드시 'Foxglove WebSocket' 입니다. Rosbridge 를 고르면"
 echo "  핸드셰이크가 깨집니다."
@@ -121,8 +152,9 @@ echo "  3D 패널: 톱니 → Display frame 을 map 으로 바꾸고 /map, /scan
 echo "  Display frame 이 기본값이면 지도가 로봇과 함께 돌아 읽을 수 없습니다."
 echo
 if [[ "${local_only}" -eq 0 ]]; then
-  echo "  주의: ${port} 는 인증이 없고 파라미터·서비스 호출까지 허용됩니다."
-  echo "  젯슨이 공인 IP 에 있으므로 외부에서도 닿습니다. 보고 나면 끄십시오."
+  echo "  주의: ${port} 는 읽기에 인증이 없습니다. 쓰기는 막혀 있지만"
+  echo "  (S15P11A301-224: 읽기 전용, 토픽 6개) 지도·영상 프레임·TF 는 누구나"
+  echo "  받아 갑니다. 젯슨이 공인 IP 라 외부에서도 닿습니다. 보고 나면 끄십시오."
 fi
 echo "  로그: ${LOG_FILE}"
 echo "  끄기: ./scripts/viz_down.sh"

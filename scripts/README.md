@@ -283,9 +283,15 @@ ros2 topic echo /pose --once      # 위치와 covariance
 `--local`로 켜고 노트북에서 터널을 연다.
 
 ```bash
+./scripts/viz_up.sh --local
 ssh -N -L 8765:127.0.0.1:8765 orin@<젯슨 주소>
 # 그다음 Foxglove 에서 ws://localhost:8765
 ```
+
+`--local` 은 TLS 를 끈다(`viz_tls:=false`). 터널이 이미 암호화하고 있고, 무엇보다
+인증서가 `jetson.sentinel-ugv.xyz` 로 발급돼서 `wss://localhost` 로는 이름이 맞지
+않아 브라우저가 거부한다. 그래서 **터널로 볼 때만 `ws://` 다.** LAN 으로 직접
+붙을 때는 `wss://` 다.
 
 #### enable_viz를 줬는데도 안 뜨면 재빌드부터 확인한다
 

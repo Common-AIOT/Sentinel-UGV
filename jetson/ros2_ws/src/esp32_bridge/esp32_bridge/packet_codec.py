@@ -26,6 +26,7 @@ from .protocol_constants import (
     STRUCT_ENCODER_STATE,
     STRUCT_ENVIRONMENT_STATE,
     STRUCT_HELLO_ACK,
+    STRUCT_IMU_STATE,
     STRUCT_PROXIMITY_STATE,
 )
 
@@ -277,6 +278,55 @@ def pack_encoder_state(state: EncoderState) -> bytes:
 
 def unpack_encoder_state(payload: bytes) -> EncoderState:
     return EncoderState(*struct.unpack(STRUCT_ENCODER_STATE, payload))
+
+
+@dataclass
+class ImuState:
+    """MPU6050 원시 gyro/accel 1샘플.
+
+    `sample_time_us`는 센서 ESP32의 monotonic 측정 시각(µs, esp_timer)이며 수신
+    시각으로 대신하지 않는다(§34-5). ROS 시각 변환은 `imu_clock.BoardClockOffset`이
+    맡는다.
+    """
+
+    sample_time_us: int
+    gyro_x_radps: float
+    gyro_y_radps: float
+    gyro_z_radps: float
+    accel_x_mps2: float
+    accel_y_mps2: float
+    accel_z_mps2: float
+    temperature_centi_c: int
+    status_flags: int
+
+
+def pack_imu_state(state: ImuState) -> bytes:
+    return struct.pack(
+        STRUCT_IMU_STATE,
+        state.sample_time_us,
+        state.gyro_x_radps,
+        state.gyro_y_radps,
+        state.gyro_z_radps,
+        state.accel_x_mps2,
+        state.accel_y_mps2,
+        state.accel_z_mps2,
+        state.temperature_centi_c,
+        state.status_flags,
+    )
+
+
+def unpack_imu_state(payload: bytes) -> ImuState:
+    """길이가 다르면 `LengthError`를 낸다(C++ `unpackImuState`의 false와 같은 취급).
+
+    `parse_frame`은 헤더의 payload_length와 프레임 길이만 맞춰 보고 타입별 크기는
+    보지 않는다. 펌웨어/브리지 버전이 어긋나면 여기서 걸러야 하며, 그때
+    `struct.error`가 아니라 `_FRAME_PARSE_ERRORS`에 속한 예외를 던져야 수신
+    루프가 조용히 죽지 않는다.
+    """
+    expected = struct.calcsize(STRUCT_IMU_STATE)
+    if len(payload) != expected:
+        raise LengthError(f"IMU_STATE payload must be {expected} bytes, got {len(payload)}")
+    return ImuState(*struct.unpack(STRUCT_IMU_STATE, payload))
 
 
 @dataclass

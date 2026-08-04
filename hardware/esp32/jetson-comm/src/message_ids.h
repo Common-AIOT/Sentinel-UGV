@@ -26,10 +26,22 @@ enum MessageId : uint8_t {
   MSG_ENVIRONMENT_STATE = 0x23,
   MSG_PROXIMITY_STATE = 0x24,
   MSG_ENCODER_STATE = 0x25,
+  MSG_IMU_STATE = 0x26,
 
   // GET/SET은 하나의 메시지 코드를 쓰고 payload.operation 필드로 구분한다(§34-5).
   MSG_CONFIG = 0x30,
 };
+
+// IMU_STATE.status_flags (§34-5: VALID, CALIBRATING, RANGE_ERROR, BUS_ERROR)
+enum ImuStatusFlag : uint16_t {
+  IMU_STATUS_VALID = 1u << 0,        // gyro/accel 값이 EKF에 넣을 수 있는 상태
+  IMU_STATUS_CALIBRATING = 1u << 1,  // 자이로 바이어스 수집 중 - 값은 아직 신뢰 불가
+  IMU_STATUS_RANGE_ERROR = 1u << 2,  // 축 하나 이상이 측정 범위에서 포화
+  IMU_STATUS_BUS_ERROR = 1u << 3,    // I2C 판독 실패 또는 샘플이 갱신되지 않음
+};
+
+// IMU_STATE.temperature_centi_c 미지원/무효 sentinel (§34-5 "선택, 미지원 시 INVALID").
+constexpr int16_t IMU_TEMPERATURE_INVALID = -32768;
 
 // CONFIG.operation
 enum ConfigOperation : uint8_t {

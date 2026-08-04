@@ -9,8 +9,8 @@
 ## 파일
 
 - `library.properties` — Arduino 라이브러리 메타데이터.
-- `src/message_ids.h` — 메시지 코드(0x01~0x30), `PROTOCOL_VERSION`, `MAX_PAYLOAD_BYTES`.
-- `src/fault_codes.h` — §34-9 fault bit 13개.
+- `src/message_ids.h` — 메시지 코드(0x01~0x30), `PROTOCOL_VERSION`, `MAX_PAYLOAD_BYTES`, `ImuStatusFlag`.
+- `src/fault_codes.h` — §34-9 fault bit 14개.
 - `src/protocol.h` / `src/protocol.cpp` — 프레임 헤더, CRC-16/CCITT-FALSE, COBS 인코딩/디코딩, `buildFrame`/`parseFrame`, 메시지별 pack/unpack.
 - `test_vectors/` — CRC16·COBS 검증 벡터(사람이 읽는 근거 자료). 실행 가능한 테스트는 `test/test_protocol.cpp`와 `jetson/ros2_ws/src/esp32_bridge/test/test_packet_codec.py`에 동일 값이 하드코딩되어 있다.
 - `test/test_protocol.cpp` — 호스트 컴파일 유닛테스트.
@@ -37,6 +37,14 @@ mklink /J "%UserProfile%\Documents\Arduino\libraries\jetson_comm" "C:\Users\SSAF
 ## 신규 페이로드 (문서에 없던 것, 이번 작업에서 확정)
 
 `HELLO_ACK`, `DIAGNOSTIC`, `COMMAND_ACK`, `CONFIG`(0x30, GET/SET 겸용)의 페이로드 구조는 `docs/03-제어-캘리브레이션.md` §34-5에 없어 이번 작업에서 새로 정의했다(`protocol.h`의 구조체 주석 참고). 문서에 addendum으로 반영 필요.
+
+`IMU_STATE`(0x26, 36바이트)는 §34-5에 필드 정의가 있어 그대로 구현했다. 문서에 없던 부분만 새로 확정했다:
+
+- `status_flags` 비트 배치 — `ImuStatusFlag`(`VALID=1<<0`, `CALIBRATING=1<<1`, `RANGE_ERROR=1<<2`, `BUS_ERROR=1<<3`).
+- `temperature_centi_c`의 INVALID sentinel — `IMU_TEMPERATURE_INVALID = -32768`.
+- `f32`는 IEEE-754 binary32 리틀엔디안(Python `struct` `'<f'`와 동일), `sample_time_us`는 `u64` 리틀엔디안.
+
+**Python 쪽 구현 완료**(S15P11A301-244): `jetson/ros2_ws/src/esp32_bridge`의 `protocol_constants.py`/`packet_codec.py`가 같은 배치로 `0x26`을 해석하고, 센서 브리지가 `sensor_msgs/Imu`를 `/imu/data_raw`로 발행한다. 위 세 항목(비트 배치·sentinel·바이트 순서)은 **양쪽 수동 동기화 대상**이다 — 한쪽을 바꾸면 `protocol_constants.py`의 `IMU_STATUS_*`/`IMU_TEMPERATURE_INVALID`/`STRUCT_IMU_STATE`도 함께 고칠 것. 두 구현이 같은 벡터로 검증되는지는 `test/test_protocol.cpp`의 `testImuStateRoundTrip()`과 `esp32_bridge/test/test_packet_codec.py`가 함께 본다.
 
 ## 호스트 테스트 빌드
 

@@ -13,6 +13,7 @@
 | 프레임 | 토픽 | 타입 | 비고 |
 |---|---|---|---|
 | `ENCODER_STATE` | `/wheel/odometry` | `nav_msgs/Odometry` | `odom`→`base_footprint`, 차동 구동 정운동학 |
+| `IMU_STATE` | `/imu/data_raw` | `sensor_msgs/Imu` | `imu_link`, 원시 gyro/accel, 100Hz |
 | `PROXIMITY_STATE` | `/range/front` | `sensor_msgs/Range` | `ultrasonic_front_link`, ULTRASOUND |
 | `PROXIMITY_STATE` | `/proximity/protective_stop` | `std_msgs/Bool` | 보드 로컬 보호 정지, TRANSIENT_LOCAL |
 | `ENVIRONMENT_STATE` | `/environment/temperature` | `sensor_msgs/Temperature` | DHT-11 판독 성공 시에만 |
@@ -28,7 +29,28 @@
 - **`/range/front`의 `+Inf`는 "미검출"이다.** 보드는 에코 타임아웃을 `MAX_VALID_DISTANCE_CM`(4m)으로 clamp해 보내는데, 그대로 두면 4m 지점의 실제 장애물처럼 읽힌다. `valid_sensor_mask` 비트가 꺼졌거나 거리가 `range_max_m` 이상이면 `+Inf`로 바꾼다.
 - **온습도는 `status_flags`가 정상일 때만 발행한다.** 보드가 실패 시 마지막 정상값을 그대로 들고 있어, 그냥 내보내면 오래된 값이 새 측정처럼 보인다. 실패는 `/diagnostics`의 `ENVIRONMENT_SENSOR_FAULT`로만 드러낸다.
 - **`measured_steering_mdeg`는 발행하지 않는다.** 조향 모터가 캐스터 휠로 대체되어 항상 0이다.
-- **`sensor_msgs/Imu`(`/imu/data_raw`, 명세 23.2)는 아직 없다.** IMU 모델 미확정(TBD-HW-012)이고 센서 ESP32에 `IMU_STATE` 메시지 자체가 없다.
+
+## IMU (`/imu/data_raw`, S15P11A301-244)
+
+`IMU_STATE`(0x26)로 오는 MPU6050 원시 gyro/accel을 `sensor_msgs/Imu`로 낸다. 명세 23.2·§34-5의 계약이 셋이다.
+
+- **타임스탬프를 `sample_time_us`에서 만든다.** 수신 시각을 측정 시각으로 대신하지 않는다. `imu_clock.BoardClockOffset`이 보드 monotonic µs → ROS 시각 오프셋을 추정한다 — 전송 지연은 항상 양수이므로 관측한 `수신시각 − 측정시각`의 **최솟값**이 참 오프셋에 가장 가깝다(min filter). 평균을 쓰면 평균 지연만큼 통째로 늦게 찍힌다. 크리스털 드리프트를 따라가려고 `imu_clock_resync_period_s`(기본 10초) 창마다 최솟값을 다시 채택하므로 오차가 "창 길이 × 드리프트"(10s·100ppm = 1ms)로 묶인다.
+- **재부팅 판정은 `sample_time_us` 역행으로 한다.** monotonic 시계가 되돌아가는 것은 재부팅뿐이다. "오프셋이 크게 뛰면 재부팅"으로 보면 Jetson 수신 스레드가 CPU 부하로 굶었을 때 오진에 걸리고, 그때 오프셋을 다시 잡으면 굶은 시간이 전송 지연으로 오인되어 스탬프가 그만큼 늦어진다.
+- **`orientation`은 채우지 않는다.** 원시 출력에 자세 융합이 없으므로 REP-145 관례대로 `orientation_covariance[0] = -1`로 "추정값 없음"을 표시한다. 이걸 빼면 EKF가 항등 자세를 실제 관측으로 융합해 로봇이 계속 정면을 본다고 믿는다.
+
+발행 여부는 `status_flags`로 갈린다.
+
+| `status_flags` | 동작 |
+|---|---|
+| `VALID` + clock offset 안정 | 정상 발행(`imu_*_variance` 공분산) |
+| `CALIBRATING`·`RANGE_ERROR`, 또는 clock offset 미안정 | 발행하되 공분산을 `imu_untrusted_variance`(1e6)로 실어 EKF 융합에서 제외한다. 값을 끊으면 축 정렬 검증(TESTING.md 10-4)에 쓸 것이 없어지고, 그대로 신뢰하면 바이어스 미보정 자이로가 융합된다 |
+| `BUS_ERROR` | **발행하지 않는다.** 판독 실패 시 보드가 마지막 값을 그대로 들고 있어(`sensor_task.cpp`) 내보내면 오래된 값이 새 측정처럼 보인다. DHT-11과 같은 규칙이며, 실패는 `/diagnostics`의 `IMU_SENSOR_FAULT`로 드러낸다 |
+
+**같은 `sample_time_us`가 두 번 오면 뒤쪽을 버린다.** comm_task의 송신 주기(10ms)와 센서 태스크의 샘플 주기(10ms)가 서로 독립이라 같은 측정이 두 프레임에 실릴 수 있고, 같은 스탬프로 두 번 발행하면 EKF가 한 측정을 두 번 센다. 그래서 `ros2 topic hz /imu/data_raw`가 100Hz보다 조금 낮게 나오는 것은 정상이다.
+
+`/diagnostics`에 `esp32_bridge: IMU` 항목이 함께 나온다. 토픽이 조용할 때 사유(BUS_ERROR / 중복 / 프레임 미수신)를 여기서 구별하며, `clock_offset_ms`·`clock_resync_count`·`published_count`·`skipped_bus_error_count`를 센다.
+
+> `imu_angular_velocity_variance`·`imu_linear_acceleration_variance`는 **진동·bias 실측 전 임시값**이다(TBD-HW-012). 데이터시트 잡음 밀도만 보면 gyro가 3e-7 (rad/s)² 수준이지만 실제로는 차체 진동과 온도 bias가 지배하므로 보수적으로 (0.02 rad/s)²·(0.2 m/s²)²를 넣었다. EKF 융합을 켜기 전에 정지·주행 로그로 다시 잡을 값이다.
 
 ## 오도메트리와 TF
 
@@ -50,6 +72,7 @@ v   = (d_R + d_L) / 2Δt ,  ω = (d_R − d_L) / WΔt
 ## 모듈
 
 - `packet_codec.py` — CRC-16/CCITT-FALSE, COBS, 프레임 build/parse, 메시지별 pack/unpack. `rclpy`를 import하지 않아 ROS 없이도 `pytest`로 검증할 수 있다(`test/test_packet_codec.py`).
+- `imu_clock.py` — 보드 monotonic 시계 → ROS 시각 오프셋 추정(min filter + 창 단위 재동기 + 재부팅 시 폐기). 역시 `rclpy`-free라 `pytest`로 검증한다(`test/test_imu_clock.py`).
 - `wheel_odometry.py` — 차동 구동 정운동학·원호 적분·int32 tick 랩어라운드 처리. 역시 `rclpy`-free라 `pytest`로 검증하며(`test/test_wheel_odometry.py`), Phase 1에서 `sentinel_drive`가 그대로 가져다 쓸 수 있다.
 - `protocol_constants.py` — 메시지 코드·fault bit·struct 포맷. `hardware/esp32/jetson-comm/message_ids.h`/`fault_codes.h`/`protocol.h`와 값이 반드시 동일해야 한다(수동 동기화).
 - `serial_transport.py` — pyserial 래퍼. 백그라운드 스레드가 0x00 구분 청크를 큐에 담고, 포트가 없거나 끊기면 재연결을 계속 시도한다.

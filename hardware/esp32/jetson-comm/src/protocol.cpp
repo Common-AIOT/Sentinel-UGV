@@ -95,6 +95,7 @@ static bool isKnownMessageType(uint8_t type) {
     case MSG_ENVIRONMENT_STATE:
     case MSG_PROXIMITY_STATE:
     case MSG_ENCODER_STATE:
+    case MSG_IMU_STATE:
     case MSG_CONFIG:
       return true;
     default:
@@ -199,6 +200,18 @@ void writeI32LE(uint8_t* buf, size_t& offset, int32_t v) {
   writeU32LE(buf, offset, (uint32_t)v);
 }
 
+void writeU64LE(uint8_t* buf, size_t& offset, uint64_t v) {
+  for (int i = 0; i < 8; i++) {
+    buf[offset++] = (uint8_t)((v >> (8 * i)) & 0xFF);
+  }
+}
+
+void writeF32LE(uint8_t* buf, size_t& offset, float v) {
+  uint32_t bits = 0;
+  std::memcpy(&bits, &v, sizeof(bits));
+  writeU32LE(buf, offset, bits);
+}
+
 uint8_t readU8(const uint8_t* buf, size_t& offset) {
   return buf[offset++];
 }
@@ -222,6 +235,22 @@ uint32_t readU32LE(const uint8_t* buf, size_t& offset) {
 
 int32_t readI32LE(const uint8_t* buf, size_t& offset) {
   return (int32_t)readU32LE(buf, offset);
+}
+
+uint64_t readU64LE(const uint8_t* buf, size_t& offset) {
+  uint64_t v = 0;
+  for (int i = 0; i < 8; i++) {
+    v |= (uint64_t)buf[offset + i] << (8 * i);
+  }
+  offset += 8;
+  return v;
+}
+
+float readF32LE(const uint8_t* buf, size_t& offset) {
+  uint32_t bits = readU32LE(buf, offset);
+  float v = 0.0f;
+  std::memcpy(&v, &bits, sizeof(v));
+  return v;
 }
 
 // ==== 페이로드 pack/unpack (§34-5 확정분) ====
@@ -340,6 +369,35 @@ bool unpackProximityState(const uint8_t* payload, uint16_t len, ProximityState& 
   out.validSensorMask = readU8(payload, offset);
   out.protectiveStop = readU8(payload, offset);
   out.sampleAgeMs = readU16LE(payload, offset);
+  return true;
+}
+
+size_t packImuState(const ImuState& in, uint8_t* out) {
+  size_t offset = 0;
+  writeU64LE(out, offset, in.sampleTimeUs);
+  writeF32LE(out, offset, in.gyroXRadps);
+  writeF32LE(out, offset, in.gyroYRadps);
+  writeF32LE(out, offset, in.gyroZRadps);
+  writeF32LE(out, offset, in.accelXMps2);
+  writeF32LE(out, offset, in.accelYMps2);
+  writeF32LE(out, offset, in.accelZMps2);
+  writeI16LE(out, offset, in.temperatureCentiC);
+  writeU16LE(out, offset, in.statusFlags);
+  return offset;
+}
+
+bool unpackImuState(const uint8_t* payload, uint16_t len, ImuState& out) {
+  if (len != IMU_STATE_BYTES) return false;
+  size_t offset = 0;
+  out.sampleTimeUs = readU64LE(payload, offset);
+  out.gyroXRadps = readF32LE(payload, offset);
+  out.gyroYRadps = readF32LE(payload, offset);
+  out.gyroZRadps = readF32LE(payload, offset);
+  out.accelXMps2 = readF32LE(payload, offset);
+  out.accelYMps2 = readF32LE(payload, offset);
+  out.accelZMps2 = readF32LE(payload, offset);
+  out.temperatureCentiC = readI16LE(payload, offset);
+  out.statusFlags = readU16LE(payload, offset);
   return true;
 }
 

@@ -110,6 +110,51 @@ void testFrameRoundTrip() {
              "parseFrame rejects a corrupted frame (BAD_CRC or COBS_ERROR)");
 }
 
+void testImuStateRoundTrip() {
+  ImuState imu{};
+  imu.sampleTimeUs = 0x0000'0123'4567'89ABull;  // u32로 잘리면 상위 바이트가 사라진다
+  imu.gyroXRadps = -0.125f;
+  imu.gyroYRadps = 0.0f;
+  imu.gyroZRadps = 3.14159f;
+  imu.accelXMps2 = 9.80665f;
+  imu.accelYMps2 = -1.5f;
+  imu.accelZMps2 = 0.25f;
+  imu.temperatureCentiC = 3125;
+  imu.statusFlags = IMU_STATUS_VALID;
+
+  uint8_t payload[IMU_STATE_BYTES];
+  size_t payloadLen = packImuState(imu, payload);
+  expectTrue(payloadLen == IMU_STATE_BYTES, "packImuState emits expected byte count");
+
+  uint8_t frameBuf[MAX_FRAME_BYTES + 4];
+  size_t frameLen = buildFrame(MSG_IMU_STATE, 7, 999, payload, (uint16_t)payloadLen,
+                                frameBuf, sizeof(frameBuf));
+  expectTrue(frameLen > 0, "buildFrame accepts MSG_IMU_STATE");
+
+  FrameHeader header{};
+  uint8_t decodedPayload[MAX_PAYLOAD_BYTES];
+  ParseResult result =
+      parseFrame(frameBuf, frameLen - 1, header, decodedPayload, sizeof(decodedPayload));
+  expectTrue(result == ParseResult::OK && header.messageType == MSG_IMU_STATE,
+             "parseFrame accepts MSG_IMU_STATE (0x26) as a known type");
+
+  ImuState decoded{};
+  bool unpacked = unpackImuState(decodedPayload, header.payloadLength, decoded);
+  expectTrue(unpacked && decoded.sampleTimeUs == imu.sampleTimeUs &&
+                 decoded.gyroXRadps == imu.gyroXRadps && decoded.gyroZRadps == imu.gyroZRadps &&
+                 decoded.accelXMps2 == imu.accelXMps2 && decoded.accelYMps2 == imu.accelYMps2 &&
+                 decoded.temperatureCentiC == 3125 && decoded.statusFlags == IMU_STATUS_VALID,
+             "unpackImuState recovers original values");
+
+  // f32 바이트 순서가 Python struct '<f'와 같아야 한다: -0.125f == 0xBE000000.
+  size_t offset = 8;
+  uint32_t gyroXBits = readU32LE(payload, offset);
+  expectTrue(gyroXBits == 0xBE000000u, "packImuState writes IEEE-754 binary32 little-endian");
+
+  expectTrue(!unpackImuState(decodedPayload, IMU_STATE_BYTES - 1, decoded),
+             "unpackImuState rejects a short payload");
+}
+
 void testSequenceWraparound() {
   expectTrue(isSequenceNewer(5, 4), "sequence 5 is newer than 4");
   expectTrue(!isSequenceNewer(4, 5), "sequence 4 is not newer than 5");
@@ -127,6 +172,7 @@ int main() {
   testCobsRoundTrip("110022", "02110222", "cobs embedded zero byte");
   testCobsRoundTrip("0000", "010101", "cobs two consecutive zero bytes");
   testFrameRoundTrip();
+  testImuStateRoundTrip();
   testSequenceWraparound();
 
   if (failureCount == 0) {

@@ -54,12 +54,18 @@ void writeU16LE(uint8_t* buf, size_t& offset, uint16_t v);
 void writeI16LE(uint8_t* buf, size_t& offset, int16_t v);
 void writeU32LE(uint8_t* buf, size_t& offset, uint32_t v);
 void writeI32LE(uint8_t* buf, size_t& offset, int32_t v);
+void writeU64LE(uint8_t* buf, size_t& offset, uint64_t v);
+// IEEE-754 binary32 리틀엔디안. ESP32(xtensa)와 Jetson(aarch64) 모두 IEEE-754 LE라
+// 비트 패턴을 그대로 옮긴다(Python 쪽 struct '<f'와 동일).
+void writeF32LE(uint8_t* buf, size_t& offset, float v);
 
 uint8_t readU8(const uint8_t* buf, size_t& offset);
 uint16_t readU16LE(const uint8_t* buf, size_t& offset);
 int16_t readI16LE(const uint8_t* buf, size_t& offset);
 uint32_t readU32LE(const uint8_t* buf, size_t& offset);
 int32_t readI32LE(const uint8_t* buf, size_t& offset);
+uint64_t readU64LE(const uint8_t* buf, size_t& offset);
+float readF32LE(const uint8_t* buf, size_t& offset);
 
 // ==== 페이로드 (docs/03-제어-캘리브레이션.md §34-5 확정분) ====
 
@@ -123,6 +129,24 @@ struct ProximityState {
 constexpr size_t PROXIMITY_STATE_BYTES = 6;
 size_t packProximityState(const ProximityState& in, uint8_t* out);
 bool unpackProximityState(const uint8_t* payload, uint16_t len, ProximityState& out);
+
+// sampleTimeUs는 센서 ESP32의 monotonic 측정 시각(µs)이다. Jetson은 수신 시각으로
+// 대신하지 않고 이 값을 ROS timestamp로 변환해 쓴다(§34-5). 자세 추정은 하지 않고
+// 원시 gyro/accel만 보낸다. 축은 REP-103(x 전방, y 좌측, z 상방) 기준으로 정렬해 보낸다.
+struct ImuState {
+  uint64_t sampleTimeUs;
+  float gyroXRadps;
+  float gyroYRadps;
+  float gyroZRadps;
+  float accelXMps2;
+  float accelYMps2;
+  float accelZMps2;
+  int16_t temperatureCentiC;  // 미지원/무효 시 IMU_TEMPERATURE_INVALID
+  uint16_t statusFlags;       // ImuStatusFlag 비트합
+};
+constexpr size_t IMU_STATE_BYTES = 36;
+size_t packImuState(const ImuState& in, uint8_t* out);
+bool unpackImuState(const uint8_t* payload, uint16_t len, ImuState& out);
 
 // ==== 페이로드 (문서에 없어 이번 작업에서 신규 확정, README 참고) ====
 

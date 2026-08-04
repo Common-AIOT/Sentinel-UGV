@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 
 import com.sentinel.backend.messaging.dto.InteractionReportData;
 import com.sentinel.backend.messaging.dto.MessageEnvelope;
+import com.sentinel.backend.realtime.RealtimeBroadcaster;
 
 /**
  * 음성 상호작용 보고를 이벤트 원문과 encounter 요약에 저장한다 (S15P11A301-159).
@@ -39,9 +40,11 @@ public class InteractionReportWriter {
             """;
 
     private final JdbcTemplate jdbc;
+    private final RealtimeBroadcaster broadcaster;
 
-    public InteractionReportWriter(JdbcTemplate jdbc) {
+    public InteractionReportWriter(JdbcTemplate jdbc, RealtimeBroadcaster broadcaster) {
         this.jdbc = jdbc;
+        this.broadcaster = broadcaster;
     }
 
     public void write(MessageEnvelope envelope, InteractionReportData data) {
@@ -67,7 +70,7 @@ public class InteractionReportWriter {
         InteractionReportData.RiskAssessment risk = data.riskAssessment();
         InteractionReportData.SessionReport report = data.sessionReport();
         Instant occurredAt = data.endedAt() != null ? data.endedAt() : envelope.sentAt();
-        jdbc.update(
+        int inserted = jdbc.update(
                 INSERT_EVENT,
                 missionId,
                 envelope.messageId(),
@@ -84,6 +87,15 @@ public class InteractionReportWriter {
         if (updated == 0) {
             log.warn("encounter 없이 온 음성 보고 (encounterId={}, interactionId={})",
                     data.encounterId(), data.interactionId());
+        }
+
+        // DB 반영 직후 관제로 신호(S15P11A301-243). 게이트는 events INSERT 결과다 —
+        // encounter UPDATE 는 QoS 1 중복 수신에도 매번 돌아서 기준이 못 된다.
+        // 중복이 걸러졌으면(inserted 0) 신호도 없다. encounter 가 없으면(updated 0)
+        // 재조회할 상세도 없으므로 보내지 않는다.
+        if (inserted > 0 && updated > 0) {
+            broadcaster.interactionReported(missionId, data.encounterId(),
+                    occurredAt != null ? occurredAt : Instant.now());
         }
     }
 

@@ -54,6 +54,15 @@ def main():
     SKIP_FILE.touch(exist_ok=True)
     skip = set(SKIP_FILE.read_text().split())
 
+    # 백엔드가 내려가 있으면(배포 중 등) 한 줄만 남기고 빠진다 — 다음 주기가 재시도한다.
+    try:
+        return scan(skip)
+    except urllib.error.URLError as e:
+        print(f"[scan] API 접근 실패 — 다음 주기에 재시도: {e}", flush=True)
+        return 1
+
+
+def scan(skip):
     for mission in get("/api/v1/missions"):
         for enc in get(f"/api/v1/missions/{mission['id']}/encounters"):
             eid = enc["id"]

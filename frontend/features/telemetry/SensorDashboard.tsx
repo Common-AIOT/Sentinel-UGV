@@ -61,15 +61,15 @@ function CompactSensor({ icon, label, value, unit, warn }: CompactSensorProps) {
 }
 
 export default function SensorDashboard() {
-  const { sensors, missionId } = useRobot();
+  const { sensors } = useRobot();
   const temp = readTemperature(sensors.temperature);
   const humidity = readHumidity(sensors.humidity);
   const noReading = sensors.temperature === null && sensors.humidity === null;
 
   // 결측의 이유를 한 줄로 — 값이 없을 때 화면이 침묵하면 고장인지 대기인지 알 수 없다.
+  // 대기 중에도 최신값(/telemetry/latest)을 폴링하므로(#255) 임무 여부는 따지지 않는다.
   const note =
-    !missionId ? "대기 중 — 임무 중에 실측값이 표시됩니다"
-    : sensors.mcuConnected === false ? "센서 보드(MCU) 연결 끊김"
+    sensors.mcuConnected === false ? "센서 보드(MCU) 연결 끊김"
     : noReading && sensors.mcuConnected === true ? "보드 연결됨 · 센서 응답 없음"
     : noReading ? "측정값 수신 대기 중"
     // 포화는 결측이 아니라 "센서 한계"다. 부등호만 보면 배선 문제로 오해한다.

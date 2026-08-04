@@ -121,6 +121,13 @@ export interface TelemetryPoint {
   memory: number | null;
   jetsonTemp: number | null;
   battery: number | null;
+  /** 이하 #205 — null 은 그 구간에 측정값이 없었다는 뜻(결측)이고 0 과 다르다. */
+  temperature: number | null;
+  humidity: number | null;
+  linearVelocity: number | null;
+  angularVelocity: number | null;
+  /** 구간 bool_and — 한 번이라도 끊겼으면 false, 보고가 없었으면 null. */
+  mcuConnected: boolean | null;
 }
 
 export interface MapView {
@@ -194,8 +201,9 @@ export const api = {
       `/api/v1/missions/${missionId}/trajectory${maxPoints ? `?maxPoints=${maxPoints}` : ""}`,
     ),
 
-  missionTelemetry: (missionId: string, bucketSeconds = 10) =>
+  missionTelemetry: (missionId: string, bucketSeconds = 10, from?: string) =>
     request<TelemetryPoint[]>(
-      `/api/v1/missions/${missionId}/telemetry?bucketSeconds=${bucketSeconds}`,
+      `/api/v1/missions/${missionId}/telemetry?bucketSeconds=${bucketSeconds}`
+        + (from ? `&from=${encodeURIComponent(from)}` : ""),
     ),
 };

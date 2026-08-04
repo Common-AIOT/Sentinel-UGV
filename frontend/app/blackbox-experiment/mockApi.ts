@@ -106,6 +106,12 @@ const TELEMETRY: TelemetryPoint[] = Array.from({ length: 40 }, (_, i) => ({
   memory: 52 + 6 * Math.abs(Math.sin(i / 7)),
   jetsonTemp: 48 + 4 * Math.abs(Math.cos(i / 6)),
   battery: 100 - i * 0.8,
+  // #205 추가 필드 — 이 실험판 그래프는 안 쓰므로 결측으로 둔다.
+  temperature: null,
+  humidity: null,
+  linearVelocity: null,
+  angularVelocity: null,
+  mcuConnected: null,
 }));
 
 const delay = <T,>(value: T, ms = 120): Promise<T> =>

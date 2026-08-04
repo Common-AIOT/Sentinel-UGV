@@ -4,19 +4,15 @@ import { Thermometer, Droplets } from "lucide-react";
 import { useRobot } from "@/features/robot/RobotContext";
 
 /**
- * 환경 센서 패널.
+ * 환경 센서 패널 — DHT11 실측(#205). 임무 중 텔레메트리 최신 버킷을 폴링한다.
  *
- * 배터리를 뺐다 (S15P11A301-200). 잔량을 현실적으로 계측할 수단이 없다 —
- * telemetry의 battery는 ESP32 연동(S15P11A301-174) 의존이고 cloud_bridge가
- * null로 보내며, 조회 API의 battery도 항상 null이다. 게이지와 임계선을 두면
- * 없는 값을 있는 것처럼 보여준다.
+ * null 은 "모름"이고 0 은 값이다(젯슨 계약) — 값이 없으면 —(결측)로 보여주고,
+ * MCU 연결 상태로 "보드가 빠졌나(연결 문제)"와 "온습도만 비었나(센서 문제)"를
+ * 가른다. 그럴싸한 난수를 보여주던 목업은 뺐다.
  *
- * 명세 23.4의 "배터리 20% 이하 탐사 종료"는 그대로 유효하다. 그 판단은 로봇이
- * 하고 화면은 결과(종료 사유)를 받는다 — 화면에서 잔량을 안 보여주는 것과
- * 종료 조건이 없는 것은 다르다.
- *
- * 온습도는 DHT11 실측이 들어올 예정이다(ESP32 연동 커밋 대기). 그때까지 값은
- * 목업이고, 배선은 cloud_bridge의 environment=None을 채우는 것부터다.
+ * 배터리를 뺐다 (S15P11A301-200). 전압 계측이 없어(#174) telemetry battery 가
+ * 항상 null 이다. 게이지를 두면 없는 값을 있는 것처럼 보여준다. 명세 23.4의
+ * "배터리 20% 이하 탐사 종료"는 로봇이 판단하고 화면은 결과를 받는다.
  */
 
 interface CompactSensorProps {
@@ -50,9 +46,18 @@ function CompactSensor({ icon, label, value, unit, warn }: CompactSensorProps) {
 }
 
 export default function SensorDashboard() {
-  const { sensors } = useRobot();
-  const tempWarn = sensors.temperature > 40 || sensors.temperature < 5;
-  const humWarn = sensors.humidity > 85;
+  const { sensors, missionId } = useRobot();
+  const tempWarn = sensors.temperature !== null && (sensors.temperature > 40 || sensors.temperature < 5);
+  const humWarn = sensors.humidity !== null && sensors.humidity > 85;
+  const noReading = sensors.temperature === null && sensors.humidity === null;
+
+  // 결측의 이유를 한 줄로 — 값이 없을 때 화면이 침묵하면 고장인지 대기인지 알 수 없다.
+  const note =
+    !missionId ? "대기 중 — 임무 중에 실측값이 표시됩니다"
+    : sensors.mcuConnected === false ? "센서 보드(MCU) 연결 끊김"
+    : noReading && sensors.mcuConnected === true ? "보드 연결됨 · 센서 응답 없음"
+    : noReading ? "측정값 수신 대기 중"
+    : null;
 
   return (
     <div className="p-3.5 space-y-2.5">
@@ -61,18 +66,23 @@ export default function SensorDashboard() {
         <CompactSensor
           icon={<Thermometer size={12} />}
           label="온도"
-          value={sensors.temperature.toFixed(1)}
+          value={sensors.temperature === null ? "—" : sensors.temperature.toFixed(1)}
           unit="°C"
           warn={tempWarn}
         />
         <CompactSensor
           icon={<Droplets size={12} />}
           label="습도"
-          value={sensors.humidity.toFixed(1)}
+          value={sensors.humidity === null ? "—" : sensors.humidity.toFixed(1)}
           unit="%"
           warn={humWarn}
         />
       </div>
+      {note && (
+        <p className={`text-[11px] ${sensors.mcuConnected === false ? "text-accent" : "text-muted-foreground"}`}>
+          {note}
+        </p>
+      )}
     </div>
   );
 }

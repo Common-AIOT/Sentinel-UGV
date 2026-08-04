@@ -3,7 +3,6 @@
 import React, { createContext, useContext, useEffect, useRef, useState, useCallback } from "react";
 import {
   INITIAL_SENSORS,
-  BATTERY_ABORT_PCT,
   type SensorReading,
   type DetectionEvent,
   type RobotStatus,
@@ -20,8 +19,8 @@ import {
 } from "@/lib/realtime";
 import type { Client, StompSubscription } from "@stomp/stompjs";
 
-// 명령·조회는 실 API(@/lib/api)를 쓴다. 지도 격자와 환경 센서는 서버 계약이 아직
-// 없으므로(S15P11A301-169 결정) 목 시뮬레이션을 유지한다.
+// 명령·조회는 실 API(@/lib/api)를 쓴다. 온습도·MCU 도 실측 텔레메트리다(#205).
+// 남은 목은 접속 연출(1초 뒤 connected)과 lidar·camera 건강 표시 정도다.
 export const USE_MOCK = true;
 
 /** 확정 로봇 이름 (mqtt-setup·mvp-week-plan). */
@@ -115,7 +114,8 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
         // 새로고침 복구가 먼저 활성 임무를 이어받았으면 그 상태를 덮지 않는다.
         missionState: missionIdRef.current ? s.missionState : "SAFE_IDLE",
         safetyState: "READY",
-        health: { mcuConnected: true, lidarOk: true, cameraOk: true },
+        // mcuConnected 는 이제 실측(#205 센서 폴링)만 쓴다 — 목으로 꾸미지 않는다.
+        health: { ...s.health, lidarOk: true, cameraOk: true },
       }));
       if (!missionIdRef.current) mockMission.current = "SAFE_IDLE";
     }, 1000);
@@ -139,24 +139,10 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
     //
     // 종료 조건 판단은 로봇이 한다(명세 23.4). 화면은 결과를 받는다.
 
-    // Sensor updates — 2s
-    const sensorTimer = setInterval(() => {
-      setSensors(s => {
-        const next = {
-          temperature: +(s.temperature + (Math.random() - 0.5) * 0.4).toFixed(1),
-          humidity: +(Math.max(30, Math.min(95, s.humidity + (Math.random() - 0.5) * 1.2))).toFixed(1),
-          battery: +(Math.max(0, s.battery - 0.02)).toFixed(1),
-          co2: Math.round(s.co2 + (Math.random() - 0.5) * 5),
-          timestamp: Date.now(),
-        };
-        // 명세 23.4: 배터리 20% 이하는 탐사 종료 조건이다. (목 전용 — 실 임무는 로봇 판단)
-        if (next.battery <= BATTERY_ABORT_PCT && mockMission.current === "EXPLORING" && !missionIdRef.current) {
-          mockMission.current = "RETURNING";
-          setStatus(st => ({ ...st, missionState: "RETURNING" }));
-        }
-        return next;
-      });
-    }, 2000);
+    // 2초 난수 센서 목업을 걷어냈다 (S15P11A301-205). 온습도는 이제 실측
+    // 텔레메트리(아래 폴링)가 유일한 출처다 — 실값이 없으면 결측(—)으로 보이는
+    // 것이 맞고, 그럴싸한 난수는 데모에서 실측과 구분이 안 된다.
+    // 배터리 20% 자동 복귀 목업도 함께 뺐다 — 판단은 로봇이 한다(23.4).
 
     // 가짜 탐지 생성기는 뺐다 (S15P11A301-196). 배지의 탐지 수는 실 임무의
     // encounter 폴링(아래)만 채운다 — 목업 숫자가 섞이면 데모에서 실제 발견과
@@ -165,9 +151,50 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
 
     return () => {
       clearTimeout(connectTimer);
-      clearInterval(sensorTimer);
     };
   }, []);
+
+  // ── 센서 실측 폴링 (S15P11A301-205) ─────────────────────────────────────
+  // 임무 중에만 값이 있다 — 텔레메트리 조회가 임무 단위라서다. 최근 60초 창의
+  // 마지막 버킷을 현재값으로 쓴다. null 은 그대로 결측으로 넘긴다(0 변환 금지).
+  useEffect(() => {
+    if (!missionId) {
+      setSensors(INITIAL_SENSORS); // 임무가 없으면 "모름"으로 되돌린다.
+      return;
+    }
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const from = new Date(Date.now() - 60_000).toISOString();
+        const points = await api.missionTelemetry(missionId, 10, from);
+        if (cancelled) return;
+        if (points.length === 0) {
+          // 60초 넘게 보고가 없으면 마지막 값을 붙들지 않는다 — 죽은 센서를
+          // 살아 있는 것처럼 보여주지 않는다(젯슨의 6초 null 규칙과 같은 원칙).
+          setSensors(INITIAL_SENSORS);
+          setStatus(s => ({ ...s, health: { ...s.health, mcuConnected: null } }));
+          return;
+        }
+        const last = points[points.length - 1];
+        setSensors({
+          temperature: last.temperature,
+          humidity: last.humidity,
+          mcuConnected: last.mcuConnected,
+          updatedAt: Date.parse(last.time),
+        });
+        // MCU 연결은 상태판 건강 표시와도 같은 사실이어야 한다.
+        setStatus(s => ({
+          ...s,
+          health: { ...s.health, mcuConnected: last.mcuConnected },
+        }));
+      } catch {
+        // 일시적 오류는 다음 폴링에 맡긴다. 마지막 표시값은 유지된다.
+      }
+    };
+    void poll(); // 임무 진입 즉시 한 번 — 첫 5초를 결측으로 비워두지 않는다.
+    const timer = setInterval(poll, 5000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [missionId]);
 
   const sendControl = useCallback((x: number, y: number) => {
     if (USE_MOCK) return; // mock: robot moves on its own

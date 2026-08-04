@@ -17,7 +17,8 @@ import jakarta.validation.constraints.Size;
  *
  * @param encounterId 이 미디어가 속한 encounter
  * @param mediaId     젯슨이 만든 미디어 식별자. 재시도에도 같은 값이라 중복 등록을 막는다(31-10)
- * @param kind        EVENT_VIDEO 또는 THUMBNAIL. 이벤트 하나에 두 객체가 따로 올라온다
+ * @param kind        EVENT_VIDEO·THUMBNAIL·EVENT_AUDIO_DENOISED(#228 잡음 제거 오디오).
+ *                    이벤트 하나에 kind 별 객체가 따로 올라온다
  * @param fileName    원본 파일명
  * @param sizeBytes   업로드할 바이트 수. 완료 시점에 실제 크기와 비교한다
  * @param sha256      파일의 SHA-256 소문자 16진수
@@ -27,7 +28,7 @@ import jakarta.validation.constraints.Size;
 public record UploadUrlRequest(
         @NotNull UUID encounterId,
         @NotNull UUID mediaId,
-        @NotBlank @Pattern(regexp = "EVENT_VIDEO|THUMBNAIL") String kind,
+        @NotBlank @Pattern(regexp = "EVENT_VIDEO|THUMBNAIL|EVENT_AUDIO_DENOISED") String kind,
         @NotBlank @Size(max = 255) String fileName,
         @NotNull @PositiveOrZero Long sizeBytes,
         @NotBlank @Pattern(regexp = "^[0-9a-f]{64}$") String sha256,

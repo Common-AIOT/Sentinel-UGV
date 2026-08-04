@@ -29,7 +29,7 @@
     },
     "kind": {
       "type": ["string", "null"],
-      "enum": ["EVENT_VIDEO", "THUMBNAIL", null]
+      "enum": ["EVENT_VIDEO", "THUMBNAIL", "EVENT_AUDIO_DENOISED", null]
     },
     "durationSeconds": {
       "description": "영상 길이. 썸네일이면 null이다. 관제 목록에 표시한다.",

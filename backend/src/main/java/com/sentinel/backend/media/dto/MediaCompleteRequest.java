@@ -23,7 +23,7 @@ import jakarta.validation.constraints.Size;
  * @param objectKey       발급 응답에서 받은 값을 그대로 돌려준다
  * @param sizeBytes       실제로 올린 바이트 수. 스토리지 실물과 비교한다
  * @param sha256          발급 요청 때와 같은 체크섬. 저장해 두고 나중에 무결성 검증에 쓴다
- * @param kind            EVENT_VIDEO 또는 THUMBNAIL (선택)
+ * @param kind            EVENT_VIDEO·THUMBNAIL·EVENT_AUDIO_DENOISED (선택)
  * @param durationSeconds 영상 길이. 썸네일이면 null
  * @param recorded        녹화 구간 메타데이터 (선택)
  */
@@ -32,7 +32,7 @@ public record MediaCompleteRequest(
         @NotBlank @Size(max = 512) String objectKey,
         @NotNull @PositiveOrZero Long sizeBytes,
         @NotBlank @Pattern(regexp = "^[0-9a-f]{64}$") String sha256,
-        @Pattern(regexp = "EVENT_VIDEO|THUMBNAIL") String kind,
+        @Pattern(regexp = "EVENT_VIDEO|THUMBNAIL|EVENT_AUDIO_DENOISED") String kind,
         @PositiveOrZero Double durationSeconds,
         Recorded recorded
 ) {

@@ -164,13 +164,19 @@ public class MediaService {
         String fileName = switch (kind) {
             case "EVENT_VIDEO" -> "event.mp4";
             case "THUMBNAIL" -> "thumbnail.jpg";
+            // 잡음 제거 오디오(S15P11A301-228). 원본 오디오에서 파생 — 원본이 증거, 이건 청취 보조.
+            case "EVENT_AUDIO_DENOISED" -> "event-denoised.m4a";
             default -> throw new IllegalArgumentException("지원하지 않는 kind: " + kind);
         };
         return "missions/%s/encounters/%s/%s".formatted(missionId, encounterId, fileName);
     }
 
     private String contentType(String kind) {
-        return "EVENT_VIDEO".equals(kind) ? "video/mp4" : "image/jpeg";
+        return switch (kind) {
+            case "EVENT_VIDEO" -> "video/mp4";
+            case "EVENT_AUDIO_DENOISED" -> "audio/mp4";
+            default -> "image/jpeg";
+        };
     }
 
     private void verifyUploaded(String objectKey, long expectedSize) {

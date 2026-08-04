@@ -29,7 +29,8 @@
       "type": "string",
       "enum": [
         "EVENT_VIDEO",
-        "THUMBNAIL"
+        "THUMBNAIL",
+        "EVENT_AUDIO_DENOISED"
       ]
     },
     "fileName": {

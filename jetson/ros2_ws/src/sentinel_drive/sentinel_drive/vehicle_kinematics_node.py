@@ -22,6 +22,7 @@ import json
 
 import rclpy
 from geometry_msgs.msg import Twist
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from std_msgs.msg import String
 
@@ -92,16 +93,24 @@ def main() -> None:
     node = VehicleKinematicsNode()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
+        # SIGINT 는 KeyboardInterrupt, SIGTERM 은 rclpy 시그널 핸들러가 컨텍스트를
+        # 내리며 ExternalShutdownException 을 던진다. 후자를 안 잡으면 systemd·
+        # demo_down 의 정상 종료가 traceback + 비정상 종료 코드로 남는다 —
+        # Nav2 실기동 스모크(S15P11A301-235)에서 실제로 그랬다.
         pass
     finally:
         # 마지막 명령과 무관하게 0 을 보내고 나간다 (14.7 프로그램 종료 안전).
+        # SIGTERM 경로에서는 컨텍스트가 이미 죽어 발행이 실패할 수 있는데, 그때는
+        # ESP32 의 300ms watchdog 이 정지를 담보한다(층이 두 개인 이유).
         try:
             node._publish(stop_command(mode=node.get_parameter('mode').value))
         except Exception:  # noqa: BLE001 — 종료 경로에서는 실패해도 계속 내려간다
             pass
         node.destroy_node()
-        rclpy.shutdown()
+        # shutdown() 은 이미 내려간 컨텍스트에서 RCLError 를 던진다.
+        # try_shutdown() 은 살아 있을 때만 내린다 — 이중 호출에 안전하다.
+        rclpy.try_shutdown()
 
 
 if __name__ == '__main__':

@@ -145,12 +145,16 @@ export default function VideoPanel({ isMain = false, onSwap }: VideoPanelProps) 
 
   const showVideo = status.state === "LIVE" || status.state === "DEGRADED";
 
+  // 사이드바 슬롯일 때 고정 높이(180px)를 쓰지 않는다 (S15P11A301-259).
+  // 미니맵 슬롯이 148px 이라 같은 자리인데 높이가 달랐고, 사이드바 폭을 바꾸면
+  // 두 숫자를 따로 고쳐야 했다. `aspect-video` 는 폭에서 높이를 유도한다 —
+  // page.tsx 의 SLOT_CLASS 와 같은 비율이며, 숫자가 아니라 비율이므로 두 곳에
+  // 있어도 어긋나지 않는다.
   return (
     <div
       className={`relative bg-[#10161d] border-b border-border flex-shrink-0 group ${
-        isMain ? "flex-1 min-h-0" : ""
+        isMain ? "flex-1 min-h-0" : "w-full aspect-video"
       }`}
-      style={isMain ? {} : { height: 180 }}
     >
       <video
         ref={attachVideo}

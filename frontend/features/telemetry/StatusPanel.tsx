@@ -1,6 +1,6 @@
 "use client";
 
-import { Navigation, CornerUpLeft, ShieldAlert, Pause } from "lucide-react";
+import { Navigation, CornerUpLeft, ShieldAlert, Pause, Smartphone } from "lucide-react";
 import { useRobot } from "@/features/robot/RobotContext";
 import type { MissionState } from "@/features/robot/mockData";
 import { toast } from "sonner";
@@ -58,6 +58,14 @@ export default function StatusPanel() {
 
   const inEncounter = ENCOUNTER_PHASES.includes(missionState);
   const danger = missionState === "ESTOP" || missionState === "ERROR";
+  // 수동에서는 자율 명령을 내보내지 않는다 (S15P11A301-259).
+  //
+  // 모바일 앱은 모터 ESP32 에 직접 붙어 조종하고 젯슨을 거치지 않는다(ModeRow
+  // 참고). 그래서 수동 중에 「탐사 재개」나 「복귀」를 누르면 앱과 자율이 같은
+  // 모터를 동시에 민다 — 수동 진입이 PAUSE 를 먼저 보내는 이유가 그것이다.
+  // 버튼을 비활성으로 두지 않고 **숨기는** 쪽을 골랐다. 회색 버튼은 "지금은
+  // 안 되지만 여기서 하는 것" 으로 읽히는데, 여기서는 아예 하지 않는다.
+  const manual = controlMode === "MANUAL";
 
   const handleCommand = async (type: string, label: string) => {
     try {
@@ -119,8 +127,10 @@ export default function StatusPanel() {
         <p className="text-[11px] text-accent">탐사 일시정지 · 피해자 확인 절차 진행 중</p>
       )}
 
-      {/* 복귀 경로 실패 등으로 PAUSED가 되면 관제가 복구를 지시해야 한다(23.5). */}
-      {missionState === "PAUSED" && (
+      {/* 복귀 경로 실패 등으로 PAUSED가 되면 관제가 복구를 지시해야 한다(23.5).
+          수동에서는 내보내지 않는다 — 수동 진입이 PAUSE 를 보내므로 수동은 항상
+          PAUSED 이고, 이 안내가 가리키는 두 버튼이 아래에서 사라진다. */}
+      {!manual && missionState === "PAUSED" && (
         <div className="flex items-start gap-1.5 rounded border border-accent/30 bg-accent/5 px-2.5 py-2">
           <Pause size={12} className="text-accent flex-shrink-0 mt-0.5" />
           <p className="text-[11px] text-accent leading-snug">
@@ -160,6 +170,21 @@ export default function StatusPanel() {
           했다. 실데이터가 오면 큰 타일이 아니라 영상 좌측 상단 오버레이 줄에
           한 줄로 넣는다 — 그쪽이 "관측값" 형식이다. */}
 
+      {manual ? (
+        <div className="flex items-start gap-1.5 rounded border border-info/30 bg-info/5 px-2.5 py-2">
+          <Smartphone size={12} className="text-info flex-shrink-0 mt-0.5" />
+          <div className="min-w-0 space-y-1">
+            <p className="text-[11px] text-info leading-snug font-medium">
+              모바일 앱에서 조종합니다
+            </p>
+            <p className="text-[11px] text-muted-foreground leading-snug">
+              관제 웹에는 조종 입력이 없습니다. 탐사·복귀를 지시하려면 위 「자율」로
+              먼저 되돌리세요 — 모드를 되돌려도 주행은 재개되지 않고, 재개는 그
+              뒤에 「탐사 재개」로 지시합니다.
+            </p>
+          </div>
+        </div>
+      ) : (
       <div className="space-y-1.5">
         <button
           onClick={() => handleCommand("explore", "탐사 시작")}
@@ -188,6 +213,7 @@ export default function StatusPanel() {
           베이스캠프 복귀
         </button>
       </div>
+      )}
     </div>
   );
 }

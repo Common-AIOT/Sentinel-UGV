@@ -158,7 +158,8 @@ interface PoseText {
   bearing: string;
 }
 
-/** `full` 은 메인 영역, `compact` 는 사이드바 148px 슬롯이다. */
+/** `full` 은 메인 영역, `compact` 는 사이드바 슬롯이다. 둘 다 16:9 상자이며
+ *  높이는 폭에서 유도된다(S15P11A301-259, `page.tsx` 의 `SLOT_CLASS`). */
 export default function LiveMap({
   variant = "compact",
 }: { variant?: "compact" | "full" } = {}) {

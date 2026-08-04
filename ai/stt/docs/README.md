@@ -1081,7 +1081,8 @@ python -m bench.gms_model_bench --models <목록> --runs 2 --confirm-live
 | 항목 | 왜 남았나 |
 |---|---|
 | **C 무응답 경로 (`anyResponseDetected=false`)** | **결과가 가장 무거운 경로인데 미검증** (§11-3) |
-| STT WER · 핵심 표현 보존율 | 라벨 데이터셋 확보 중 (Jira 232) → 측정·판정은 120. 직접 녹음 대신 KsponSpeech(AI Hub) 채택 |
+| ~~STT WER (공개 코퍼스)~~ | **측정됨** — KsponSpeech `eval_clean` 2,471발화. clean CER 0.141 → SNR 0dB 0.366. `measurements/STT-오류율-실측.md` |
+| STT WER · 핵심 표현 보존율 (**우리 도메인**) | 위 값은 일상 대화다. 우리 마이크·어휘·약한 발화는 빠져 있어 실전 정확도가 아니다. 도메인 녹음 필요 (Jira 120) |
 | GMS 왕복 지연 P50/P95 · 일관성 | bench 재실행 |
 | **통합 구동 (비전+SLAM 동시)** | **가장 중요.** 안전 게이트 §9-5 |
 | `jetson_clocks` 적용 상태 재측정 | sudo 권한 필요 |

@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { ChevronLeft, Play, Film, User, MapPin, Clock } from "lucide-react";
+import { ChevronLeft, Play, Film, User, MapPin, Clock, Volume2, VolumeX } from "lucide-react";
 import {
   api,
   type EncounterDetail,
@@ -20,6 +20,9 @@ import MissionMap from "@/features/mapping/MissionMap";
  * durationSec·distanceM·detectionCount 는 임무가 끝난 뒤 서버가 집계한다(#166).
  * 진행 중이거나 집계 이전 임무는 null 이므로 "—" 로 보여준다.
  */
+
+/** 잡음 제거 오디오 kind (#228 계약). 원본 오디오의 파생물 — 원본이 증거다. */
+const DENOISED_AUDIO_TYPE = "EVENT_AUDIO_DENOISED";
 
 const MISSION_STATUS_LABEL: Record<string, string> = {
   CREATED: "대기",
@@ -77,6 +80,12 @@ export default function MissionHistoryPage() {
   const [videoError, setVideoError] = useState<string | null>(null);
   const [telemetry, setTelemetry] = useState<TelemetryPoint[]>([]);
 
+  // ── 소음 제거본 토글 — 상태 (S15P11A301-229, 실험판 이관) ────────────────
+  const [denoisedUrl, setDenoisedUrl] = useState<string | null>(null);
+  const [denoised, setDenoised] = useState(false);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
   useEffect(() => {
     api
       .missions()
@@ -117,6 +126,9 @@ export default function MissionHistoryPage() {
   const openEncounter = useCallback(async (enc: EncounterSummary) => {
     setVideoUrl(null);
     setVideoError(null);
+    // ── 소음 제거본 토글 — 발견을 바꾸면 초기화한다 ──────────────
+    setDenoisedUrl(null);
+    setDenoised(false);
     try {
       const d = await api.encounterDetail(enc.id);
       setDetail(d);
@@ -133,10 +145,75 @@ export default function MissionHistoryPage() {
       }
       const { url } = await api.mediaViewUrl(video.mediaId);
       setVideoUrl(url);
+
+      // ── 소음 제거본 토글 — 있으면 링크를 받아 둔다 ────────────
+      // 없으면 토글 자체를 그리지 않는다. 워커 배포 전에도 화면이 깨지지 않는다.
+      const denoisedAsset = d.media.find(
+        m => m.type === DENOISED_AUDIO_TYPE && m.storageStatus === "AVAILABLE",
+      );
+      if (denoisedAsset) {
+        try {
+          const audio = await api.mediaViewUrl(denoisedAsset.mediaId);
+          setDenoisedUrl(audio.url);
+        } catch {
+          // 제거본 실패는 영상 재생을 막지 않는다. 원본이 증거고 제거본은 보조다.
+          setDenoisedUrl(null);
+        }
+      }
     } catch (e) {
       setVideoError(e instanceof Error ? e.message : "영상을 불러오지 못했습니다");
     }
   }, []);
+
+  // ── 소음 제거본 토글 — 영상과 오디오 동기 ──────────────────────
+  // 제거본은 원본 오디오의 파생물이라 길이가 같다. 아래는 재생 상태를 맞추는 것뿐이다.
+  useEffect(() => {
+    const video = videoRef.current;
+    const audio = audioRef.current;
+    if (!video || !audio) return;
+
+    video.muted = denoised;
+    if (denoised) {
+      audio.currentTime = video.currentTime;
+      audio.playbackRate = video.playbackRate;
+      if (!video.paused) void audio.play();
+    } else {
+      audio.pause();
+    }
+
+    const onPlay = () => {
+      if (!denoised) return;
+      audio.currentTime = video.currentTime;
+      void audio.play();
+    };
+    const onPause = () => audio.pause();
+    const onSeeked = () => {
+      if (denoised) audio.currentTime = video.currentTime;
+    };
+    const onRate = () => {
+      audio.playbackRate = video.playbackRate;
+    };
+
+    video.addEventListener("play", onPlay);
+    video.addEventListener("pause", onPause);
+    video.addEventListener("seeked", onSeeked);
+    video.addEventListener("ratechange", onRate);
+
+    // 드리프트 보정 — 0.15초 이상 벌어지면 맞춘다. 긴 영상에서 누적을 막는다.
+    const timer = setInterval(() => {
+      if (denoised && !video.paused && Math.abs(audio.currentTime - video.currentTime) > 0.15) {
+        audio.currentTime = video.currentTime;
+      }
+    }, 500);
+
+    return () => {
+      video.removeEventListener("play", onPlay);
+      video.removeEventListener("pause", onPause);
+      video.removeEventListener("seeked", onSeeked);
+      video.removeEventListener("ratechange", onRate);
+      clearInterval(timer);
+    };
+  }, [denoised, videoUrl, denoisedUrl]);
 
   return (
     <div className="h-screen w-screen flex flex-col overflow-hidden bg-background text-foreground">
@@ -201,14 +278,40 @@ export default function MissionHistoryPage() {
           {(videoUrl || videoError) && (
             <div className="flex-shrink-0 border-b border-border bg-[#141a22] p-4">
               <div className="flex gap-4">
-                <div className="flex-shrink-0 rounded border border-border overflow-hidden bg-black" style={{ width: 400, height: 225 }}>
-                  {videoUrl ? (
-                    <video src={videoUrl} controls autoPlay className="w-full h-full object-contain" />
-                  ) : (
-                    <div className="w-full h-full flex flex-col items-center justify-center gap-2">
-                      <Play size={24} className="text-muted-foreground/40" />
-                      <span className="font-mono text-[10px] text-muted-foreground">{videoError}</span>
-                    </div>
+                {/* ── 소음 제거본 토글 — 영상 아래에 조작부를 붙이려고 세로 묶음으로 감쌌다 ── */}
+                <div className="flex-shrink-0 flex flex-col gap-2">
+                  <div className="rounded border border-border overflow-hidden bg-black" style={{ width: 400, height: 225 }}>
+                    {videoUrl ? (
+                      <video ref={videoRef} src={videoUrl} controls autoPlay className="w-full h-full object-contain" />
+                    ) : (
+                      <div className="w-full h-full flex flex-col items-center justify-center gap-2">
+                        <Play size={24} className="text-muted-foreground/40" />
+                        <span className="font-mono text-[10px] text-muted-foreground">{videoError}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* ── 소음 제거본 토글 — 조작부. 제거본 자산이 있을 때만 그린다 ── */}
+                  {videoUrl && denoisedUrl && (
+                    <>
+                      <audio ref={audioRef} src={denoisedUrl} preload="auto" />
+                      <button
+                        onClick={() => setDenoised(v => !v)}
+                        className={`flex items-center justify-center gap-2 font-mono text-[11px] px-3 py-2 rounded border transition-colors ${
+                          denoised
+                            ? "border-primary/50 bg-primary/15 text-primary"
+                            : "border-border bg-secondary/30 text-muted-foreground hover:text-foreground"
+                        }`}
+                        title="영상은 그대로 두고 소리만 바꿉니다"
+                      >
+                        {denoised ? <Volume2 size={12} /> : <VolumeX size={12} />}
+                        {denoised ? "소음 제거본 재생 중 — 원본으로" : "소음 제거본으로 듣기"}
+                      </button>
+                      <p className="font-mono text-[9px] text-muted-foreground/70 leading-relaxed" style={{ width: 400 }}>
+                        제거본은 명료도 보조입니다. <span className="text-muted-foreground">원본이 증거</span>이며
+                        두드림·신음 같은 비언어 소리는 제거본에서 사라질 수 있습니다.
+                      </p>
+                    </>
                   )}
                 </div>
                 {detail && (

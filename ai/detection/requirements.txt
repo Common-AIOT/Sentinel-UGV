@@ -18,6 +18,35 @@ torchvision==0.26.0+cu128
 ultralytics
 opencv-python
 
+# BoT-SORT / ByteTrack association solver.
+# Ultralytics does not pull this in, but tracking raises ImportError without it.
+# Installed version on the development PC: 0.5.13
+lap
+
+# ReID inference (configs/tracker_*.yaml with_reid: True).
+# ONNX Runtime is used ONLY for the ReID model. Detect and Pose run on PyTorch,
+# so this is not needed when ReID is off.
+#
+# CPU vs GPU matters a lot here. ReID runs once per person per frame, so a CPU
+# fallback costs a large share of the frame budget. Verify with:
+#
+#     python -c "import onnxruntime as ort; print(ort.get_available_providers())"
+#
+# CUDAExecutionProvider or TensorrtExecutionProvider must appear.
+#
+# ⚠️ Jetson (aarch64) is intentionally excluded from the marker below.
+#    The PyPI `onnxruntime-gpu` wheel does not cover aarch64, and installing plain
+#    `onnxruntime` there would silently give a CPU-only build that looks fine but
+#    is slow. Install a JetPack-matched wheel from NVIDIA's Jetson index instead:
+#        https://elinux.org/Jetson_Zoo#ONNX_Runtime
+#
+#    Note the marker is `!= "aarch64"`, not `== "x86_64"`. Windows reports
+#    platform_machine as "AMD64" while Linux reports "x86_64", so an equality
+#    check on x86_64 silently skips the development PC.
+#
+#    Development PC has both `onnxruntime` and `onnxruntime-gpu` at 1.23.2.
+onnxruntime-gpu; platform_machine != "aarch64"
+
 # Versions retained from the existing shared environment
 numpy==1.26.4
 pillow==12.3.0

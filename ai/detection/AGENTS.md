@@ -1850,7 +1850,7 @@ AI-Hub 데이터가 끝내 확보되지 않아도 아래는 반드시 충족한�
 | 6 | `notebooks/` 디렉터리 용도 불명 | 경미 | 팀 | §8 |
 | 7 | **명세 이탈 2건(BoT-SORT, ReID) 미승인** | **팀 결정 필요** | 팀 | §0, §7.1 |
 | 8 | `../../docs/ai/detection/requirements.md`가 최초 초안 상태(클래스 4종) | 문서 정합 | ISSUE-01 | §6 |
-| 9 | `requirements.txt`에 `lap`·`onnxruntime` 미반영 | 재현성 | 사용자 승인 후 | §7 |
+| 9 | ~~`requirements.txt`에 `lap`·`onnxruntime` 미반영~~ → **2026-08-05 해결.** 단, **Jetson(aarch64)은 마커에서 제외**했다. PyPI `onnxruntime-gpu`가 aarch64를 지원하지 않아 그냥 넣으면 CPU 빌드가 조용히 깔린다. NVIDIA Jetson 인덱스에서 수동 설치해야 한다 | 부분 해결 | Jetson 담당 | §7 |
 | 10 | ~~자세 임계값이 실측 근거 없는 임의값~~ → **2026-08-05 부분 해결.** 자세·형상 임계값 5개 + 가중치 3개는 E-FPDS 정답 2,658건과 대조해 검증했다(쓰러짐 0.919 / 비쓰러짐 0.032로 분리). **변경 불필요** | 해결됨 | — | `docs/ai/detection/posture_threshold_calibration.md` |
 | 10b | **부동(inactivity) 신호 3개는 미검증** — `inactivity_boost`, `motion.still_ratio`, `motion.full_still_seconds`. E-FPDS가 정지 이미지라 측정에서 빠졌다. "가구 위에 누워도 미동 없으면 쓰러짐" 판단을 담당하므로 재난 시나리오에서 중요하다 | 신뢰도 | **영상 데이터 필요** | §15, 위 문서 4절 |
 | 11 | **Detect 상시 15FPS 미달** — Jetson 실측 9.45FPS(사람 4명, 스트리밍 동시 구동). 계측·벤치 도구는 준비 완료, **Jetson 실측 대기** | **성능 미달 확정** | ISSUE-06 | §7.2 |

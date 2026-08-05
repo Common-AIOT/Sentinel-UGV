@@ -191,6 +191,14 @@ class Transition:
     previous: MissionState | None = None
     reason: str = ''
     phase: Phase | None = None
+    # 이 전이가 가리키는 encounter. `phase` 가 있을 때만 채운다.
+    #
+    # 호출부(노드)가 발행 시점에 `machine.encounter` 를 다시 읽으면, 전이 도중에
+    # encounter 를 버리는 핸들러와 순서가 엉킨다 — 먼저 버리면 `encounterId` 가
+    # 빠진 채로 나가고 녹화기는 「진행 중 이벤트가 아니다」로 무시한다
+    # (S15P11A301-276). 전이가 대상을 들고 가면 그 위험이 없어지고, 핸들러는
+    # 발행 순서를 신경 쓰지 않고 정리할 수 있다.
+    encounter: 'Encounter | None' = None
     ignored_reason: str = ''
     # 거부 사유를 기계가 읽을 코드로도 남긴다. `ignored_reason`은 사람이 읽는
     # 문장이고 로그용이다. COMMAND_ACK 의 `reasonCode`가 이 값이며 관제가 그것으로
@@ -312,6 +320,9 @@ class MissionStateMachine:
             previous=previous,
             reason=reason,
             phase=phase,
+            # phase 가 있으면 대상 encounter 를 함께 실어 보낸다. 이 뒤에 핸들러가
+            # encounter 를 버려도 발행에 필요한 값은 전이가 들고 있다.
+            encounter=self.encounter if phase is not None else None,
         )
 
     def _ignore(self, reason: str, code: str | None = None) -> Transition:
@@ -321,6 +332,48 @@ class MissionStateMachine:
             ignored_reason=reason,
             reason_code=code,
         )
+
+    def _cut_encounter(self, now: datetime) -> Phase | None:
+        """진행 중 encounter 를 마감 신호와 함께 끊는다 (S15P11A301-276).
+
+        `Phase.ENDED` 를 반환하면 호출부가 그것을 전이에 실어 보내고, 노드가
+        `/perception/encounter` 로 발행해 녹화기가 `POST_RECORDING` 으로 넘어가
+        MP4 를 마감한다. encounter 가 없으면 `None` 을 돌려 아무것도 내지 않는다.
+
+        ## 왜 필요한가
+
+        종전에는 일시정지·종료가 encounter 를 그냥 버리거나 놔뒀고, 마감 신호가
+        나가지 않아 녹화기가 5분 `MAX_DURATION` 까지 돌았다. 실측: `REPORTING`
+        중에 관제 PAUSE 를 누르자 **92MB** 파일에 `endReason: MAX_DURATION` 이
+        남았다. 사람이 없는 구간까지 담겨 증빙 품질도 낮다.
+
+        녹화기가 상태 머신에 의존하지 않는 것은 설계 의도다(상한이 없으면 파일이
+        무한히 커진다). 그래서 상한은 옳고 **마감 신호를 제때 주지 않은 쪽이**
+        문제였다.
+
+        ## 순서가 중요하다
+
+        `ENDED` 를 만든 **뒤에** 버린다. 노드는 발행 시점에 `machine.encounter_id`
+        를 읽으므로(`_apply` → `_publish_encounter`), 먼저 버리면 `encounterId` 가
+        빠진 채로 나가고 녹화기는 「진행 중 이벤트가 아니다」로 무시한다.
+
+        그래서 여기서는 **버리지 않는다.** 버리는 것은 호출부 이후의 일이며, 지금은
+        `post_recording_started_at` 만 세워 녹화기 쪽 사후 창과 맞춘다
+        (`_dialogue_ended` 와 같은 형태다).
+        """
+        if self.encounter is None:
+            return None
+        self.encounter.post_recording_started_at = now
+        return Phase.ENDED
+
+    # ESTOP 은 여기 부르지 않는다 — 의도된 예외다 (S15P11A301-276).
+    #
+    # 비상 정지는 무언가 크게 잘못된 순간이고, 그 전후 영상이 길게 남는 것이
+    # 오히려 필요하다. 일시정지·종료는 "이 발견을 여기서 끝낸다"는 운영 판단이라
+    # 관측 구간만 남기는 것이 맞지만, 비상 정지는 원인 조사 대상이다.
+    #
+    # 그래서 ESTOP 에서는 encounter 가 살아 있고 녹화가 5분 상한까지 간다.
+    # 그것이 이 경로에서는 올바른 동작이다.
 
     def _clear_encounter(self) -> None:
         """현재 encounter와 그 encounter에 종속된 일회성 표시를 정리한다."""
@@ -518,7 +571,7 @@ class MissionStateMachine:
                 return self._ignore('이미 ESTOP latch 상태다')
             return self._estop(detail)
         if signal is Signal.SENSOR_FAULT:
-            return self._sensor_fault(detail)
+            return self._sensor_fault(now, detail)
 
         if self.state in {MissionState.ESTOP, MissionState.ERROR}:
             return self._ignore(
@@ -555,13 +608,24 @@ class MissionStateMachine:
         # 자기 타임아웃으로 끝낸다.
         return self._to(MissionState.ESTOP, f'ESTOP {detail}'.strip())
 
-    def _sensor_fault(self, detail: str) -> Transition:
+    def _sensor_fault(self, now: datetime, detail: str) -> Transition:
         # 26.5는 "핵심 센서 실패는 PAUSED 또는 ERROR"라고만 정했다. 어느 쪽인지는
         # 14.5(장애별 정책)가 정하며 이 티켓에서는 PAUSED로 둔다. 복구 가능한
         # 것을 ERROR로 만들면 운영자가 재개할 방법이 없다.
         if self.state is MissionState.PAUSED:
             return self._ignore('이미 PAUSED 상태다')
-        return self._to(MissionState.PAUSED, f'SENSOR_FAULT {detail}'.strip())
+        # 관제 일시정지와 같은 이유로 진행 중 encounter 를 끊는다
+        # (S15P11A301-276). 센서 실패로 멈추는 것도 그 발견을 이어갈 수 없는
+        # 상황이며, 마감 신호를 내지 않으면 녹화가 5분 상한까지 돈다.
+        #
+        # 이 경로를 처음에 빠뜨렸다. PAUSED 로 가는 핸들러가 둘인 것을 뮤테이션
+        # 시험에서 발견했다 — 관제 PAUSE 만 고치고 센서 실패는 그대로였다.
+        phase = self._cut_encounter(now)
+        return self._to(
+            MissionState.PAUSED,
+            f'SENSOR_FAULT {detail}'.strip(),
+            phase=phase,
+        )
 
     def _mission_start(
         self, now: datetime, detail: str, mission_id: str | None = None
@@ -626,8 +690,16 @@ class MissionStateMachine:
         """
         if self.state is MissionState.COMPLETED:
             return self._ignore('이미 COMPLETED 상태다')
+        phase = self._cut_encounter(now)
+        transition = self._to(
+            MissionState.COMPLETED,
+            f'MISSION_COMPLETED {detail}'.strip(),
+            phase=phase,
+        )
+        # 전이가 encounter 를 들고 가므로 여기서 버려도 발행이 깨지지 않는다.
+        # 임무가 끝났으니 다음 임무로 새지 않아야 한다.
         self._clear_encounter()
-        return self._to(MissionState.COMPLETED, f'MISSION_COMPLETED {detail}'.strip())
+        return transition
 
     def _safe_pose_reached(self, now: datetime, detail: str) -> Transition:
         if self.state is not MissionState.PERSON_APPROACHING:
@@ -722,7 +794,12 @@ class MissionStateMachine:
     def _pause_requested(self, now: datetime, detail: str) -> Transition:
         if self.state is MissionState.PAUSED:
             return self._ignore('이미 PAUSED 상태다')
-        return self._to(MissionState.PAUSED, f'PAUSE_REQUESTED {detail}'.strip())
+        phase = self._cut_encounter(now)
+        return self._to(
+            MissionState.PAUSED,
+            f'PAUSE_REQUESTED {detail}'.strip(),
+            phase=phase,
+        )
 
     def _resume_approved(self, now: datetime, detail: str) -> Transition:
         if self.state is not MissionState.PAUSED:

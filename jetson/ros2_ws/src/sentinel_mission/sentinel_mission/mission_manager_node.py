@@ -406,7 +406,10 @@ class MissionManagerNode(Node):
         moment = at or self._now()
 
         if transition.phase is not None:
-            self._publish_encounter(transition.phase, moment)
+            # 전이가 대상 encounter 를 들고 온다 (S15P11A301-276). 여기서
+            # machine.encounter 를 다시 읽으면, 전이 중에 encounter 를 버리는
+            # 핸들러(임무 종료 등)와 순서가 엉켜 encounterId 가 빠진다.
+            self._publish_encounter(transition.phase, moment, transition.encounter)
 
         if transition.changed:
             self.get_logger().info(
@@ -430,8 +433,14 @@ class MissionManagerNode(Node):
             # 상태는 그대로인데 personCount 같은 값이 바뀐 경우다.
             self._publish_status(reason=transition.reason, at=moment)
 
-    def _publish_encounter(self, phase: Phase, moment: datetime) -> None:
-        encounter = self.machine.encounter
+    def _publish_encounter(
+        self, phase: Phase, moment: datetime, encounter=None
+    ) -> None:
+        # 전이가 실어 준 encounter 를 우선 쓴다. 없으면 현재 상태에서 읽는다 —
+        # 종전 동작이며, phase 를 내는 모든 경로가 전이를 거치므로 실제로는
+        # 앞쪽이 쓰인다 (S15P11A301-276).
+        if encounter is None:
+            encounter = self.machine.encounter
         if encounter is None:
             self.get_logger().error(
                 f'encounter 없이 {phase.value}를 낼 수 없다. 상태 머신 결함이다.'

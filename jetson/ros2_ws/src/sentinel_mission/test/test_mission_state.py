@@ -1070,3 +1070,139 @@ def test_초기_상태에서도_값이_있다():
 
     assert machine.state is MissionState.SAFE_IDLE
     assert machine.control_mode == 'AUTO'
+
+
+# 일시정지·종료가 encounter 를 끊는다 (S15P11A301-276)
+#
+# 종전에는 마감 신호(ENDED)를 내지 않아 녹화기가 5분 MAX_DURATION 까지 돌았다.
+# 실측: REPORTING 중 관제 PAUSE → 92MB, endReason=MAX_DURATION. 사람이 없는
+# 구간까지 담겨 증빙 품질도 낮다.
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize('state_setup', ['approaching', 'interacting', 'reporting'])
+def test_일시정지가_진행_중_encounter를_ended로_끊는다(state_setup):
+    machine = exploring()
+    confirm(machine)
+    if state_setup in ('interacting', 'reporting'):
+        machine.handle_signal(Signal.SAFE_POSE_REACHED, now=at(5))
+    if state_setup == 'reporting':
+        machine.handle_signal(Signal.DIALOGUE_ENDED, now=at(10))
+        machine.tick(at(14))
+        assert machine.state is MissionState.REPORTING
+
+    result = machine.handle_signal(Signal.PAUSE_REQUESTED, now=at(20), detail='관제')
+
+    assert result.changed
+    assert machine.state is MissionState.PAUSED
+    assert result.phase is Phase.ENDED, '마감 신호가 없으면 녹화가 5분까지 간다'
+
+
+def test_종료가_진행_중_encounter를_ended로_끊는다():
+    machine = exploring()
+    confirm(machine)
+
+    result = machine.handle_signal(
+        Signal.MISSION_COMPLETED, now=at(10), detail='관제 STOP'
+    )
+
+    assert result.phase is Phase.ENDED
+    assert machine.state is MissionState.COMPLETED
+
+
+def test_종료는_발행에_필요한_encounter를_전이에_실어_보낸다():
+    """순서가 중요하다 — 종료는 encounter 를 버리는데, 전이가 들고 가지 않으면
+    노드가 발행 시점에 `encounterId` 를 못 찾아 녹화기가 무시한다."""
+    machine = exploring()
+    confirm(machine)
+    expected = machine.encounter_id
+
+    result = machine.handle_signal(
+        Signal.MISSION_COMPLETED, now=at(10), detail='관제 STOP'
+    )
+
+    assert machine.encounter is None, '종료 후에는 버려야 다음 임무로 새지 않는다'
+    assert result.encounter is not None, '전이가 대상을 들고 가지 않았다'
+    assert result.encounter.encounter_id == expected
+
+
+def test_일시정지는_encounter를_남긴다():
+    """재개(_resume_approved)가 버린다. 여기서 버리면 전이가 들고 갈 대상이 없다."""
+    machine = exploring()
+    confirm(machine)
+
+    machine.handle_signal(Signal.PAUSE_REQUESTED, now=at(10), detail='관제')
+
+    assert machine.encounter is not None
+
+
+def test_encounter가_없으면_phase를_내지_않는다():
+    """탐사 중 일시정지는 마감할 것이 없다. 빈 신호를 내면 녹화기가
+    「진행 중 이벤트가 아니다」로 무시하지만, 애초에 내지 않는 것이 맞다."""
+    machine = exploring()
+
+    result = machine.handle_signal(Signal.PAUSE_REQUESTED, now=at(5), detail='관제')
+
+    assert result.changed
+    assert machine.state is MissionState.PAUSED
+    assert result.phase is None
+    assert result.encounter is None
+
+
+def test_대기에서_종료해도_phase를_내지_않는다():
+    machine = MissionStateMachine()
+
+    result = machine.handle_signal(
+        Signal.MISSION_COMPLETED, now=T0, detail='관제 STOP'
+    )
+
+    assert machine.state is MissionState.COMPLETED
+    assert result.phase is None
+
+
+def test_phase가_없는_전이는_encounter를_싣지_않는다():
+    """전이마다 encounter 를 달면 뜻이 흐려진다 — phase 가 있을 때만이다.
+
+    ESTOP 으로 확인한다. 비상 정지는 encounter 를 끊지 않는 **의도된 예외**이므로
+    (원인 조사용으로 전후 영상이 길게 남아야 한다) encounter 가 살아 있는데
+    phase 는 없는 유일한 경로다. 이 조합이 없으면 위 가드를 검증할 수 없다.
+    """
+    machine = exploring()
+    confirm(machine)
+
+    result = machine.handle_signal(Signal.SAFE_POSE_REACHED, now=at(5))
+    assert result.phase is Phase.APPROACHED
+    assert result.encounter is not None, 'phase 가 있으면 대상을 실어야 한다'
+
+    result = machine.handle_signal(Signal.ESTOP, now=at(6), detail='물리 버튼')
+    assert machine.state is MissionState.ESTOP
+    assert machine.encounter is not None, 'ESTOP 은 encounter 를 끊지 않는다'
+    assert result.phase is None
+    assert result.encounter is None, 'phase 가 없으면 싣지 않는다'
+
+
+def test_센서_실패도_encounter를_끊는다():
+    """PAUSED 로 가는 핸들러가 둘이다 — 관제 PAUSE 와 센서 실패.
+
+    처음에 관제 PAUSE 만 고치고 이 경로를 빠뜨렸다. 센서 실패로 멈추는 것도 그
+    발견을 이어갈 수 없는 상황이며, 마감 신호가 없으면 녹화가 5분 상한까지 돈다.
+    """
+    machine = exploring()
+    confirm(machine)
+
+    result = machine.handle_signal(
+        Signal.SENSOR_FAULT, now=at(10), detail='lidar 침묵'
+    )
+
+    assert machine.state is MissionState.PAUSED
+    assert result.phase is Phase.ENDED
+    assert result.encounter is not None
+
+
+def test_센서_실패도_encounter가_없으면_phase를_안_낸다():
+    machine = exploring()
+
+    result = machine.handle_signal(Signal.SENSOR_FAULT, now=at(5), detail='x')
+
+    assert machine.state is MissionState.PAUSED
+    assert result.phase is None

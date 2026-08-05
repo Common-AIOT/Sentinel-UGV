@@ -38,7 +38,11 @@ from .conversation import (
 )
 from .guide_audio import GUIDE_BY_TEXT, GuidePlayer, PlaybackResult
 from .remote_asr import RemoteASRError
-from .safety import guide_echo_match, is_valid_stt
+from .safety import (
+    guide_echo_match,
+    is_valid_stt,
+    mobility_yes_conflicts_with_text,
+)
 from .session_log import SessionLog, open_session_log
 
 # 질문이 채우는 33-6 추출 필드. INTRO는 발화 존재 자체가 답이므로 제외한다.
@@ -103,6 +107,13 @@ class TurnDiagnostics:
     audio_file: str | None = None
     # 안내 음성 재유입으로 판정된 경우 일치한 문구. 판정 근거를 사후에 대조한다.
     echo_of: str | None = None
+    safety_reason: str | None = None
+    record_ms: float | None = None
+    vad_ms: float | None = None
+    stt_ms: float | None = None
+    gms_ms: float | None = None
+    turn_ms: float | None = None
+    _started_at: float | None = field(default=None, repr=False)
 
 
 class VoiceSessionRunner:
@@ -119,6 +130,7 @@ class VoiceSessionRunner:
         session_log: SessionLog | None = None,
         listen_delay: float | None = None,
         sleep: Callable[[float], None] = time.sleep,
+        clock: Callable[[], float] = time.monotonic,
     ):
         self.deps = deps
         self.abort_requested = abort_requested
@@ -129,6 +141,7 @@ class VoiceSessionRunner:
             config.LISTEN_DELAY if listen_delay is None else listen_delay
         )
         self.sleep = sleep
+        self.clock = clock
         self._on_event = on_event
         # 저장 위치가 지정되지 않으면 비활성 로그가 온다. 호출부는 분기하지 않는다.
         self.session_log = session_log or open_session_log(on_event=self.on_event)
@@ -183,16 +196,21 @@ class VoiceSessionRunner:
     def listen(self, question: QuestionCode, attempt: int) -> AudioObservation:
         """녹음→무음판정→정규화→VAD→STT→환각·에코가드를 한 관찰값으로 만든다."""
         diagnostic = self._diagnostic(question, attempt)
+        diagnostic._started_at = self.clock()
         seconds = self.listen_seconds.get(question, 6.0)
         # 안내 꼬리가 스피커에서 아직 나오는 동안 녹음하면 그 소리를 요구조자 응답으로
         # 오인한다. 재생 종료 판정은 실제 가청 종료보다 이르다(S15P11A301-165).
         if self.listen_delay > 0:
             self.sleep(self.listen_delay)
+        record_started = self.clock()
         try:
             wav = self.deps.record(seconds)
         except Exception as exc:  # 마이크 분리·점유 등 장치 오류
             self.on_event(f"[FAIL] {question.value}: 오디오 장치 오류 {exc}")
+            self._finish_turn_timing(diagnostic)
             return AudioObservation(False, None, audio_error=True)
+        finally:
+            diagnostic.record_ms = self._elapsed_ms(record_started)
 
         # 무음·VAD 미검출로 빠지는 경로에서도 원본을 남긴다. 그 경로가 무응답
         # 오판을 진단하는 대상이므로, 여기서 조건을 걸면 계측이 무의미해진다.
@@ -216,17 +234,24 @@ class VoiceSessionRunner:
                 f"(peak={peak(wav):.8f}) — 마이크가 아니라 빈 경로를 읽고 있다. "
                 "무응답이 아니라 장치 오류로 종료한다"
             )
+            self._finish_turn_timing(diagnostic)
             return AudioObservation(False, None, audio_error=True)
 
         if raw_rms < config.SILENCE_RMS:
             self.on_event(f"[NOVOICE] {question.value}: 무음 rms={raw_rms:.4f}")
+            self._finish_turn_timing(diagnostic)
             return AudioObservation(False)
 
         normalized = normalize(wav)
-        if not self.deps.has_speech(normalized):
+        vad_started = self.clock()
+        speech_detected = self.deps.has_speech(normalized)
+        diagnostic.vad_ms = self._elapsed_ms(vad_started)
+        if not speech_detected:
             self.on_event(f"[NOVOICE] {question.value}: VAD 음성 미검출")
+            self._finish_turn_timing(diagnostic)
             return AudioObservation(False)
 
+        stt_started = self.clock()
         try:
             text, no_speech_prob = self.deps.transcribe(normalized)
         except RemoteASRError as error:
@@ -237,7 +262,10 @@ class VoiceSessionRunner:
                 f"[STTFAIL] {question.value}: 원격 ASR 오류 "
                 f"{error.code} retryable={error.retryable}"
             )
+            self._finish_turn_timing(diagnostic)
             return AudioObservation(True, None)
+        finally:
+            diagnostic.stt_ms = self._elapsed_ms(stt_started)
         diagnostic.stt_text = text
         diagnostic.no_speech_prob = no_speech_prob
 
@@ -254,6 +282,7 @@ class VoiceSessionRunner:
         if is_echo:
             diagnostic.echo_of = matched
             self.on_event(f"[ECHO] {question.value}: 안내 음성 재유입으로 판정 — {text}")
+            self._finish_turn_timing(diagnostic)
             return AudioObservation(False)
 
         valid, reason = is_valid_stt(text, no_speech_prob, config.STT_PROMPT)
@@ -261,6 +290,7 @@ class VoiceSessionRunner:
             # 음성은 있었다. STT만 실패했으므로 무응답으로 기록하지 않는다.
             diagnostic.stt_invalid_reason = reason
             self.on_event(f"[STTFAIL] {question.value}: STT 무효 {reason}")
+            self._finish_turn_timing(diagnostic)
             return AudioObservation(True, None)
 
         self.on_event(f"[STT] {question.value}: {text}")
@@ -270,6 +300,7 @@ class VoiceSessionRunner:
         """질문이 요구한 필드값만 돌려준다. 확정 못 하면 None."""
         if question == QuestionCode.INTRO:
             # 발화가 있었다는 사실이 곧 응답이다. 내용 해석에 의존하지 않는다.
+            self._finish_turn_timing(self._diagnostic(question))
             return True
 
         field_name = EXTRACTION_FIELD_BY_QUESTION.get(question)
@@ -278,16 +309,33 @@ class VoiceSessionRunner:
 
         # 무엇을 물었는지 함께 넘긴다. 받아쓰기가 뭉개졌을 때 그 질문에 대한 답으로
         # 되돌릴 근거가 된다(S15P11A301-251). 승인된 문구 그대로를 쓴다.
-        result = self.deps.extract(text, PROMPTS.get(question))
+        diagnostic = self._diagnostic(question)
+        gms_started = self.clock()
+        try:
+            result = self.deps.extract(text, PROMPTS.get(question))
+        finally:
+            diagnostic.gms_ms = self._elapsed_ms(gms_started)
         extraction = getattr(result, "extraction", result) or {}
         source = getattr(result, "source", None)
-        self._diagnostic(question).extraction_source = source
-        self._diagnostic(question).extraction = dict(extraction)
+        diagnostic.extraction_source = source
+        diagnostic.extraction = dict(extraction)
         self._extractions.append(dict(extraction))
         if source and source != "GMS":
             self.on_event(f"[LLM] {question.value}: 추출 경로 {source}")
 
         value = extraction.get(field_name)
+        if (
+            question == QuestionCode.MOBILITY
+            and value == "YES"
+            and mobility_yes_conflicts_with_text(text)
+        ):
+            diagnostic.safety_reason = "MOBILITY_YES_NEGATION_CONFLICT"
+            self.on_event(
+                "[SAFE] MOBILITY: 부정 흔적과 YES 판정이 충돌해 UNKNOWN으로 강등"
+            )
+            self._finish_turn_timing(diagnostic)
+            return None
+        self._finish_turn_timing(diagnostic)
         return None if value in _UNDETERMINED else value
 
     # ── 실행 ──────────────────────────────────────────────────────
@@ -330,6 +378,7 @@ class VoiceSessionRunner:
                     "sttText": diagnostic.stt_text,
                     "noSpeechProb": diagnostic.no_speech_prob,
                     "sttInvalidReason": diagnostic.stt_invalid_reason,
+                    "safetyReason": diagnostic.safety_reason,
                     "echoOf": diagnostic.echo_of,
                     "extractionSource": diagnostic.extraction_source,
                     "extraction": diagnostic.extraction,
@@ -339,6 +388,11 @@ class VoiceSessionRunner:
                         else None
                     ),
                     "audio": diagnostic.audio_file,
+                    "recordMs": diagnostic.record_ms,
+                    "vadMs": diagnostic.vad_ms,
+                    "sttMs": diagnostic.stt_ms,
+                    "gmsMs": diagnostic.gms_ms,
+                    "turnMs": diagnostic.turn_ms,
                 }
             )
         self._log(
@@ -373,3 +427,11 @@ class VoiceSessionRunner:
         diagnostic = TurnDiagnostics(question=question, attempt=attempt)
         self.diagnostics.append(diagnostic)
         return diagnostic
+
+    def _elapsed_ms(self, started_at: float) -> float:
+        """단조 시계의 경과 시간을 로그에 적합한 밀리초로 바꾼다."""
+        return round(max(0.0, (self.clock() - started_at) * 1000.0), 3)
+
+    def _finish_turn_timing(self, diagnostic: TurnDiagnostics) -> None:
+        if diagnostic._started_at is not None:
+            diagnostic.turn_ms = self._elapsed_ms(diagnostic._started_at)

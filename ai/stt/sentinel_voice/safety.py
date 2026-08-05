@@ -53,6 +53,33 @@ def _squashed(text: str) -> str:
     return _WORD_CHARS.sub("", text or "")
 
 
+_MOBILITY_NEGATION_MARKERS = (
+    "아니요",
+    "아니오",
+    "아뇨",
+    "못움직",
+    "움직이지못",
+    "움직일수없",
+    "이동할수없",
+    "걸을수없",
+    "일어날수없",
+    "이동불가",
+    "불가능",
+)
+
+
+def mobility_yes_conflicts_with_text(text: str) -> bool:
+    """이동 가능 ``YES``와 함께 확정하면 위험한 부정 흔적을 찾는다.
+
+    원격 ASR이 ``못``을 누락해 ``아니요. 다리 다쳐서 움직입니다``처럼 모순된
+    전사를 만들 수 있다. 질문이 "움직일 수 있나요"로 고정돼 있으므로 직접 부정
+    응답이나 이동 불가 표현이 남아 있는데 GMS가 YES를 반환하면 확정하지 않는다.
+    명확한 NO를 추론하는 함수가 아니라 YES를 UNKNOWN으로 낮추는 안전 가드다.
+    """
+    squashed = _squashed(text)
+    return any(marker in squashed for marker in _MOBILITY_NEGATION_MARKERS)
+
+
 def _bigrams(text: str) -> set[str]:
     return {text[index : index + 2] for index in range(len(text) - 1)}
 

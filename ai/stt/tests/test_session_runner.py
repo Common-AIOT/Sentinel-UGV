@@ -237,6 +237,50 @@ class SessionRunnerTest(unittest.TestCase):
         self.assertEqual(result.fields["mobilityStatus"], "UNKNOWN")
         self.assertTrue(result.fields["operatorReviewRequired"])
 
+    def test_mobility_yes_with_negation_is_downgraded_to_unknown(self):
+        """ASR 부정어 손실이 의심되는 모순 전사를 안전한 값으로 낮춘다."""
+        runner, _ = build_runner(
+            text="아니요. 다리 다쳐서 움직입니다.",
+            extraction={
+                "reportedResponsiveCount": None,
+                "mobilityStatus": "YES",
+                "urgentConditionReported": "UNKNOWN",
+            },
+        )
+        result = runner.run()
+
+        self.assertEqual(result.fields["mobilityStatus"], "UNKNOWN")
+        self.assertTrue(result.fields["operatorReviewRequired"])
+        mobility = next(
+            item
+            for item in runner.diagnostics
+            if item.question == QuestionCode.MOBILITY
+        )
+        self.assertEqual(
+            mobility.safety_reason, "MOBILITY_YES_NEGATION_CONFLICT"
+        )
+
+    def test_clear_mobility_yes_is_preserved(self):
+        runner, _ = build_runner(
+            text="네, 걸어서 이동할 수 있어요.",
+            extraction={"mobilityStatus": "YES"},
+        )
+        result = runner.run()
+
+        self.assertEqual(result.fields["mobilityStatus"], "YES")
+
+    def test_turn_diagnostics_capture_stage_timings(self):
+        runner, _ = build_runner()
+        runner.run()
+
+        for diagnostic in runner.diagnostics:
+            self.assertIsNotNone(diagnostic.record_ms)
+            self.assertIsNotNone(diagnostic.vad_ms)
+            self.assertIsNotNone(diagnostic.stt_ms)
+            self.assertIsNotNone(diagnostic.turn_ms)
+            if diagnostic.question != QuestionCode.INTRO:
+                self.assertIsNotNone(diagnostic.gms_ms)
+
     def test_fallback_source_is_tracked(self):
         """GMS 실패 후 33-8 폴백을 쓴 사실이 세션에 남는다."""
         runner, _ = build_runner(source="FALLBACK")

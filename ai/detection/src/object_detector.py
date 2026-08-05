@@ -109,6 +109,45 @@ class ObjectDetector:
             )
         return detections
 
+    def detect_classes(
+        self, frame: np.ndarray, class_names: Iterable[str]
+    ) -> list[Detection]:
+        """지정한 클래스를 **추적 없이** 탐지한다. 장애물 표시용이다.
+
+        `detect()`와 달리 `model.track`이 아니라 `model.predict`을 쓴다. 장애물은
+        움직이지 않으므로 trackId가 필요 없고, 추적기에 넣으면 BoT-SORT가 ReID까지
+        돌려 비용만 늘어난다. 반환되는 Detection의 `track_id`는 항상 None이다.
+
+        ⚠️ **이 결과를 충돌 회피에 쓰지 않는다.** 명세는 물리 장애물 회피를
+        LiDAR/Nav2에, 급정지를 Collision Monitor/초음파에 맡기고 AI 추론 실패와
+        무관하게 로컬 안전을 확보하도록 정했다
+        (docs/01-프로젝트-개요.md:136, docs/07-AI-탐지-음성.md "COCO에 없는 물체도
+        거리 기반으로 처리한다"). 여기서 나오는 값은 **관제 표시·기록용**이다.
+        """
+        wanted = {c.lower() for c in class_names}
+        if not wanted:
+            return []
+        ids = [i for i, n in self.class_names.items() if str(n).lower() in wanted]
+        if not ids:
+            return []
+        results = self.model.predict(
+            frame,
+            conf=self.confidence,
+            iou=self.iou,
+            classes=ids,
+            device=self.device,
+            imgsz=self.imgsz,
+            quantize=self.quantize,
+            verbose=False,
+        )
+        if not results:
+            return []
+        saved, self.target_classes = self.target_classes, wanted
+        try:
+            return self._parse(results[0])
+        finally:
+            self.target_classes = saved
+
     def reset_tracker(self) -> None:
         """새 영상을 처리하기 전에 추적 상태를 초기화한다.
 

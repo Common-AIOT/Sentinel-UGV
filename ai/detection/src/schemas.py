@@ -186,14 +186,26 @@ class FrameResult:
     timestamp: str
     source: str
     persons: list[PersonObservation]
+    # 통로를 막을 만한 사물(의자·소파 등). 사전학습 COCO 클래스에서 고른다.
+    #
+    # ⚠️ **충돌 회피에 쓰지 않는다.** 명세는 물리 장애물 회피를 LiDAR/Nav2가,
+    # 급정지를 Collision Monitor/초음파가 담당하도록 정했고, AI 추론 실패와
+    # 무관하게 로컬 안전을 확보하는 것이 원칙이다(docs/01-프로젝트-개요.md:136).
+    # 이 값은 관제 표시·기록용이며 trackId를 붙이지 않는다.
+    obstacles: list[Detection] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "timestamp": self.timestamp,
             "frame_index": self.frame_index,
             "source": self.source,
             "persons": [p.to_dict() for p in self.persons],
         }
+        # 비어 있으면 키를 넣지 않는다. 장애물 탐지는 저빈도라 대부분의 프레임이
+        # 비는데, 매 프레임 빈 배열을 쓰면 프레임 로그가 불필요하게 커진다.
+        if self.obstacles:
+            out["obstacles"] = [o.to_dict() for o in self.obstacles]
+        return out
 
 
 def build_envelope(

@@ -22,6 +22,7 @@ from .persistence import PersistenceTracker
 from .pose_estimator import PoseEstimator, PoseScheduler
 from .posture_classifier import PostureClassifier, PostureSmoother
 from .schemas import (
+    Detection,
     FrameResult,
     PersonObservation,
     PostureResult,
@@ -213,6 +214,18 @@ class InferencePipeline:
             forget_seconds=float((config.get("memory") or {}).get("forget_seconds", 10.0)),
         )
 
+        # 장애물 표시 (선택). 사람 파이프라인과 완전히 분리해서 다룬다.
+        # 자세한 제약은 ObjectDetector.detect_classes와 configs 주석 참고.
+        obstacle_cfg = config.get("obstacle") or {}
+        self.obstacle_classes = [str(c).lower() for c in obstacle_cfg.get("classes", [])]
+        self.obstacle_interval = (
+            1.0 / float(obstacle_cfg["max_fps"])
+            if float(obstacle_cfg.get("max_fps", 0) or 0) > 0
+            else None
+        )
+        self._last_obstacle_at: float | None = None
+        self._obstacle_cache: list[Detection] = []
+
         mem_cfg = config.get("memory") or {}
         self.forget_seconds = float(mem_cfg.get("forget_seconds", 10.0))
         self._min_track_buffer = int(mem_cfg.get("min_track_buffer", 30))
@@ -368,6 +381,7 @@ class InferencePipeline:
             timestamp=utc_now_iso(),
             source=source,
             persons=persons,
+            obstacles=self._detect_obstacles(frame, timestamp_sec),
         )
         self.logger.log_frame(result.to_dict())
 
@@ -381,6 +395,27 @@ class InferencePipeline:
             self.stats.pose_sec - pose_sec_before
         )
         return result
+
+    def _detect_obstacles(self, frame: np.ndarray, timestamp_sec: float) -> list[Detection]:
+        """통로를 막을 만한 사물을 저빈도로 탐지한다.
+
+        **매 프레임 돌리지 않는다.** 의자·소파 같은 것은 움직이지 않으므로 초당 몇
+        번이면 충분하고, 매 프레임 추론을 하나 더 얹으면 이미 목표 미달인 FPS를
+        더 깎는다. 사이 프레임은 직전 결과를 재사용한다(조건부 Pose와 같은 방식).
+
+        `obstacle.classes`가 비어 있으면 아무 것도 하지 않는다. **기본값은 비어
+        있으며**, 쓰겠다고 명시한 프로파일에서만 동작한다.
+
+        ⚠️ 결과를 충돌 회피에 쓰지 않는다. ObjectDetector.detect_classes 참고.
+        """
+        if not self.obstacle_classes:
+            return []
+        if self.obstacle_interval is not None and self._last_obstacle_at is not None:
+            if timestamp_sec - self._last_obstacle_at < self.obstacle_interval:
+                return self._obstacle_cache
+        self._last_obstacle_at = timestamp_sec
+        self._obstacle_cache = self.detector.detect_classes(frame, self.obstacle_classes)
+        return self._obstacle_cache
 
     def _fill_pose_for_event(
         self, frame: np.ndarray, confirmed: list[PersonObservation], timestamp_sec: float
@@ -442,7 +477,11 @@ class InferencePipeline:
     ) -> None:
         """이벤트 이미지 저장 + 명세 31-5 봉투로 이벤트 로그 기록."""
         image = (
-            draw(frame, all_persons, keypoint_confidence=self.keypoint_confidence)
+            draw(
+                frame, all_persons,
+                keypoint_confidence=self.keypoint_confidence,
+                obstacles=result.obstacles,
+            )
             if self.draw_overlay_on_event
             else frame
         )
@@ -633,7 +672,9 @@ class InferencePipeline:
 
                 if show:
                     preview = draw(
-                        frame, result.persons, keypoint_confidence=self.keypoint_confidence
+                        frame, result.persons,
+                        keypoint_confidence=self.keypoint_confidence,
+                        obstacles=result.obstacles,
                     )
                     live_fps = len(recent) / sum(recent) if sum(recent) > 0 else 0.0
                     hold = self._track_buffer_frames / live_fps if live_fps > 0 else 0.0

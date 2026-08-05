@@ -8,7 +8,7 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
-from .schemas import POSTURE_FALLEN, PersonObservation
+from .schemas import POSTURE_FALLEN, Detection, PersonObservation
 
 # COCO 17 keypoint 골격 연결. 시각 확인용이며 판정에는 쓰지 않는다.
 SKELETON = (
@@ -20,6 +20,25 @@ SKELETON = (
 _COLOR_NORMAL = (0, 200, 0)
 _COLOR_FALLEN = (0, 0, 255)
 _COLOR_KEYPOINT = (255, 200, 0)
+# 장애물은 사람과 확실히 구분되어야 한다. 회색 얇은 실선으로 배경처럼 그린다.
+# 사람이 초록/빨강 굵은 선이므로 시선을 뺏지 않는다.
+_COLOR_OBSTACLE = (160, 160, 160)
+
+
+def draw_obstacles(canvas: np.ndarray, obstacles: list[Detection]) -> None:
+    """장애물을 canvas에 직접 그린다. 사람보다 먼저 그려 뒤에 깔리게 한다.
+
+    ⚠️ 이 표시는 주행 안전 근거가 아니다. 명세는 물리 장애물 회피를 LiDAR/Nav2에
+    맡긴다(docs/01-프로젝트-개요.md:136). 화면에 안 뜬다고 로봇이 못 피하는 것이
+    아니고, 뜬다고 로봇이 그것을 피하는 것도 아니다.
+    """
+    for det in obstacles:
+        x1, y1, x2, y2 = (int(round(v)) for v in det.bbox_xyxy)
+        cv2.rectangle(canvas, (x1, y1), (x2, y2), _COLOR_OBSTACLE, 1)
+        cv2.putText(
+            canvas, det.class_name, (x1, max(12, y1 - 4)),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.45, _COLOR_OBSTACLE, 1,
+        )
 
 
 def _status_color(status: str) -> tuple[int, int, int]:
@@ -32,9 +51,14 @@ def draw(
     persons: list[PersonObservation],
     *,
     keypoint_confidence: float = 0.5,
+    obstacles: list[Detection] | None = None,
 ) -> np.ndarray:
     """관측 결과를 그린 새 프레임을 반환한다."""
     canvas = frame.copy()
+
+    # 사람보다 먼저 그려 뒤에 깔리게 한다. 겹쳐도 사람이 가려지지 않는다.
+    if obstacles:
+        draw_obstacles(canvas, obstacles)
 
     for person in persons:
         det = person.detection

@@ -146,6 +146,90 @@ motion:
   # 이 시간(초) 이상 정지해 있으면 부동 점수가 1.0이 된다.
   full_still_seconds: 3.0
 
+# 통로를 막을 만한 사물 표시 (선택 기능).
+#
+# ⚠️ **충돌 회피에 쓰지 않는다.** 명세가 AI를 장애물 회피에서 명시적으로 제외한다.
+#     docs/01-프로젝트-개요.md:136
+#       "AI 탐지는 장애물 충돌 회피의 단일 안전 근거로 사용하지 않는다.
+#        충돌 안전은 LiDAR·초음파·로컬 제한 로직이 담당한다."
+#     docs/07-AI-탐지-음성.md
+#       "물리 장애물 회피는 LiDAR/Nav2가 담당해 AI 추론 실패와 무관하게 로컬 안전을
+#        확보한다. **COCO에 없는 물체도 거리 기반으로 처리한다.**"
+#
+# 마지막 문장이 중요하다. 거리 기반이라 분류를 몰라도 피한다. 잔해처럼 COCO에 없는
+# 물체가 재난 현장의 대부분일 텐데, 분류에 의존했다면 그것들을 못 피했을 것이다.
+# 즉 이 기능은 **관제 화면 표시와 기록용**이지 주행 안전 경로가 아니다.
+#
+# 비용: 추적을 붙이지 않고(predict) 저빈도로만 돌린다. 의자는 움직이지 않으므로
+# 초당 1회면 충분하고, 매 프레임 추론을 얹으면 이미 목표 미달인 FPS를 더 깎는다.
+#
+# classes를 비우면 기능이 꺼진다.
+obstacle:
+  # 사전학습 COCO 80종에서 고른다. id가 아니라 이름으로 쓴다
+  # (AGENTS.md §11 — 클래스가 추가되면 id는 재배치되지만 이름은 안정적이다).
+  #
+  # 선정 기준: **바닥에 있어서 UGV가 통과할 수 없는가.** 방 종류가 아니라
+  # 물체가 놓이는 높이로 판단한다. 80종 전수 분류 결과는 아래 "제외" 주석 참고.
+  #
+  # 클래스 수는 비용과 무관하다. YOLO는 어차피 매번 80종을 예측하고 classes 필터는
+  # 결과를 고를 뿐이다. 실측: 1종 23.9ms / 13종 19.8ms / 29종 21.1ms / 80종 19.5ms
+  # (편차 ±2ms가 클래스 수 영향보다 크다). 그래서 넓게 잡는다.
+  classes:
+    # --- 바닥에 서 있어 통과 불가 (13종) ---
+    - chair
+    - couch
+    - bed
+    - dining table
+    - bench
+    - potted plant
+    - refrigerator
+    - oven
+    - toilet
+    - suitcase
+    - backpack
+    - handbag
+    - bicycle
+    # --- 설치 방식에 따라 갈림 (5종) ---
+    # 스탠드형 TV는 바닥, 벽걸이는 아니다. 모델은 그 차이를 구분하지 못한다.
+    # 놓쳐도 안전에 영향이 없으므로(LiDAR가 회피 담당) 넓게 잡는 쪽을 택했다.
+    - tv
+    - sink
+    - umbrella
+    - vase
+    - motorcycle
+    # --- 바닥에 있으면 걸림돌이나 실내 재난 현장에 드묾 (11종) ---
+    # 체육관·창고가 대상이면 실제로 필요하다. 비용이 0이라 넣어 둔다.
+    - skateboard
+    - skis
+    - snowboard
+    - sports ball
+    - baseball bat
+    - tennis racket
+    - frisbee
+    - baseball glove
+    - surfboard
+    - teddy bear
+    - kite
+  #
+  # 제외한 51종과 사유 (80종 전수 분류)
+  #   카운터·책상·벽 위라 바닥을 막지 않음 (13): microwave, toaster, laptop,
+  #     keyboard, mouse, remote, cell phone, clock, book, scissors, hair drier,
+  #     toothbrush, tie
+  #   너무 작아 주행에 영향 없음 (7): bottle, cup, bowl, wine glass, fork, knife, spoon
+  #   음식 (10): apple, banana, orange, broccoli, carrot, pizza, donut, cake,
+  #     sandwich, hot dog
+  #   실외 전용 (10): car, bus, truck, airplane, train, boat, traffic light,
+  #     fire hydrant, stop sign, parking meter
+  #   동물 (10): bird, cat, dog, horse, sheep, cow, elephant, bear, zebra, giraffe
+  #   별도 처리 (1): person
+  #
+  # ⚠️ COCO에 없어서 못 잡는 것들이 있다. 명세의 시연 장애물 "상자", 매장 진열대,
+  #    재난 현장의 잔해가 전부 여기 해당한다. 실측에서 편의점 영상 40장 중 0장이
+  #    탐지됐다. **이 기능으로 장애물을 빠짐없이 찾을 수 있다고 보면 안 된다.**
+  #
+  # 탐지 빈도(Hz). 0이면 매 프레임 돌린다(권장하지 않음).
+  max_fps: 1.0
+
 # 사람을 "기억"하는 시간. 이 값 하나가 아래 셋을 모두 결정한다.
 #   1) 트래커가 같은 trackId를 유지하는 시간 (tracker의 track_buffer)
 #   2) ID가 바뀌었을 때 누적 시간을 승계하는 시간

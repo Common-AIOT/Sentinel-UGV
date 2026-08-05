@@ -205,6 +205,20 @@ class SessionTranscriptTest(TempSessionTest):
         self.assertEqual(len(turns), 1)
         self.assertEqual(turns[0]["extraction"]["urgentConditionReported"], "YES")
 
+    def test_turn_records_stage_timings_for_jetson_evidence(self):
+        runner = build_runner(self.log)
+        runner.run()
+
+        records = turn_records(self.log.directory)
+        self.assertTrue(records)
+        for record in records:
+            self.assertIsInstance(record["recordMs"], float)
+            self.assertIsInstance(record["vadMs"], float)
+            self.assertIsInstance(record["sttMs"], float)
+            self.assertIsInstance(record["turnMs"], float)
+            if record["question"] != QuestionCode.INTRO.value:
+                self.assertIsInstance(record["gmsMs"], float)
+
     def test_raw_audio_is_saved_before_normalization(self):
         """정규화 후만 남기면 큰 목소리와 증폭된 에코를 구분할 수 없다."""
         level = 0.02

@@ -276,7 +276,7 @@ def risk_assessment(info):
     등급을 계산하고, 미완료 사실은 근거에 덧붙인다. 관찰 자체를 못 한 경우
     (`anyResponseDetected`가 null)에만 `UNKNOWN`으로 단락한다.
 
-    규칙표와 v1.0에서 바뀐 이유는 docs/README.md 2-2, 11-2.
+    규칙표와 변경 이유는 docs/08-AI-음성.md 33.2, 33.4.
     """
     report = coerce_report(info)
     termination = report["terminationReason"]

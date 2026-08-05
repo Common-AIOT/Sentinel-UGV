@@ -29,7 +29,7 @@ class _PoseTrackState:
 class PoseScheduler:
     """조건부 Pose 실행 스케줄러.
 
-    프로젝트 명세 25.6을 따른다(docs/07-AI-탐지-음성.md).
+    프로젝트 명세 25.2를 따른다(docs/07-AI-탐지.md).
       "사람 탐지는 추가 학습 YOLO26n Detect(상시 약 15FPS),
        자세 보조 판정은 YOLO26n Pose 조건부 실행
        (사람 3프레임 이상 연속 감지 시 활성, 약 2FPS,

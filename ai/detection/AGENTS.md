@@ -23,7 +23,7 @@
 
 **이탈 1. 추적기: ByteTrack → BoT-SORT**
 
-명세는 ByteTrack을 지정한다(`docs/07-AI-탐지-음성.md` 25.1·25.4·25.6).
+명세는 ByteTrack을 지정한다(`docs/07-AI-탐지.md` 25.1·25.2).
 현재 구현은 BoT-SORT를 쓴다.
 
 - 사유: UGV는 주행하며 촬영하므로 카메라 움직임 보정(GMC)이 필요한데 ByteTrack에는 없다.
@@ -35,7 +35,7 @@
 명세는 정밀 재식별을 **세 곳에서 제외**한다.
 - `docs/01-프로젝트-개요.md:85` "피해자 정밀 재식별" (제외 목록)
 - `docs/01-프로젝트-개요.md:95` "다수 사람의 정밀 재식별" (제외 목록)
-- `docs/07-AI-탐지-음성.md` 25.4 "정밀 재식별은 범위에서 제외한다"
+- `docs/07-AI-탐지.md` 25.1 "정밀 재식별은 범위에서 제외한다"
 
 **이탈은 개발 PC 프로파일에만 남아 있다.** 로봇에 실제로 올라가는 Jetson 프로파일은
 명세 준수 상태다.
@@ -72,7 +72,7 @@
 
 **이탈 3. Pose를 전체 화면이 아니라 person crop으로 실행한다 (2026-07-30)**
 
-명세 `docs/07-AI-탐지-음성.md` 25.6은 "YOLO26n Pose 조건부 실행 (약 2 FPS, **전체 화면 분석**)"이다.
+명세 `docs/07-AI-탐지.md` 25.2는 "YOLO26n Pose 조건부 실행 (약 2 FPS)"이다.
 현재 구현은 person bbox를 crop해서 사람별로 Pose를 돌린다.
 
 - 사유: 전체 화면 Pose는 멀리 있는 작은 사람의 keypoint 품질이 떨어진다.
@@ -101,7 +101,7 @@
 이후: NORMAL / FALLEN   (+ fallenScore, signalCount)
 ```
 
-- 개정 문서: `docs/07-AI-탐지-음성.md` 25.6·DB 주석, `docs/05-통신-서버-영상.md` 13장
+- 개정 문서: `docs/07-AI-탐지.md` 25.2·DB 주석, `docs/05-통신-서버-영상.md` 13장
 - 사유: `POSE_UNKNOWN`이 관측의 약 21%를 차지해 다섯 중 하나는 답을 내지 못했다.
   재난 탐색에서 관제가 필요한 답은 "쓰러졌나 아닌가" 하나다.
 - **깨지는 팀 계약은 없다**(사전 확인 완료):
@@ -185,7 +185,7 @@ Optional small LLM
 - **miniforge conda 가상환경 `sentinel-yolo` 구축 완료 및 검증** — Python 3.10.20 / torch 2.11.0+cu128 /
   CUDA 12.8 사용 가능, ultralytics 8.4.104 (§7)
 - **YOLO26 Detect/Pose 모델 지원 확인** (§13, §14)
-- 객체탐지 MVP 범위 정의(`../../docs/ai/detection/requirements.md` 초안 존재 — 단, 클래스 범위는 §6 확인 필요 참고)
+- 객체탐지 MVP 범위 정의(`../../docs/07-AI-탐지.md` 25.3 — 단, 클래스 범위는 §6 확인 필요 참고)
 - Detect-first 파이프라인 설계 초안
 
 ### 완료된 구현 (2026-07-29 ~ 07-30)
@@ -202,7 +202,7 @@ Optional small LLM
 | 단위 테스트 31건 + 연결 검증 게이트 10건 | `tests/` | §22, §28.1 |
 | Jetson Orin Nano 8GB + USB 카메라 프로파일 | `configs/pipeline.jetson.yaml`, `configs/tracker_jetson.yaml` | §7.1 |
 | cwd 비의존 경로 해석(`_resolve_path`) | `pipeline.py` | §7.1 |
-| 문서 위치를 루트 `docs/` 기준으로 정리 | `../../docs/ai/detection/`, `07-AI-탐지-음성.md` 25.7 | §9 |
+| 문서 위치를 루트 `docs/` 기준으로 정리 | `../../docs/07-AI-탐지.md` | §9 |
 
 **커밋**: `4d08b51`(구현), `629f43b`(문서 정리). 브랜치 `feat/ai/object-detection` → `develop` MR 생성 완료.
 
@@ -222,7 +222,7 @@ Optional small LLM
 - **AI-Hub 데이터셋 선정 및 확보 (ISSUE-03/04/05 차단 요인 — `data/raw`가 비어 있음, §11.1·§26)**
 - ~~Detect 파인튜닝~~ → **2026-08-05 미채택 결정.** 데이터 3종 × 학습 방식 4종을 교차
   평가했고 사전학습을 이긴 조합이 없었다. 근거·재현 방법·평가 함정 3건은
-  [`../../docs/ai/detection/finetuning_evaluation.md`](../../docs/ai/detection/finetuning_evaluation.md).
+  [`../../docs/07-AI-탐지.md` 25.4](../../docs/07-AI-탐지.md#254-detect-파인튜닝-평가와-미채택-결정).
   **다시 시도하기 전에 그 문서의 4절(평가 방법의 함정)을 반드시 읽는다.**
 - threshold 실측 조정 (ISSUE-06)
 - **성능 미달**: Jetson 실측 9.45FPS로 목표 약 15FPS에 못 미친다.
@@ -325,8 +325,8 @@ multi-person은 ByteTrack 도입으로 자연히 지원된다(별도 작업 아�
   수반한다. 1주 일정에서 가장 큰 리스크다.
 - 따라서 **CLASS_MAP만 확장하면 되도록 설계**해두고(§11), 데이터가 준비되면 재학습만 한다.
 
-기존 `../../docs/ai/detection/requirements.md`에 명시된 `Fire Extinguisher`, `Exit`, `Danger Sign` 3종과 `unknown` 상태는
-**폐기가 아니라 다음 스프린트로 이월**한다. ISSUE-01에서 `../../docs/ai/detection/requirements.md`를 정합화할 때
+기존 요구사항의 `Fire Extinguisher`, `Exit`, `Danger Sign` 3종과 `unknown` 상태는
+**폐기가 아니라 다음 스프린트로 이월**한다. `../../docs/07-AI-탐지.md` 25.3을 정합화할 때
 "이번 스프린트 범위"와 "이월 항목"을 절로 나눠 두 문서의 불일치를 해소한다.
 
 ### 향후 확장: 장애물 탐지 (다음 스프린트, 이번 주 구현 안 함)
@@ -479,11 +479,11 @@ python -m src.main --source 0 --config configs/pipeline.jetson.yaml --output run
 - 실행은 반드시 `python -m src.main`이다. `python src/main.py`는 상대 임포트 때문에 실패한다.
 - `--show`는 헤드리스 Jetson에서 쓰지 않는다(미검증).
 - **모델 가중치는 Git에 없다**(`.gitignore`가 `*.pt`/`*.onnx`를 막는다). Jetson에서는
-  `models/`에 직접 내려받아 배치한다. 절차는 `../../docs/07-AI-탐지-음성.md` 25.7.
+  `models/`에 직접 내려받아 배치한다. 절차는 `../../docs/07-AI-탐지.md` 25.5.
 
 ### Jetson 실기기 검증 결과 (2026-07-30, S15P11A301-150)
 
-전문은 `../../docs/07-AI-탐지-음성.md` 25.7 "실기기 검증 결과". 요약만 옮긴다.
+전문은 `../../docs/07-AI-탐지.md` 25.5. 요약만 옮긴다.
 
 | 항목 | 실측값 |
 |---|---|
@@ -539,7 +539,7 @@ python scripts/bench_jetson.py --source <기준영상> \
 
 ## 7.3 Jetson 성능 실측 결론 (2026-07-31, S15P11A301-98)
 
-전문은 `../../docs/07-AI-탐지-음성.md` 25.7. **여기 결론을 추측으로 뒤집지 않는다.**
+전문은 `../../docs/07-AI-탐지.md` 25.5. **여기 결론을 추측으로 뒤집지 않는다.**
 
 | 축 | 결론 |
 |---|---|
@@ -607,7 +607,7 @@ conda activate sentinel-yolo && python --version   # 또는 §7의 절대경로 
 | `models/` | 존재 — `yolo26n.pt`, `yolo26n-pose.pt`, `yolo26n-reid.onnx`. **Git 추적 안 됨**(§7.1) |
 | `runs/` | 로컬 산출물. `.gitignore`에 `ai/detection/runs/` 등록됨 |
 | `scripts/` | **미존재** — 필요 시 새로 생성 |
-| `docs/` | 존재(`.gitkeep.txt`만 유지). detection 문서 원본은 루트 `../../docs/ai/detection/`로 이동 |
+| `docs/` | 로컬 placeholder만 유지. 탐지 문서의 단일 기준은 `../../docs/07-AI-탐지.md` |
 | `data/` | 존재 (`raw/`, `processed/`, `pose_test/`만 존재, 각 `.gitkeep.txt`). **`raw/`는 여전히 비어 있음** |
 | `notebooks/` | 존재(내용 없음) — 용도 확인 필요 |
 | `README.md`(detection 전용) | **미존재** (상위 `ai/README.md`, `../../docs/ai/README.md`만 존재) |
@@ -622,8 +622,8 @@ conda activate sentinel-yolo && python --version   # 또는 §7의 절대경로 
 
 | 문서 | 위치 |
 |---|---|
-| Jetson 실행·검증·성능·오류 대처 | `../../docs/07-AI-탐지-음성.md` 25.7 [구현 기준] — **단일 출처** |
-| 객체탐지 요구사항 초안 | `../../docs/ai/detection/requirements.md` |
+| Jetson 실행·검증·성능·오류 대처 | `../../docs/07-AI-탐지.md` 25.5 [구현 기준] — **단일 출처** |
+| 객체탐지 설계·실측 | `../../docs/07-AI-탐지.md` |
 | 에이전트 운영 규칙 | 이 문서 (`ai/detection/AGENTS.md`) |
 
 `ai/detection/docs/`에 새 문서를 만들지 않는다. 코드 옆에 두면 루트 `docs/`와 이중화된다.
@@ -648,7 +648,7 @@ ai/detection/
 │   ├── processed/    # 최종 YOLO 데이터 (존재)
 │   ├── samples/       # 시각화 샘플 (미존재, 필요 시 생성)
 │   └── pose_test/     # Pose 테스트 영상 (존재)
-├── docs/               # 로컬 placeholder만 유지. 문서는 루트 ../../docs/ai/detection/ 기준
+├── docs/               # 로컬 placeholder만 유지. 문서는 루트 ../../docs/07-AI-탐지.md 기준
 ├── models/            # 모델 가중치 (Git 추가 금지, .gitignore가 *.pt/*.onnx 차단)
 ├── notebooks/          # 탐색용 노트북(용도 확인 필요)
 ├── runs/               # 추론 산출물 (Git 추가 금지, 실행별 타임스탬프 하위 폴더)
@@ -888,7 +888,7 @@ CLASS_MAP = {
 - **AI Agent는 AI-Hub 계정 로그인, 본인인증, 신청, API key 발급을 대신 수행하지 않는다.**
   이 단계는 사용자가 직접 진행하고, 에이전트는 다운로드 완료된 `data/raw` 구조를 분석하는 것부터 담당한다.
 - **API key를 코드나 문서에 하드코딩하지 않는다.** 환경변수 또는 Git에 포함되지 않는 로컬 설정으로 관리한다.
-- 데이터셋별 **이용 조건과 출처를 `../../docs/ai/detection/dataset_selection.md`에 반드시 기록한다**(§26 ISSUE-02).
+- 데이터셋별 **이용 조건과 출처를 `../../docs/07-AI-탐지.md` 25.3·25.8에 반드시 기록한다**(§26 ISSUE-02).
 
 ### 안심존(安心존) 데이터 주의
 
@@ -1026,7 +1026,7 @@ NORMAL   쓰러짐 점수가 임계값 미만. 서 있든 앉아 있든 포함�
 FALLEN   쓰러짐 점수가 임계값 이상. 누워 있는 형태를 뜻하며 직전 자세와 무관하다
 ```
 
-근거: `docs/07-AI-탐지-음성.md` 25.6, DB 스키마 (`pose_status VARCHAR NULL -- NORMAL | FALLEN`)
+근거: `docs/07-AI-탐지.md` 25.2, DB 스키마 (`pose_status VARCHAR NULL -- NORMAL | FALLEN`)
 
 **`FALLEN`은 encounter 우선순위 상향과 관제 강조 표시에만 쓰고 의료적 판정으로
 사용하지 않는다**(명세 25.6). 로봇은 진단하지 않는다.
@@ -1100,7 +1100,7 @@ FALLEN   쓰러짐 점수가 임계값 이상. 누워 있는 형태를 뜻하며
 ### ID 교체 시 상태 승계
 
 트래커가 새 trackId를 부여해도 **시간·위치가 가까우면** 누적 시간을 승계한다.
-명세가 허용하는 범위다(`docs/07-AI-탐지-음성.md` 25.4 "시간·위치·외형의 단순 조건으로 병합").
+명세가 허용하는 범위다(`docs/07-AI-탐지.md` 25.1 "시간·위치의 단순 조건으로 병합").
 **외형은 쓰지 않는다.** 승계 오작동을 막기 위해 세 가지를 테스트로 고정했다 —
 멀리 떨어진 새 ID 승계 금지, 오래된 트랙 승계 금지, 한 상태의 중복 승계 금지.
 
@@ -1412,7 +1412,7 @@ ISSUE-01, ISSUE-02, ISSUE-07 착수
 ### 브랜치
 현재 브랜치 `feat/ai/object-detection`을 그대로 사용한다(§24 참고).
 
-### ISSUE-01 — `../../docs/ai/detection/requirements.md`
+### ISSUE-01 — `../../docs/07-AI-탐지.md` 25.3
 기존 초안이 있으므로 삭제 후 재작성하지 말고 병합·정합화한다. 필수 내용: 프로젝트 목적,
 Detect-first 파이프라인, 입력과 출력, person class, Pose trigger, confidence 초기값,
 최소 bbox 크기, 자세 상태, 주요 keypoint, Definition of Done, 제외 범위.
@@ -1432,7 +1432,7 @@ bbox_width >= 80 px
 bbox_height >= 80 px
 ```
 
-### ISSUE-02 — `../../docs/ai/detection/dataset_selection.md`(신규)
+### ISSUE-02 — `../../docs/07-AI-탐지.md` 25.3
 필수 내용: 실제 확인한 데이터셋 후보, 출처, bbox 포함 여부, 이미지 수, 라벨 형식,
 재난/실내/저조도 유사성, 라이선스, 변환 난이도, 장단점, 최종 선정 또는 보류(보류 시 필요 정보), class map.
 
@@ -1464,7 +1464,7 @@ bbox_height >= 80 px
 - **D (71641, 사용 불가)** — 내용만 보면 keypoint와 BBOX를 모두 갖춘 최적의 데이터셋이지만,
   **보건의료 데이터로 안심존을 통해서만 개방되고 IRB 심의 결과 통지서가 필요하다**(§11.1).
   로컬 다운로드·학습이 불가능하므로 이번 스프린트에서 제외한다. **내용이 좋다는 이유로 무리하게
-  시도하지 말 것.** 이 판단 근거를 `../../docs/ai/detection/dataset_selection.md`에 반드시 기록한다.
+  시도하지 말 것.** 이 판단 근거를 `../../docs/07-AI-탐지.md` 25.3에 반드시 기록한다.
 
 **확인 필요 (신청 전 사용자가 페이지에서 직접 볼 것)**
 - A와 B의 **JSON 라벨 스키마 실제 구조** — 필드명, bbox 좌표계(xyxy/xywh/절대/정규화)는 페이지 요약만으로
@@ -1808,7 +1808,7 @@ Tracking(ByteTrack)은 Drop에서 제외되어 **Must에 포함**된다(§6 채�
 > 아래는 §26의 실행 순서 변경(파이프라인 우선)에 맞춰 재정의한 기준이다.
 
 ### 화요일
-`../../docs/ai/detection/requirements.md` 정합화, `../../docs/ai/detection/dataset_selection.md` 작성,
+`../../docs/07-AI-탐지.md` 정합화,
 `schemas.py` / `object_detector.py` / `pose_estimator.py` / `main.py` 구현,
 사전학습 모델로 **person bbox + keypoint(원본 좌표 복원)까지 출력**,
 테스트 영상 4종(standing/sitting/bending/lying) 확보.
@@ -1861,8 +1861,8 @@ AI-Hub 데이터가 끝내 확보되지 않아도 아래는 반드시 충족한�
 
 | # | 항목 | 성격 | 해결 주체 | 관련 |
 |---|---|---|---|---|
-| 1 | ~~AI-Hub 데이터셋 선정 및 다운로드~~ → **2026-08-05 해결.** AI-Hub 71550(전도 645클립)과 E-FPDS(6,982장) 확보·변환 완료 | 해결됨 | — | `docs/ai/detection/dataset_selection.md` |
-| 1b | **Detect 파인튜닝 미채택 확정** — 교차 평가에서 사전학습을 이긴 조합 없음. 재시도 시 평가 함정 3건을 먼저 읽을 것 | 결정 완료 | — | `docs/ai/detection/finetuning_evaluation.md` |
+| 1 | ~~AI-Hub 데이터셋 선정 및 다운로드~~ → **2026-08-05 해결.** AI-Hub 71550(전도 645클립)과 E-FPDS(6,982장) 확보·변환 완료 | 해결됨 | — | `docs/07-AI-탐지.md` 25.3 |
+| 1b | **Detect 파인튜닝 미채택 확정** — 교차 평가에서 사전학습을 이긴 조합 없음. 재시도 시 평가 함정 3건을 먼저 읽을 것 | 결정 완료 | — | `docs/07-AI-탐지.md` 25.4 |
 | 2 | 선정 데이터셋의 실제 JSON 라벨 스키마 미확인 | ISSUE-04만 차단 (parser 작성 불가) | 샘플 확보 후 에이전트 | §12, §28 |
 | 2b | **테스트 영상 4종(standing/sitting/bending/lying) 미확보** | **실영상 검증 차단** | 사용자(직접 촬영 가능) | §26, §28.1 |
 | 2c | `FALLEN` 판정이 **실제 누운 사람 영상으로 미검증** | 임계값·가중치 신뢰도 미확보 | 2b 확보 후 | §15, §28.1 |
@@ -1872,9 +1872,9 @@ AI-Hub 데이터가 끝내 확보되지 않아도 아래는 반드시 충족한�
 | 5 | `aihubshell`의 Windows 동작 여부 미확인 | 경미(대안 있음) | 사용자 | §11.1 |
 | 6 | `notebooks/` 디렉터리 용도 불명 | 경미 | 팀 | §8 |
 | 7 | ~~명세 이탈 미승인~~ → **2026-08-05 팀 승인.** BoT-SORT·Pose crop은 현재 구현대로 간다. **ReID는 같은 날 Jetson에서 되돌렸다**(담당자 미채택) — 로봇 프로파일은 명세 준수, 이탈은 개발 PC에만 남는다. 명세 개정(`pose_status` 2값) 공지도 완료 | 해결됨 | — | §0 |
-| 8 | `../../docs/ai/detection/requirements.md`가 최초 초안 상태(클래스 4종) | 문서 정합 | ISSUE-01 | §6 |
+| 8 | 클래스 4종 중 현재 `person`만 MVP에 포함 | 문서 정합 완료 | ISSUE-01 | §6·`docs/07-AI-탐지.md` 25.3 |
 | 9 | ~~`requirements.txt`에 `lap`·`onnxruntime` 미반영~~ → **2026-08-05 해결.** 단, **Jetson(aarch64)은 마커에서 제외**했다. PyPI `onnxruntime-gpu`가 aarch64를 지원하지 않아 그냥 넣으면 CPU 빌드가 조용히 깔린다. NVIDIA Jetson 인덱스에서 수동 설치해야 한다. **Jetson에서는 ReID가 꺼져 있어 `onnxruntime` 자체가 필요 없다**(§0 이탈 2) — 다시 켤 때만 문제가 된다 | 해결됨 | — | §7 |
-| 10 | ~~자세 임계값이 실측 근거 없는 임의값~~ → **2026-08-05 부분 해결.** 자세·형상 임계값 5개 + 가중치 3개는 E-FPDS 정답 2,658건과 대조해 검증했다(쓰러짐 0.919 / 비쓰러짐 0.032로 분리). **변경 불필요** | 해결됨 | — | `docs/ai/detection/posture_threshold_calibration.md` |
+| 10 | ~~자세 임계값이 실측 근거 없는 임의값~~ → **2026-08-05 부분 해결.** 자세·형상 임계값 5개 + 가중치 3개는 E-FPDS 정답 2,658건과 대조해 검증했다(쓰러짐 0.919 / 비쓰러짐 0.032로 분리). **변경 불필요** | 해결됨 | — | `docs/07-AI-탐지.md` 25.2 |
 | 10b | **부동(inactivity) 신호 3개는 미검증** — `inactivity_boost`, `motion.still_ratio`, `motion.full_still_seconds`. E-FPDS가 정지 이미지라 측정에서 빠졌다. "가구 위에 누워도 미동 없으면 쓰러짐" 판단을 담당하므로 재난 시나리오에서 중요하다 | 신뢰도 | **영상 데이터 필요** | §15, 위 문서 4절 |
 | 11 | **Detect 상시 15FPS 미달** — Jetson 실측 9.45FPS(사람 4명, 스트리밍 동시 구동). 계측·벤치 도구는 준비 완료, **Jetson 실측 대기** | **성능 미달 확정** | ISSUE-06 | §7.2 |
 | 12 | ~~Linux/aarch64 실행 이력 없음~~ → **2026-07-30 해결: Jetson 실기기 검증 완료** | 해결됨 | — | §7.1 |
@@ -1882,7 +1882,7 @@ AI-Hub 데이터가 끝내 확보되지 않아도 아래는 반드시 충족한�
 | 14 | ~~ROS2 노드 래핑 미착수~~ → **해결: `src/ros_main.py`(S15P11A301-153)** | 해결됨 | — | §10 |
 | 15 | `ai/detection/README.md` 부재 — 외부 개발자 진입점이 AGENTS.md뿐 | 인수인계 | 에이전트 | §8 |
 | 16 | 모델 가중치가 Git에 없어 clone만으로는 실행 불가 | 배포 | Runbook 3장으로 완화됨 | §7.1 |
-| 17 | ~~`dataset_selection.md` 미작성~~ → **2026-07-31 해결**(`../../docs/ai/detection/dataset_selection.md`) | 해결됨 | — | §11.1 |
+| 17 | ~~데이터셋 선정 기록 미작성~~ → **2026-07-31 해결**, 287에서 `../../docs/07-AI-탐지.md`로 통합 | 해결됨 | — | §11.1 |
 | 18 | `schemas.py`의 `build_encounter_data()`가 여전히 encounter를 만든다. **encounter 발급 권한은 Mission Manager 단독**(명세 26.1) | **중복 소지** | 에이전트 + Mission 담당 | §10, §17 |
 | 19 | `src.main` 경로는 로봇에서 카메라를 열 수 없다(`usb_cam` 점유). 단독 검증 전용임을 코드가 강제하지 않는다 | 오용 위험 | 에이전트 | §10 |
 | 20 | Jetson 가용 RAM 700MB 이하에서 `CUBLAS_STATUS_ALLOC_FAILED` 재현 | 운영 제약 | Jetson 담당 | Runbook 13장 |

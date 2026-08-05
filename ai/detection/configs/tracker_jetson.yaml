@@ -28,7 +28,7 @@
 #     ReID 끔   발급 trackId 33개   (AI-Hub 3,660프레임, 동시 최대 7명)
 #
 # **이것이 팀 계약을 깨지는 않는다.** 명세의 중복 판정은 trackId가 아니라 위치·시간
-# 기반이다 — "기존 위치 1m 이내 AND 최근 15초 이내"(docs/07-AI-탐지-음성.md 25.4).
+# 기반이다 — "기존 위치 1m 이내 AND 최근 15초 이내"(docs/07-AI-탐지.md 25.1).
 # 페이로드의 trackIds 도 nullable 배열이며 중복 제거는 Mission Manager가 한다.
 # SLAM 연동 후 mapPose가 붙으면 명세가 의도한 방식으로 해결된다.
 #

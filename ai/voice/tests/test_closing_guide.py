@@ -90,13 +90,13 @@ class SessionClosingGuideTest(unittest.TestCase):
 
 
 class DocumentedTextMatchesCodeTest(unittest.TestCase):
-    """문서 6-1 표의 문구와 코드가 어긋나면 UNAPPROVED_TEXT로 재생이 거부된다.
+    """문서 33.3 표의 문구와 코드가 어긋나면 UNAPPROVED_TEXT로 재생이 거부된다.
 
     사람이 문서만 고치거나 코드만 고치는 실수를 CI 없이도 잡기 위한 테스트다.
     """
 
     def setUp(self):
-        doc = config.VOICE_ROOT / "docs" / "README.md"
+        doc = config.VOICE_ROOT.parent.parent / "docs" / "08-AI-음성.md"
         self.lines = doc.read_text(encoding="utf-8").splitlines()
 
     def test_every_asset_text_appears_in_docs(self):
@@ -110,7 +110,7 @@ class DocumentedTextMatchesCodeTest(unittest.TestCase):
                 self.assertTrue(
                     row,
                     f"{code.value}의 파일명과 문구가 같은 표 행에 없다. "
-                    "docs/README.md 6-1 표를 코드와 함께 갱신한다.",
+                    "docs/08-AI-음성.md 33.3 표를 코드와 함께 갱신한다.",
                 )
 
     def test_no_asset_needs_a_new_recording(self):

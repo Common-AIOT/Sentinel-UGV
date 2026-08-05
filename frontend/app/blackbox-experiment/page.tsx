@@ -35,7 +35,7 @@ import { DENOISED_AUDIO_TYPE, mockApi as api } from "./mockApi";
  * 원본 오디오에서 파생되므로 타임라인이 표본 단위로 일치하고, 아래 동기 코드는
  * 재생·탐색·배속을 따라가기 위한 것이다.
  *
- * 근거·실측: ai/voice/docs/measurements/잡음제거-실측.md §5
+ * 근거·실측: docs/08-AI-음성.md 33.9
  */
 
 const MISSION_STATUS_LABEL: Record<string, string> = {

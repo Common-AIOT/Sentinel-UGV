@@ -23,4 +23,4 @@ python -m tools.validate_guide_assets --report results/guide-assets.json
 스피커가 구 문구를 재생하면 에코 가드가 무력해진다(S15P11A301-165).
 
 실제 파일 목록과 녹음·장비 검증 절차는
-[`../docs/README.md` §6 안내 음성 자산](../docs/README.md)를 따른다.
+제작·검수 정책은 [`docs/08-AI-음성.md` 33.8](../../../docs/08-AI-음성.md#338-실측-결과와-모델-선정)을 따른다.

@@ -65,7 +65,7 @@ ASKED_QUESTIONS = (
 )
 
 # 세션 전체 예산(초). 기본값은 여기 한 곳에만 둔다 — 두 곳에 복제했더니
-# 실기 경로에 반영되지 않은 사고가 있었다. 산정 근거는 docs/README.md 11-2.
+# 실기 경로에 반영되지 않은 사고가 있었다. 계약은 docs/08-AI-음성.md 33.3.
 SESSION_TIMEOUT_SECONDS = 180.0
 
 FIELD_BY_QUESTION = {

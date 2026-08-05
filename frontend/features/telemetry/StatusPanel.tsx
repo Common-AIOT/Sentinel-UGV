@@ -141,7 +141,10 @@ export default function StatusPanel() {
         <div className="flex items-start gap-1.5 rounded border border-accent/30 bg-accent/5 px-2.5 py-2">
           <Pause size={12} className="text-accent flex-shrink-0 mt-0.5" />
           <p className="text-[11px] text-accent leading-snug">
-            재개는 운영자 명령으로만 이루어집니다. 탐사 재개 또는 복귀를 지시하세요.
+            {/* 「또는 복귀를」 을 지웠다 (S15P11A301-281). 복귀 버튼이 없다 —
+                「임무 종료」로 바뀌었고 복귀 주행은 미구현이다(S15P11A301-246).
+                없는 조작을 지시하면 조작자가 화면에서 그것을 찾는다. */}
+            재개는 운영자 명령으로만 이루어집니다. 「탐사 재개」를 지시하세요.
           </p>
         </div>
       )}
@@ -184,10 +187,13 @@ export default function StatusPanel() {
             <p className="text-[11px] text-info leading-snug font-medium">
               모바일 앱에서 조종합니다
             </p>
+            {/* 짧게 유지한다 (S15P11A301-281). 종전에는 모드 전환·주행 미재개·
+                재개 절차를 3줄에 담았는데, 「주행은 재개되지 않는다」는 아래
+                일시정지 안내가 이미 말하므로 중복이었다. 「복귀」도 지웠다 —
+                그 버튼은 「임무 종료」이고 복귀 주행은 미구현이다(S15P11A301-274). */}
             <p className="text-[11px] text-muted-foreground leading-snug">
-              관제 웹에는 조종 입력이 없습니다. 탐사·복귀를 지시하려면 위 「자율」로
-              먼저 되돌리세요 — 모드를 되돌려도 주행은 재개되지 않고, 재개는 그
-              뒤에 「탐사 재개」로 지시합니다.
+              관제 웹에는 조종 입력이 없습니다. 자율 명령을 내리려면 위 「자율」로
+              먼저 되돌리세요.
             </p>
           </div>
         </div>

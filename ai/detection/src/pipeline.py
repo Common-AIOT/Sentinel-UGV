@@ -239,7 +239,14 @@ class InferencePipeline:
             events_filename=out_cfg["jsonl_events"],
             write_frame_log=out_cfg["write_frame_log"],
         )
-        self.image_store = EventImageStore(output_dir / out_cfg["events_dir"])
+        # 보존 상한 (S15P11A301-265). 설정에 없으면 상한 없음 = 종전 동작이다.
+        # 근거는 storage.py docstring — 쿨다운이 트랙별이라 사람이 많으면 총량에
+        # 경계가 없고, run 하나가 1.2G 까지 커져 디스크가 찼다.
+        self.image_store = EventImageStore(
+            output_dir / out_cfg["events_dir"],
+            max_bytes=out_cfg.get("events_max_bytes"),
+            max_files=out_cfg.get("events_max_files"),
+        )
         self.draw_overlay_on_event = out_cfg["draw_overlay_on_event_image"]
         # 이벤트 확정 프레임에 한해 Pose를 강제 실행한다(_fill_pose_for_event).
         # 증빙 이미지에 골격이 남고 poseStatus가 실제 실행 결과가 된다.

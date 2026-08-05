@@ -12,7 +12,7 @@ import type { TelemetryPoint } from "@/lib/api";
 interface Props {
   points: TelemetryPoint[];
   /** TelemetryPoint 의 숫자 필드 중 그릴 지표. 기본 CPU 사용률. */
-  metric?: "cpu" | "gpu" | "memory" | "jetsonTemp" | "battery";
+  metric?: "cpu" | "gpu" | "memory" | "jetsonTemp" | "battery" | "temperature" | "humidity";
   label?: string;
   unit?: string;
 }

@@ -24,6 +24,12 @@ import {
  *
  * durationSec·distanceM·detectionCount 는 임무가 끝난 뒤 서버가 집계한다(#166).
  * 진행 중이거나 집계 이전 임무는 null 이므로 "—" 로 보여준다.
+ *
+ * 레이아웃은 관제(/)와 같은 "스크롤 없는 한 화면" 대시보드다 (S15P11A301-273).
+ * 예전에는 세로 스크롤 문서였는데 — 요약 카드가 옆 차트 높이에 맞춰 빈 상자로
+ * 늘어나고, 이 화면의 주인공인 발견 목록이 지도 아래 화면 밖에 있었고, 발견을
+ * 클릭하면 영상 패널이 위에서 끼어들며 전체가 밀렸다. 지금은 가운데가 지도,
+ * 오른쪽 사이드바가 환경 차트·발견 목록, 영상은 지도 위 오버레이로 뜬다.
  */
 
 /** 잡음 제거 오디오 kind (#228 계약). 원본 오디오의 파생물 — 원본이 증거다. */
@@ -38,9 +44,23 @@ const MOBILITY_LABEL: Record<string, string> = {
   MOBILE: "자력 이동 가능", IMMOBILE: "자력 이동 불가", UNKNOWN: "이동성 미확인",
 };
 const URGENT_LABEL: Record<string, string> = { NONE: "긴급 호소 없음", BLEEDING: "출혈 호소" };
+// 발견 종료 사유. PERSON_LOST 는 서버(EncounterWriter)가, 나머지는 음성 세션 보고
+// (interaction-report.schema.json 의 terminationReason enum)가 넣는다.
+// SESSION_COMPLETE·NO_RESPONSE 는 예전 형식의 기존 행 호환용으로 남긴다.
 const TERMINATION_LABEL: Record<string, string> = {
-  SESSION_COMPLETE: "대화 완료", NO_RESPONSE: "무응답 종료", PERSON_LOST: "대상 놓침",
+  PERSON_LOST: "대상 놓침",
+  NORMAL: "대화 완료",
+  TIMEOUT: "대화 시간 초과",
+  ABORTED_MANUAL: "운영자 중단",
+  ABORTED_SAFETY: "안전 사유 중단",
+  AUDIO_DEVICE_ERROR: "오디오 장치 오류",
+  GMS_UNAVAILABLE: "음성 분석 불가",
+  UNKNOWN: "사유 미상",
+  SESSION_COMPLETE: "대화 완료",
+  NO_RESPONSE: "무응답 종료",
 };
+/** 임무 종료 사유 — 현재 서버가 쓰는 값은 OPERATOR_STOP 뿐(CommandAckWriter). */
+const END_REASON_LABEL: Record<string, string> = { OPERATOR_STOP: "운영자 종료" };
 
 function humanizeInteractionSummary(raw: string): string | null {
   const kv: Record<string, string> = {};
@@ -284,6 +304,13 @@ export default function MissionHistoryPage() {
     };
   }, [denoised, videoUrl, denoisedUrl]);
 
+  /** 영상 오버레이 닫기 — 지도로 복귀. */
+  const closeOverlay = useCallback(() => {
+    setDetail(null);
+    setVideoUrl(null);
+    setVideoError(null);
+  }, []);
+
   return (
     <div className="h-screen w-screen flex flex-col overflow-hidden bg-background text-foreground">
       <div className="h-9 flex-shrink-0 flex items-center justify-between px-4 border-b border-border bg-card/60">
@@ -341,55 +368,107 @@ export default function MissionHistoryPage() {
           </div>
         </div>
 
-        {/* 임무 상세 */}
-        <div className="flex-1 flex flex-col overflow-hidden">
-          {/* 영상 재생 패널 */}
-          {(videoUrl || videoError) && (
-            <div className="flex-shrink-0 border-b border-border bg-[#141a22] p-4">
-              <div className="flex gap-4">
-                {/* ── 소음 제거본 토글 — 영상 아래에 조작부를 붙이려고 세로 묶음으로 감쌌다 ── */}
-                <div className="flex-shrink-0 flex flex-col gap-2">
-                  <div className="rounded border border-border overflow-hidden bg-black" style={{ width: 400, height: 225 }}>
-                    {videoUrl ? (
-                      <video ref={videoRef} src={videoUrl} controls autoPlay className="w-full h-full object-contain" />
-                    ) : (
-                      <div className="w-full h-full flex flex-col items-center justify-center gap-2">
-                        <Play size={24} className="text-muted-foreground/40" />
-                        <span className="font-mono text-[10px] text-muted-foreground">{videoError}</span>
-                      </div>
-                    )}
+        {/* 가운데 — 요약 스트립 + 임무 지도. 발견을 열면 이 위에 영상 오버레이가 뜬다. */}
+        <div className="relative flex-1 min-w-0 flex flex-col overflow-hidden p-3 gap-3">
+          {selected && (
+            <>
+              {/* 임무 결과 요약 — 값 한 줄이면 충분해서 얇은 스트립으로 그린다.
+                  예전 2×2 카드는 옆 차트 높이에 맞춰 늘어나 대부분이 빈 공간이었다. */}
+              <div className="flex gap-2 flex-shrink-0">
+                {[
+                  ["걸린 시간", fmtDuration(selected.durationSec)],
+                  ["이동 거리", fmtDistance(selected.distanceM)],
+                  ["발견 인원", selected.detectionCount?.toString() ?? "—"],
+                  ["종료 사유", selected.endReason ? (END_REASON_LABEL[selected.endReason] ?? selected.endReason) : "—"],
+                ].map(([k, v]) => (
+                  <div
+                    key={k}
+                    className="flex-1 min-w-0 border border-border rounded bg-card px-3 py-1.5 flex items-baseline justify-between gap-2"
+                  >
+                    <span className="font-mono text-[9px] text-muted-foreground flex-shrink-0">{k}</span>
+                    <span className="font-mono text-xs text-foreground truncate">{v}</span>
                   </div>
+                ))}
+              </div>
 
-                  {/* ── 소음 제거본 토글 — 조작부. 제거본 자산이 있을 때만 그린다 ── */}
-                  {videoUrl && denoisedUrl && (
-                    <>
-                      <audio ref={audioRef} src={denoisedUrl} preload="auto" />
-                      <button
-                        onClick={() => setDenoised(v => !v)}
-                        className={`flex items-center justify-center gap-2 font-mono text-[11px] px-3 py-2 rounded border transition-colors ${
-                          denoised
-                            ? "border-primary/50 bg-primary/15 text-primary"
-                            : "border-border bg-secondary/30 text-muted-foreground hover:text-foreground"
-                        }`}
-                        title="영상은 그대로 두고 소리만 바꿉니다"
-                      >
-                        {denoised ? <Volume2 size={12} /> : <VolumeX size={12} />}
-                        {denoised ? "소음 제거본 재생 중 — 원본으로" : "소음 제거본으로 듣기"}
-                      </button>
-                      <p className="font-mono text-[9px] text-muted-foreground/70 leading-relaxed" style={{ width: 400 }}>
-                        제거본은 명료도 보조입니다. <span className="text-muted-foreground">원본이 증거</span>이며
-                        두드림·신음 같은 비언어 소리는 제거본에서 사라질 수 있습니다.
-                      </p>
-                    </>
+              {/* 임무 지도 — 메인. 마커 클릭 → 영상 (S15P11A301-203) */}
+              <div className="flex-1 min-h-0">
+                <MissionMap
+                  fill
+                  missionId={selected.id}
+                  encounters={encounters}
+                  onEncounterClick={openEncounter}
+                />
+              </div>
+            </>
+          )}
+
+          {/* 영상 오버레이 — 지도 위에 뜨고 닫으면 지도로 복귀. 예전처럼 상단에
+              패널이 끼어들며 레이아웃 전체를 밀어내지 않는다 (S15P11A301-273). */}
+          {(detail || videoUrl || videoError) && (
+            <div
+              className="absolute inset-0 z-20 bg-background/70 backdrop-blur-sm flex items-center justify-center p-6"
+              onClick={closeOverlay}
+            >
+              <div
+                className="border border-border rounded-lg bg-card shadow-2xl p-4 w-full max-w-5xl max-h-full overflow-y-auto"
+                onClick={e => e.stopPropagation()}
+              >
+                {/* 헤더 — 발견 요약 한 줄 + 닫기. 영상이 증거의 본체라 카드 폭 전체를
+                    영상에 주고 메타는 아래로 내린다. 옆 컬럼으로 두면 좁은 창에서
+                    영상이 도로 작아진다(실측). */}
+                <div className="flex items-center justify-between mb-3">
+                  <p className="font-mono text-xs text-foreground">
+                    {detail
+                      ? <>{ENCOUNTER_STATUS_LABEL[detail.status] ?? detail.status}
+                          <span className="text-muted-foreground"> · 발견 {fmtTime(detail.startedAt)}</span></>
+                      : "이벤트 영상"}
+                  </p>
+                  <button
+                    onClick={closeOverlay}
+                    className="font-mono text-[10px] px-2 py-1 border border-border rounded text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    ✕ 닫기
+                  </button>
+                </div>
+
+                <div className="rounded border border-border overflow-hidden bg-black w-full aspect-video">
+                  {videoUrl ? (
+                    <video ref={videoRef} src={videoUrl} controls autoPlay className="w-full h-full object-contain" />
+                  ) : (
+                    <div className="w-full h-full flex flex-col items-center justify-center gap-2">
+                      <Play size={24} className="text-muted-foreground/40" />
+                      <span className="font-mono text-[10px] text-muted-foreground">{videoError}</span>
+                    </div>
                   )}
                 </div>
-                {detail && (
-                  <div className="flex-1 space-y-2 min-w-0">
-                    <p className="font-mono text-xs text-foreground">
-                      {ENCOUNTER_STATUS_LABEL[detail.status] ?? detail.status}
-                      <span className="text-muted-foreground"> · 발견 {fmtTime(detail.startedAt)}</span>
+
+                {/* ── 소음 제거본 토글 — 조작부. 제거본 자산이 있을 때만 그린다 ── */}
+                {videoUrl && denoisedUrl && (
+                  <div className="mt-2 flex items-center gap-3">
+                    <audio ref={audioRef} src={denoisedUrl} preload="auto" />
+                    <button
+                      onClick={() => setDenoised(v => !v)}
+                      className={`flex-shrink-0 flex items-center justify-center gap-2 font-mono text-[11px] px-3 py-2 rounded border transition-colors ${
+                        denoised
+                          ? "border-primary/50 bg-primary/15 text-primary"
+                          : "border-border bg-secondary/30 text-muted-foreground hover:text-foreground"
+                      }`}
+                      title="영상은 그대로 두고 소리만 바꿉니다"
+                    >
+                      {denoised ? <Volume2 size={12} /> : <VolumeX size={12} />}
+                      {denoised ? "소음 제거본 재생 중 — 원본으로" : "소음 제거본으로 듣기"}
+                    </button>
+                    <p className="font-mono text-[9px] text-muted-foreground/70 leading-relaxed">
+                      제거본은 명료도 보조입니다. <span className="text-muted-foreground">원본이 증거</span>이며
+                      두드림·신음 같은 비언어 소리는 제거본에서 사라질 수 있습니다.
                     </p>
-                    <div className="grid grid-cols-3 gap-2 max-w-md">
+                  </div>
+                )}
+
+                {detail && (
+                  <div className="mt-3 space-y-2">
+                    <div className="grid grid-cols-3 gap-2">
                       {[
                         ["감지 인원", detail.detectedPersonCount?.toString() ?? "—"],
                         ["상호작용", detail.interactionStartedAt ? `${fmtTime(detail.interactionStartedAt)}~${fmtTime(detail.interactionEndedAt)}` : "—"],
@@ -410,7 +489,7 @@ export default function MissionHistoryPage() {
                     </div>
                     {/* 음성 보고 요약 — 세션이 없으면 없다고 말한다(0·빈칸으로 오독 방지).
                         한국어 표기는 표시 계층 변환일 뿐이고 원문은 title 로 보존한다. */}
-                    <p className="font-mono text-[10px] text-muted-foreground max-w-md break-words"
+                    <p className="font-mono text-[10px] text-muted-foreground break-words"
                        title={detail.interactionSummary ?? undefined}>
                       {detail.interactionSummary
                         ? <>음성 보고: <span className={
@@ -421,103 +500,84 @@ export default function MissionHistoryPage() {
                           </span></>
                         : "음성 보고 없음 — 대화 세션이 기록되지 않은 발견입니다"}
                     </p>
-                    <button
-                      onClick={() => { setDetail(null); setVideoUrl(null); setVideoError(null); }}
-                      className="font-mono text-[10px] px-2 py-1 border border-border rounded text-muted-foreground hover:text-foreground transition-colors"
-                    >
-                      ✕ 닫기
-                    </button>
                   </div>
                 )}
               </div>
             </div>
           )}
+        </div>
 
-          <div className="flex-1 overflow-y-auto p-4 space-y-4">
-            {selected && (
-              <>
-                {/* 임무 결과 요약 + 시스템 지표 — 한 블록. 왼쪽 2×2 카드, 오른쪽 그래프. */}
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="grid grid-cols-2 gap-2">
-                    {[
-                      ["걸린 시간", fmtDuration(selected.durationSec)],
-                      ["이동 거리", fmtDistance(selected.distanceM)],
-                      ["발견 인원", selected.detectionCount?.toString() ?? "—"],
-                      ["종료 사유", selected.endReason ?? "—"],
-                    ].map(([k, v]) => (
-                      <div key={k} className="border border-border rounded px-3 py-2 bg-card">
-                        <p className="font-mono text-[9px] text-muted-foreground mb-0.5">{k}</p>
-                        <p className="font-mono text-sm text-foreground">{v}</p>
-                      </div>
-                    ))}
-                  </div>
-                  <TelemetryChart points={telemetry} metric="cpu" label="CPU 사용률" unit="%" />
-                </div>
+        {/* 오른쪽 — 임무 당시 환경 + 발견 목록. 발견이 이 화면의 주인공이라 스크롤
+            없이 항상 보이는 자리에 둔다. */}
+        <div className="w-80 flex-shrink-0 border-l border-border bg-card flex flex-col overflow-hidden">
+          {/* CPU 그래프는 뺐다(S15P11A301-273) — 관제자 판단에 도움이 안 돼 관제
+              화면에서 뺀 값(#223)이 이력에서라고 유용해지지 않는다. 대신 재난 현장
+              기록으로 의미 있는 임무 당시 온습도를 그린다. 값은 이미 telemetry
+              응답에 있다(#205). 단위가 달라(°C vs %) 차트를 나눈다. */}
+          {/* 차트는 h-full 로 부모를 채우므로 높이가 정해진 상자에 넣는다 — 자동 높이
+              컨테이너에 두면 퍼센트 높이가 무너져 아래 목록과 겹친다(실측). */}
+          <div className="p-2 space-y-2 flex-shrink-0">
+            <div className="h-28">
+              <TelemetryChart points={telemetry} metric="temperature" label="임무 중 온도" unit="°C" />
+            </div>
+            <div className="h-28">
+              <TelemetryChart points={telemetry} metric="humidity" label="임무 중 습도" unit="%" />
+            </div>
+          </div>
 
-                {/* 임무 지도 — 지도 위 발견 마커·주행 경로. 마커 클릭 → 영상 (S15P11A301-203) */}
-                <MissionMap
-                  missionId={selected.id}
-                  encounters={encounters}
-                  onEncounterClick={openEncounter}
-                />
-
-                {/* 발견 목록 */}
-                <div>
-                  <p className="font-mono text-[10px] text-muted-foreground uppercase tracking-wider mb-2">
-                    발견 이벤트 {encounters.length > 0 && `(${encounters.length})`}
-                  </p>
-                  {encountersLoading && (
-                    <p className="font-mono text-[10px] text-muted-foreground">불러오는 중…</p>
-                  )}
-                  {!encountersLoading && encounters.length === 0 && (
-                    <p className="font-mono text-[10px] text-muted-foreground">이 임무에서 발견된 사람이 없습니다</p>
-                  )}
-                  <div className="space-y-2">
-                    {encounters.map(enc => (
-                      <div
-                        key={enc.id}
-                        onClick={() => openEncounter(enc)}
-                        className={`border rounded p-3 bg-card hover:border-primary/30 transition-colors cursor-pointer ${
-                          detail?.id === enc.id ? "border-primary/40 bg-primary/5" : "border-border"
-                        }`}
-                      >
-                        <div className="flex items-center gap-4">
-                          <div className="w-10 h-10 rounded-full flex-shrink-0 flex items-center justify-center border border-accent/30 bg-accent/10">
-                            <User size={14} className="text-accent" />
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center justify-between mb-1">
-                              <span className="font-mono text-[11px] text-foreground">
-                                {ENCOUNTER_STATUS_LABEL[enc.status] ?? enc.status}
-                                {enc.detectedPersonCount !== null && (
-                                  <span className="text-accent"> · {enc.detectedPersonCount}명</span>
-                                )}
-                              </span>
-                              <span className="font-mono text-[9px] text-muted-foreground">{fmtTime(enc.startedAt)}</span>
-                            </div>
-                            <div className="flex items-center gap-3 font-mono text-[10px] text-muted-foreground">
-                              {enc.mapX !== null && enc.mapY !== null ? (
-                                <span><MapPin size={9} className="inline mr-0.5" />({enc.mapX.toFixed(1)}, {enc.mapY.toFixed(1)})</span>
-                              ) : (
-                                <span className="text-muted-foreground/50">위치 미기록</span>
-                              )}
-                              {enc.terminationReason && <span>{enc.terminationReason}</span>}
-                            </div>
-                          </div>
-                          <button
-                            onClick={e => { e.stopPropagation(); openEncounter(enc); }}
-                            className="flex-shrink-0 w-8 h-8 rounded-full border border-primary/30 bg-primary/10 hover:bg-primary/20 flex items-center justify-center text-primary transition-colors"
-                            title="이벤트 영상 재생"
-                          >
-                            <Play size={12} />
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </>
+          <p className="px-3 py-2 border-y border-border font-mono text-[10px] text-muted-foreground uppercase tracking-wider flex-shrink-0">
+            발견 이벤트 {encounters.length > 0 && `(${encounters.length})`}
+          </p>
+          <div className="flex-1 overflow-y-auto p-2 space-y-2">
+            {encountersLoading && (
+              <p className="font-mono text-[10px] text-muted-foreground px-1 py-1">불러오는 중…</p>
             )}
+            {!encountersLoading && encounters.length === 0 && (
+              <p className="font-mono text-[10px] text-muted-foreground px-1 py-1">이 임무에서 발견된 사람이 없습니다</p>
+            )}
+            {encounters.map(enc => (
+              <div
+                key={enc.id}
+                onClick={() => openEncounter(enc)}
+                className={`border rounded p-2.5 bg-card hover:border-primary/30 transition-colors cursor-pointer ${
+                  detail?.id === enc.id ? "border-primary/40 bg-primary/5" : "border-border"
+                }`}
+              >
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center border border-accent/30 bg-accent/10">
+                    <User size={12} className="text-accent" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between mb-0.5">
+                      <span className="font-mono text-[10px] text-foreground truncate">
+                        {ENCOUNTER_STATUS_LABEL[enc.status] ?? enc.status}
+                        {enc.detectedPersonCount !== null && (
+                          <span className="text-accent"> · {enc.detectedPersonCount}명</span>
+                        )}
+                      </span>
+                      <span className="font-mono text-[9px] text-muted-foreground flex-shrink-0 ml-1">{fmtTime(enc.startedAt)}</span>
+                    </div>
+                    <div className="flex items-center gap-2 font-mono text-[9px] text-muted-foreground">
+                      {enc.mapX !== null && enc.mapY !== null ? (
+                        <span><MapPin size={8} className="inline mr-0.5" />({enc.mapX.toFixed(1)}, {enc.mapY.toFixed(1)})</span>
+                      ) : (
+                        <span className="text-muted-foreground/50">위치 미기록</span>
+                      )}
+                      {enc.terminationReason && (
+                        <span className="truncate">{TERMINATION_LABEL[enc.terminationReason] ?? enc.terminationReason}</span>
+                      )}
+                    </div>
+                  </div>
+                  <button
+                    onClick={e => { e.stopPropagation(); openEncounter(enc); }}
+                    className="flex-shrink-0 w-7 h-7 rounded-full border border-primary/30 bg-primary/10 hover:bg-primary/20 flex items-center justify-center text-primary transition-colors"
+                    title="이벤트 영상 재생"
+                  >
+                    <Play size={11} />
+                  </button>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       </div>

@@ -28,6 +28,12 @@ interface Props {
   missionId: string;
   encounters: EncounterSummary[];
   onEncounterClick: (encounter: EncounterSummary) => void;
+  /**
+   * true 면 부모가 준 높이를 다 쓴다(S15P11A301-273 — 이력 화면이 지도를 메인으로).
+   * 기본은 예전처럼 최대 420px — 높이가 콘텐츠를 따라가는 문맥(blackbox-experiment)에서
+   * 컨테이너 높이를 재면 캔버스가 생기기 전 높이(≈0)를 읽는 순환이 생긴다.
+   */
+  fill?: boolean;
 }
 
 type MapState = "loading" | "no-map" | "pending-upload" | "ready" | "error";
@@ -102,7 +108,7 @@ export { worldToPixel } from "@/lib/gridGeometry";
 const MAX_DISPLAY_HEIGHT = 420;
 const MAX_ZOOM = 8;
 
-export default function MissionMap({ missionId, encounters, onEncounterClick }: Props) {
+export default function MissionMap({ missionId, encounters, onEncounterClick, fill = false }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [state, setState] = useState<MapState>("loading");
@@ -204,9 +210,14 @@ export default function MissionMap({ missionId, encounters, onEncounterClick }: 
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    // 기준 배율: 컨테이너 폭·최대 높이에 맞춰 꽉 채운다
-    const containerW = containerRef.current.clientWidth;
-    const baseScale = Math.min(containerW / pgm.width, MAX_DISPLAY_HEIGHT / pgm.height);
+    // 기준 배율: 컨테이너 폭·높이에 맞춰 꽉 채운다. clientWidth/Height 는 p-3
+    // 패딩을 포함하므로(border-box) 캔버스가 패딩을 침범하지 않게 빼고 잰다.
+    const PADDING = 24;
+    const containerW = containerRef.current.clientWidth - PADDING;
+    const containerH = fill
+      ? Math.max(containerRef.current.clientHeight - PADDING, 100)
+      : MAX_DISPLAY_HEIGHT;
+    const baseScale = Math.min(containerW / pgm.width, containerH / pgm.height);
     baseScaleRef.current = baseScale;
     const dispW = Math.round(pgm.width * baseScale);
     const dispH = Math.round(pgm.height * baseScale);
@@ -262,11 +273,19 @@ export default function MissionMap({ missionId, encounters, onEncounterClick }: 
       ctx.stroke();
       markerHits.current.push({ x: s.x, y: s.y, encounter: e });
     });
-  }, [pgm, meta, trajectory, encounters]);
+  }, [pgm, meta, trajectory, encounters, fill]);
 
   useEffect(() => {
     if (state === "ready") draw();
   }, [state, draw]);
+
+  // fill 모드는 컨테이너 크기가 창을 따라간다 — 창이 바뀌면 배율을 다시 잡는다.
+  useEffect(() => {
+    if (!fill || state !== "ready") return;
+    const onResize = () => draw();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [fill, state, draw]);
 
   // 이동 범위 제한 — 지도가 뷰포트를 완전히 벗어나지 않게
   const clampPan = useCallback((panX: number, panY: number, zoom: number) => {
@@ -340,8 +359,8 @@ export default function MissionMap({ missionId, encounters, onEncounterClick }: 
   const markerCount = encounters.filter(e => e.mapX !== null && e.mapY !== null).length;
 
   return (
-    <div className="border border-border rounded bg-card">
-      <div className="flex items-center justify-between px-3 py-2 border-b border-border">
+    <div className={`border border-border rounded bg-card ${fill ? "h-full flex flex-col overflow-hidden" : ""}`}>
+      <div className="flex-shrink-0 flex items-center justify-between px-3 py-2 border-b border-border">
         <div className="flex items-center gap-1.5">
           <MapIcon size={11} className="text-primary" />
           <span className="font-mono text-[10px] text-muted-foreground uppercase tracking-wider">임무 지도</span>
@@ -363,7 +382,10 @@ export default function MissionMap({ missionId, encounters, onEncounterClick }: 
         )}
       </div>
 
-      <div ref={containerRef} className="p-3 flex justify-center">
+      <div
+        ref={containerRef}
+        className={`p-3 flex justify-center ${fill ? "flex-1 min-h-0 items-center overflow-hidden" : ""}`}
+      >
         {state === "loading" && (
           <p className="font-mono text-[10px] text-muted-foreground py-8">지도 불러오는 중…</p>
         )}

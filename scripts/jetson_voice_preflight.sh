@@ -5,10 +5,10 @@ set -Eeuo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTHON="${REPO_ROOT}/.venv/bin/python"
-STT_ROOT="${REPO_ROOT}/ai/stt"
-ENV_FILE="${STT_ROOT}/.env"
+VOICE_ROOT="${REPO_ROOT}/ai/voice"
+ENV_FILE="${VOICE_ROOT}/.env"
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
-RESULT_DIR="${STT_ROOT}/results/jetson-preflight/${RUN_ID}"
+RESULT_DIR="${VOICE_ROOT}/results/jetson-preflight/${RUN_ID}"
 
 if [[ ! -f /etc/nv_tegra_release ]]; then
   echo "[FAIL] NVIDIA Jetson에서만 실행한다: /etc/nv_tegra_release 없음" >&2
@@ -28,7 +28,7 @@ mkdir -p "${RESULT_DIR}"
 # ROS 2 시스템 패키지와 저장소 overlay, DDS 격리를 동일하게 적용한다.
 # shellcheck source=ros_env.sh disable=SC1091
 source "${REPO_ROOT}/scripts/ros_env.sh"
-cd "${STT_ROOT}"
+cd "${VOICE_ROOT}"
 
 "${PYTHON}" - <<'PY'
 from sentinel_voice import config

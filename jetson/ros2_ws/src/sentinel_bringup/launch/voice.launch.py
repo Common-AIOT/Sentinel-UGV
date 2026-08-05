@@ -16,20 +16,20 @@ from launch.substitutions import LaunchConfiguration
 def _voice_process(context):
     repo_root = Path(LaunchConfiguration("repo_root").perform(context)).resolve()
     python = repo_root / ".venv" / "bin" / "python"
-    stt_root = repo_root / "ai" / "stt"
+    voice_root = repo_root / "ai" / "voice"
     if not python.is_file():
         return [
             LogInfo(
                 msg=(
                     f"[voice.launch] {python}가 없어 음성 노드를 건너뛴다. "
-                    "ai/stt 의존성을 .venv에 설치한다."
+                    "ai/voice 의존성을 .venv에 설치한다."
                 )
             )
         ]
     return [
         ExecuteProcess(
             cmd=[str(python), "-u", "-m", "sentinel_voice.ros_node"],
-            cwd=str(stt_root),
+            cwd=str(voice_root),
             additional_env={
                 "PYTHONUNBUFFERED": "1",
             },

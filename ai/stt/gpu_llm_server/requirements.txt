@@ -1,7 +1,0 @@
---extra-index-url https://download.pytorch.org/whl/cu128
-torch==2.11.0+cu128
-transformers>=5.9,<6
-accelerate>=1.12,<2
-lm-format-enforcer>=0.11,<1
-fastapi>=0.116,<1
-uvicorn[standard]>=0.35,<1

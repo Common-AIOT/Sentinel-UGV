@@ -164,8 +164,8 @@ Optional small LLM
 ```
 
 `ai/` 상위 디렉터리에는 이 `detection` 서브프로젝트 외에 음성 파이프라인 서브프로젝트인
-[`ai/stt`](../stt/README.md)가 이미 존재한다. 두 서브프로젝트는 독립적으로 개발되며,
-`detection`은 비전(YOLO) 트리거를, `stt`는 음성 기반 요구조자 파악을 담당한다.
+[`ai/voice`](../voice/README.md)가 이미 존재한다. 두 서브프로젝트는 독립적으로 개발되며,
+`detection`은 비전(YOLO) 트리거를, `voice`는 음성 기반 요구조자 파악을 담당한다.
 
 ---
 
@@ -445,7 +445,7 @@ Git Bash / PowerShell에서는 `conda activate`가 초기화되어 있지 않아
 - 새로운 패키지가 필요한 경우 기존 패키지로 해결 가능한지 먼저 검토한다.
 - 설치가 꼭 필요하면 이유와 대안을 먼저 보고한다.
 - TensorFlow, FastAPI, Gradio, STT, TTS 관련 패키지는 이 서브프로젝트(`ai/detection`)에 추가하지 않는다
-  (음성 관련 패키지는 [`ai/stt`](../stt/requirements.txt)에서 별도 관리).
+  (음성 관련 패키지는 [`ai/voice`](../voice/requirements.txt)에서 별도 관리).
 - `ultralytics`와 `opencv-python`은 현재 설치 버전을 우선하며, 정확한 버전이 고정되어 있지 않다고 해서
   임의로 최신 버전으로 업그레이드하지 않는다.
 

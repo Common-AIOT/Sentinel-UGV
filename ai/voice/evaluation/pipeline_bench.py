@@ -1,0 +1,238 @@
+# evaluation/pipeline_bench.py
+"""
+젯슨 측정용 다회차 벤치마크.
+
+원격 FastAPI STT는 시나리오당 1회(음성 고정) 캐싱하고, LLM은 NUM_RUNS회 반복해
+평균/최소/최대 지연과 구조화 필드·위험도 참고값 일관성(%)을 집계한다.
+
+  cd ai/voice && python -m evaluation.pipeline_bench
+
+측정 중 다른 터미널에서 `jtop` 으로 RAM/GPU/온도/전력을 함께 기록할 것.
+data/ 샘플이 없으면 해당 시나리오는 NO_FILE로 스킵된다(README의 데이터 준비 참고).
+결과: results/pipeline_bench_raw.csv, results/pipeline_bench_summary.csv
+"""
+import os
+import time
+import csv
+from collections import Counter
+
+import numpy as np
+import torch
+from silero_vad import load_silero_vad, get_speech_timestamps
+
+from sentinel_voice import config
+from sentinel_voice.audio import load_mono
+from sentinel_voice.config import FS
+from sentinel_voice.llm import llm_extract as gms_extract
+from sentinel_voice.remote_asr import RemoteASRClient
+from sentinel_voice.safety import (
+    RISK_RULE_VERSION,
+    coerce_report,
+    is_valid_stt,
+    report_defaults,
+    risk_assessment,
+)
+
+NUM_RUNS = int(os.getenv("BENCH_RUNS", "3"))
+# 측정할 LLM 후보(GMS 모델명, 쉼표 구분). 확정 모델은 config.LLM_MODEL(gpt-5-nano)
+MODELS = os.getenv("BENCH_MODELS", config.LLM_MODEL).split(",")
+
+# (이름, 파일경로, 트리거소스). data/ 는 ai/voice 기준 상대경로.
+BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SCENARIOS = [
+    ("가스_clean", "data/clean/info.wav",              "VISION"),
+    ("구조_clean", "data/clean/guzo.wav",              "VISION"),
+    ("부상_clean", "data/clean/busang.wav",            "VISION"),
+    ("부상_snr5",  "data/mixed/busang__moto_snr5.wav", "VISION"),
+    ("부상_snr0",  "data/mixed/busang__moto_snr0.wav", "SED"),
+    ("부상_snr-5", "data/mixed/busang__moto_snr-5.wav","SED"),
+    ("가스_snr-5", "data/mixed/info__moto_snr-5.wav",  "SED"),
+    ("침묵",       "data/clean/silence.wav",           "SED"),
+]
+
+
+print("=" * 60)
+print(f"🚀 Sentinel 벤치마크 ({config.summary()}, runs={NUM_RUNS})")
+print("=" * 60)
+print("📦 STT/VAD 로딩...")
+vad = load_silero_vad()
+stt = RemoteASRClient(
+    base_url=config.ASR_BASE_URL,
+    api_key=config.ASR_API_KEY,
+    timeout_seconds=config.ASR_TIMEOUT,
+    connect_timeout_seconds=config.ASR_CONNECT_TIMEOUT,
+    max_attempts=config.ASR_MAX_ATTEMPTS,
+    retry_delay_seconds=config.ASR_RETRY_DELAY,
+    allow_insecure_http=config.ASR_ALLOW_INSECURE_HTTP,
+)
+
+
+def normalize(wav):
+    rms = np.sqrt(np.mean(wav ** 2)) + 1e-9
+    return np.clip(wav * (config.NORM_TARGET_RMS / rms), -1, 1).astype(np.float32)
+
+
+def has_speech(wav):
+    return len(get_speech_timestamps(torch.from_numpy(wav), vad, sampling_rate=FS)) > 0
+
+
+def run_stt(path):
+    wav = load_mono(path)
+    raw_rms = float(np.sqrt(np.mean(wav ** 2)))
+    if raw_rms >= config.SILENCE_RMS:
+        wav = normalize(wav)
+    if raw_rms < config.SILENCE_RMS or not has_speech(wav):
+        return dict(status="NO_SPEECH", text="", nsp=1.0, stt_ms=0.0)
+    t = time.time()
+    text, no_speech_prob = stt.transcribe(wav, sample_rate=FS, language="ko")
+    stt_ms = (time.time() - t) * 1000
+    ok, why = is_valid_stt(text, no_speech_prob, None)
+    return dict(
+        status="OK" if ok else f"INVALID:{why}",
+        text=text,
+        nsp=no_speech_prob,
+        stt_ms=stt_ms,
+    )
+
+
+def llm_extract(text, model):
+    """GMS API 호출(지연 측정 대상). 폴백 없이 직접 호출 — 실패도 측정 결과."""
+    return gms_extract(text, model=model)
+
+
+def assemble_report(extraction, *, response_detected, termination_reason):
+    """GMS 추출값과 시스템 관찰값을 33-6 세션 보고로 조립한다."""
+    report = report_defaults()
+    report.update(extraction)
+    report["anyResponseDetected"] = response_detected
+    report["terminationReason"] = termination_reason
+    if report["reportedResponsiveCount"] is not None:
+        report["reportedCountStatus"] = "SELF_REPORTED_GROUP_COUNT"
+    return coerce_report(report)
+
+
+def non_ok_outcome(source):
+    if source == "SED":
+        report = assemble_report(
+            {},
+            response_detected=False,
+            termination_reason="NORMAL",
+        )
+        return report, risk_assessment(report)
+    return None, {
+        "riskLevel": "UNKNOWN",
+        "riskReasons": ["STT 결과가 없어 재질문 필요"],
+        "ruleVersion": RISK_RULE_VERSION,
+        "operatorReviewRequired": True,
+    }
+
+
+# 1단계: STT 1회 캐싱
+print("\n[1단계] STT 처리 및 시나리오 검사...")
+stt.transcribe(np.zeros(FS, dtype=np.float32), sample_rate=FS, language="ko")
+stt_cache = {}
+for name, rel, source in SCENARIOS:
+    path = os.path.join(BASE, rel)
+    if not os.path.exists(path):
+        print(f"  ⚠️ 파일 없음: {rel} (스킵)")
+        stt_cache[name] = dict(status="NO_FILE", text="", nsp=1.0, stt_ms=0.0)
+        continue
+    c = run_stt(path)
+    stt_cache[name] = c
+    print(f"  {name:12s}[{source:6s}] {c['status']:14s} | STT {c['stt_ms']:5.0f}ms | ns {c['nsp']:.2f} | '{c['text']}'")
+
+# 2단계: 다회차 LLM
+raw_rows = [["model", "scenario", "run_idx", "source", "stt_status", "stt_ms", "nsp",
+             "llm_ms", "reported_responsive_count", "mobility_status",
+             "urgent_condition_reported", "risk_level", "risk_reasons",
+             "rule_version", "stt_text"]]
+summary_rows = [["model", "scenario", "source", "stt_status", "stt_ms", "avg_llm_ms", "min_llm_ms", "max_llm_ms",
+                 "consistency_pct", "reported_responsive_count", "mobility_status",
+                 "urgent_condition_reported", "risk_level", "risk_reasons",
+                 "rule_version", "stt_text"]]
+
+print(f"\n[2단계] 모델별 다회차 LLM 추론 ({NUM_RUNS}회)...")
+for model in MODELS:
+    model = model.strip()
+    print("\n" + "=" * 50 + f"\n🧠 {model}\n" + "=" * 50)
+    try:
+        llm_extract("테스트", model)  # warm-up
+    except Exception as e:
+        print(f"  ⚠️ warm-up 실패: {e}")
+
+    for name, rel, source in SCENARIOS:
+        c = stt_cache[name]
+        if c["status"] != "OK":
+            info, risk = non_ok_outcome(source)
+            count = info["reportedResponsiveCount"] if info else "-"
+            mobility = info["mobilityStatus"] if info else "-"
+            urgent = info["urgentConditionReported"] if info else "-"
+            raw_rows.append([model, name, 1, source, c["status"], round(c["stt_ms"], 1), round(c["nsp"], 3),
+                             0.0, count, mobility, urgent, risk["riskLevel"],
+                             "|".join(risk["riskReasons"]), risk["ruleVersion"], c["text"]])
+            summary_rows.append([model, name, source, c["status"], round(c["stt_ms"], 1), 0.0, 0.0, 0.0,
+                                 100.0, count, mobility, urgent, risk["riskLevel"],
+                                 "|".join(risk["riskReasons"]), risk["ruleVersion"], c["text"]])
+            print(f"  {name:12s}[{source:6s}] {c['status']:12s} ➔ {risk['riskLevel']}")
+            continue
+
+        times, outcomes, reports, risks = [], [], [], []
+        for run_idx in range(1, NUM_RUNS + 1):
+            t = time.time()
+            try:
+                extraction = llm_extract(c["text"], model)
+                info = assemble_report(
+                    extraction,
+                    response_detected=True,
+                    termination_reason="NORMAL",
+                )
+                risk = risk_assessment(info)
+            except Exception as e:
+                info = assemble_report(
+                    {},
+                    response_detected=True,
+                    termination_reason="GMS_UNAVAILABLE",
+                )
+                risk = risk_assessment(info)
+                risk["riskReasons"].append(f"GMS 오류: {type(e).__name__}")
+            llm_ms = (time.time() - t) * 1000
+            times.append(llm_ms)
+            outcome = (
+                info["reportedResponsiveCount"],
+                info["mobilityStatus"],
+                info["urgentConditionReported"],
+                risk["riskLevel"],
+            )
+            outcomes.append(outcome)
+            reports.append(info)
+            risks.append(risk)
+            raw_rows.append([model, name, run_idx, source, c["status"], round(c["stt_ms"], 1), round(c["nsp"], 3),
+                             round(llm_ms, 1), info["reportedResponsiveCount"],
+                             info["mobilityStatus"], info["urgentConditionReported"],
+                             risk["riskLevel"], "|".join(risk["riskReasons"]),
+                             risk["ruleVersion"], c["text"]])
+
+        avg, mn, mx = float(np.mean(times)), float(np.min(times)), float(np.max(times))
+        top_outcome, cnt = Counter(outcomes).most_common(1)[0]
+        consistency = cnt / NUM_RUNS * 100.0
+        representative_index = outcomes.index(top_outcome)
+        rep = reports[representative_index]
+        representative_risk = risks[representative_index]
+        summary_rows.append([model, name, source, c["status"], round(c["stt_ms"], 1),
+                             round(avg, 1), round(mn, 1), round(mx, 1), round(consistency, 1),
+                             rep["reportedResponsiveCount"], rep["mobilityStatus"],
+                             rep["urgentConditionReported"], representative_risk["riskLevel"],
+                             "|".join(representative_risk["riskReasons"]),
+                             representative_risk["ruleVersion"], c["text"]])
+        print(f"  {name:12s}[{source:6s}] LLM평균 {avg:5.0f}ms "
+              f"(min {mn:.0f}/max {mx:.0f}) | 일관성 {consistency:3.0f}% "
+              f"➔ {representative_risk['riskLevel']}")
+
+# 3단계: 저장
+os.makedirs(os.path.join(BASE, "results"), exist_ok=True)
+with open(os.path.join(BASE, "results/pipeline_bench_raw.csv"), "w", newline="", encoding="utf-8") as f:
+    csv.writer(f).writerows(raw_rows)
+with open(os.path.join(BASE, "results/pipeline_bench_summary.csv"), "w", newline="", encoding="utf-8") as f:
+    csv.writer(f).writerows(summary_rows)
+
+print("\n✅ 완료 → results/pipeline_bench_raw.csv, results/pipeline_bench_summary.csv")

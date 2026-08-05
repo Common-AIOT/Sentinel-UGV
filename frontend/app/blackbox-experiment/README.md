@@ -17,12 +17,12 @@ npm run dev --prefix frontend
 
 ### 샘플 미디어는 커밋되지 않는다
 
-실육성이 들어 있어 개인 음성 커밋 금지 규정(`ai/stt/docs/README.md` §11-6)에
+실육성이 들어 있어 개인 음성 커밋 금지 규정(`ai/voice/docs/README.md` §11-6)에
 걸린다. `frontend/.gitignore`에 등록해 두었고, 직접 만들어 넣는다.
 
 ```bash
 python denoise_try/make_demo_event.py                              # 샘플 이벤트 영상
-python ai/denoise/enhance_media.py <위에서 만든 mp4>                # 제거본
+python ai/voice/denoise/enhance_media.py <위에서 만든 mp4>                # 제거본
 ```
 
 두 파일을 `frontend/public/experiment/`에 `event_sample.mp4`,
@@ -93,7 +93,7 @@ diff frontend/app/blackbox/page.tsx frontend/app/blackbox-experiment/page.tsx
 1. **백엔드 `kind` 확장** — `EVENT_AUDIO_DENOISED`. `UploadUrlRequest` ·
    `MediaCompleteRequest`의 `@Pattern` 2곳, `MediaService.objectKey()` ·
    `contentType()`, 공통 스키마 2개
-2. **서버 워커** — [`ai/denoise/`](../../../ai/denoise/). 젯슨에는 못 싣는다
+2. **서버 워커** — [`ai/voice/denoise/`](../../../ai/voice/denoise/). 젯슨에는 못 싣는다
    (aarch64 휠 부재)
 3. **프라이버시 팀 합의** — 요구조자 음성이 로봇 밖으로 나가는 최초 경로
 

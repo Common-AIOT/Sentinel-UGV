@@ -31,9 +31,6 @@
   <link name="rear_drive_wheel_link"/>
   <link name="front_left_wheel_link"/>
   <link name="front_right_wheel_link"/>
-  <link name="gimbal_base_link"/>
-  <link name="gimbal_roll_link"/>
-  <link name="gimbal_pitch_link"/>
   <link name="lidar_link"/>
   <link name="camera_link"/>
   <link name="camera_optical_frame"/>
@@ -81,35 +78,33 @@
     <origin xyz="0 0 0" rpy="0 0 0"/>
   </joint>
 
-  <!-- 짐벌 베이스 장착 위치, TBD(3D 프린팅 마운트 확정 후 실측) -->
-  <joint name="base_link_to_gimbal_base_link" type="fixed">
-    <parent link="base_link"/>
-    <child link="gimbal_base_link"/>
-    <origin xyz="0 0 0" rpy="0 0 0"/>
-  </joint>
+  <!-- 짐벌 링크 3개를 제거하고 lidar·camera 를 base_link 에 직결했다
+       (S15P11A301-279).
 
-  <!-- 짐벌 roll/pitch: CENTER_LOCK(각도 0) fixed. 짐벌 구현 시 revolute + joint_states 전환 -->
-  <joint name="gimbal_base_link_to_gimbal_roll_link" type="fixed">
-    <parent link="gimbal_base_link"/>
-    <child link="gimbal_roll_link"/>
-    <origin xyz="0 0 0" rpy="0 0 0"/>
-  </joint>
-  <joint name="gimbal_roll_link_to_gimbal_pitch_link" type="fixed">
-    <parent link="gimbal_roll_link"/>
-    <child link="gimbal_pitch_link"/>
-    <origin xyz="0 0 0" rpy="0 0 0"/>
-  </joint>
+       짐벌은 v1.1-r4 에서 프로젝트에서 제외됐고 02장 6.4 가 「미사용 확정,
+       카메라·LiDAR 는 차체 고정 마운트」로 적었는데, URDF 에만
+       gimbal_base_link → gimbal_roll_link → gimbal_pitch_link 3단이 남아
+       라이다와 카메라가 거기 매달려 있었다. 명세 35-2 의 권장 트리는
+       base_link 아래 직결이다.
+
+       세 조인트가 모두 항등(xyz 0 0 0, rpy 0 0 0)이었으므로 아래 origin 을
+       그대로 두면 base_link 기준 변환이 보존된다. 즉 이 정리는 기하를 바꾸지
+       않는다 — 정보를 담지 않은 통과 링크를 걷어낸 것이다.
+
+       하중을 받는 체인(SLAM 이 lidar_link 로 스캔을 base 에 옮긴다)에 쓰이지
+       않는 링크가 끼어 있으면, 나중에 누가 그 조인트를 만졌을 때 지도가 조용히
+       틀어진다. 그것이 지금 지우는 이유다. -->
 
   <!-- LiDAR. z=0.02는 기존 base_link->laser_frame flat TF의 net 변환을 유지한 placeholder -->
-  <joint name="gimbal_pitch_link_to_lidar_link" type="fixed">
-    <parent link="gimbal_pitch_link"/>
+  <joint name="base_link_to_lidar_link" type="fixed">
+    <parent link="base_link"/>
     <child link="lidar_link"/>
     <origin xyz="0 0 0.02" rpy="0 0 0"/>
   </joint>
 
   <!-- 카메라 본체(REP-103 body: x-전방, y-좌, z-상). 위치 TBD(실측) -->
-  <joint name="gimbal_pitch_link_to_camera_link" type="fixed">
-    <parent link="gimbal_pitch_link"/>
+  <joint name="base_link_to_camera_link" type="fixed">
+    <parent link="base_link"/>
     <child link="camera_link"/>
     <origin xyz="0 0 0" rpy="0 0 0"/>
   </joint>

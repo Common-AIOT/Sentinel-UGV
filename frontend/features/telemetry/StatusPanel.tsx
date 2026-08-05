@@ -204,13 +204,20 @@ export default function StatusPanel() {
             일시정지
           </button>
         )}
+        {/* 이 버튼은 STOP 을 보내 임무를 종료한다. 복귀 주행이 아니다
+            (S15P11A301-274). RETURNING 이 미구현이라(S15P11A301-246) 복귀
+            버튼이 갈 곳이 없어 STOP 에 붙어 있었고, 이름만 "베이스캠프 복귀"
+            여서 누르면 복귀할 것으로 읽혔다. 동작대로 이름을 맞춘다.
+
+            내부 타입 "return" 은 그대로 둔다 — RobotContext 의 STOP 매핑을
+            건드리지 않는다. 복귀 주행이 구현되면 복귀 버튼을 다시 넣는다. */}
         <button
-          onClick={() => handleCommand("return", "베이스캠프 복귀")}
+          onClick={() => handleCommand("return", "임무 종료")}
           disabled={danger}
           className="w-full text-xs font-medium px-3 py-2 rounded border border-accent/30 bg-accent/10 text-accent hover:bg-accent/20 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
         >
           <CornerUpLeft size={13} />
-          베이스캠프 복귀
+          임무 종료
         </button>
       </div>
       )}

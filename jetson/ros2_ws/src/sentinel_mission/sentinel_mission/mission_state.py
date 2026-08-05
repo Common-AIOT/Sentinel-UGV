@@ -561,11 +561,33 @@ class MissionStateMachine:
             # 두 번 온 경우다(멱등 가드는 같은 commandId만 막는다). 원하는 상태에
             # 이미 있으므로 거부로 보지 않는다 — 조작자에게는 성공이 맞다.
             return self._ignore('이미 EXPLORING 상태다')
-        if self.state is not MissionState.SAFE_IDLE:
+        # COMPLETED 에서도 시작을 허용한다 (S15P11A301-274).
+        #
+        # 종전에는 SAFE_IDLE 만 허용했고 COMPLETED 는 나가는 전이가 없는 종단이라,
+        # 관제에서 임무를 한 번 종료하면 mission_manager 를 재기동하지 않는 한 다시
+        # 시작할 수 없었다. 시연은 반복하므로 STOP 한 번이 일회용 잠금이 됐다.
+        #
+        # 초기화 버튼을 따로 두지 않는 이유는 **임무 종료 기록이 상태 머신에 있지
+        # 않기 때문**이다. personCount 는 encounter 에서 파생되고 missionId 는 관제가
+        # 준 값이며, 완료 이력은 관제 DB 의 임무 이력에 남는다. 살아 있는 상태가
+        # COMPLETED 를 붙들고 있어야 이력이 보존되는 것이 아니다. 조작자는 이미
+        # 「탐사 시작」으로 의도를 표현했으므로 클릭을 하나 더 요구하지 않는다.
+        if self.state not in {MissionState.SAFE_IDLE, MissionState.COMPLETED}:
             return self._ignore(
-                f'MISSION_START는 SAFE_IDLE에서만 유효하다(현재 {self.state.value})',
+                'MISSION_START는 SAFE_IDLE·COMPLETED에서만 유효하다'
+                f'(현재 {self.state.value})',
                 REASON_INVALID_STATE,
             )
+
+        # 여기서 _clear_encounter() 를 부르지 않는다. 부르는 코드를 넣었다가
+        # 뮤테이션 시험에서 **죽은 코드임이 드러나 지웠다** — 허용된 두 진입 상태
+        # 모두 encounter 가 이미 없다. SAFE_IDLE 은 초기 상태이고, COMPLETED 는
+        # _mission_completed 가 진행 중 encounter 와 mission_id 를 지우고 오기
+        # 때문이다.
+        #
+        # 새 임무가 이전 임무의 personCount·encounterId 를 물려받지 않는다는 것은
+        # 시험으로 고정해 두었다(test_새_임무는_이전_임무의_encounter를_물려받지_않는다).
+        # 지우는 주체가 어디든 그 불변식이 깨지면 시험이 잡는다.
         self.mission_id = mission_id
         return self._to(MissionState.EXPLORING, 'MISSION_START')
 

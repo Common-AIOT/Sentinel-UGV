@@ -973,3 +973,100 @@ def test_completed_does_not_accept_new_encounters():
     assert not result.changed
     assert machine.encounter is None
     assert machine.state is MissionState.COMPLETED
+
+
+# ----------------------------------------------------------------------
+# 임무 종료 후 재시작 (S15P11A301-274)
+#
+# 종전에는 MISSION_START 가 SAFE_IDLE 에서만 유효했고 COMPLETED 는 나가는 전이가
+# 없는 종단이라, 관제에서 임무를 한 번 종료하면 mission_manager 를 재기동해야
+# 다시 시작할 수 있었다. 시연은 반복하므로 STOP 한 번이 일회용 잠금이 됐다.
+# ----------------------------------------------------------------------
+
+
+def _completed() -> MissionStateMachine:
+    machine = exploring()
+    machine.handle_signal(Signal.MISSION_COMPLETED, now=at(5), detail='관제 STOP')
+    assert machine.state is MissionState.COMPLETED
+    return machine
+
+
+def test_completed_에서_새_임무를_시작할_수_있다():
+    machine = _completed()
+
+    result = machine.handle_signal(
+        Signal.MISSION_START, now=at(10), mission_id='mission-2'
+    )
+
+    assert result.changed
+    assert machine.state is MissionState.EXPLORING
+    assert machine.mission_id == 'mission-2'
+
+
+def test_새_임무는_이전_임무의_encounter를_물려받지_않는다():
+    """encounter 가 남으면 personCount·encounterId 가 두 임무에 걸쳐 섞인다.
+
+    재난 현장에서 인원 수 오보고는 구조 판단을 바꾼다.
+    """
+    machine = exploring()
+    confirm(machine)
+    assert machine.encounter is not None
+    assert machine.person_count == 1
+    machine.handle_signal(Signal.MISSION_COMPLETED, now=at(5), detail='관제 STOP')
+
+    machine.handle_signal(Signal.MISSION_START, now=at(10), mission_id='mission-2')
+
+    assert machine.encounter is None, '이전 임무의 encounter 가 남았다'
+    assert machine.encounter_id is None
+    assert machine.person_count == 0
+
+
+def test_재시작_후_새_encounter가_정상_생성된다():
+    """지우기만 하고 새로 못 만들면 반쪽이다."""
+    machine = exploring()
+    confirm(machine)
+    machine.handle_signal(Signal.MISSION_COMPLETED, now=at(5), detail='관제 STOP')
+    machine.handle_signal(Signal.MISSION_START, now=at(10), mission_id='mission-2')
+
+    result = machine.observe_candidates(
+        now=at(12), track_ids={11}, confidence=0.9, new_encounter_id='enc-2'
+    )
+
+    assert result.changed
+    assert machine.encounter_id == 'enc-2'
+    assert machine.person_count == 1
+
+
+def test_safe_idle_에서는_여전히_시작된다():
+    """기존 경로가 깨지지 않아야 한다."""
+    machine = MissionStateMachine()
+    assert machine.state is MissionState.SAFE_IDLE
+
+    result = machine.handle_signal(Signal.MISSION_START, now=T0, mission_id='m1')
+
+    assert result.changed
+    assert machine.state is MissionState.EXPLORING
+
+
+def test_exploring_에서는_거부가_아니라_무시다():
+    """관제 버튼을 두 번 눌러도 조작자에게는 성공이 맞다."""
+    machine = exploring()
+
+    result = machine.handle_signal(Signal.MISSION_START, now=at(3))
+
+    assert not result.changed
+    assert result.reason_code != 'INVALID_STATE'
+    assert machine.state is MissionState.EXPLORING
+
+
+def test_paused_에서는_여전히_invalid_state다():
+    """허용 상태를 넓힌 것이 다른 상태까지 열어서는 안 된다."""
+    machine = exploring()
+    machine.handle_signal(Signal.PAUSE_REQUESTED, now=at(3), detail='관제')
+    assert machine.state is MissionState.PAUSED
+
+    result = machine.handle_signal(Signal.MISSION_START, now=at(5))
+
+    assert not result.changed
+    assert result.reason_code == 'INVALID_STATE'
+    assert machine.state is MissionState.PAUSED

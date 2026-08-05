@@ -168,7 +168,11 @@ class Esp32MotorBridgeNode(Node):
         try:
             self._transport.write_frame(frame)
         except Exception as exc:  # noqa: BLE001 - 포트가 아직 안 열렸을 수 있다
-            self.get_logger().warn(f"프레임 전송 실패: {exc}")
+            # 끊긴 동안 DRIVE_COMMAND·HELLO 주기마다 쌓이므로 억제한다
+            # (S15P11A301-264). 재연결 전이는 SerialTransport 가 남긴다.
+            self.get_logger().warning(
+                f"프레임 전송 실패: {exc}", throttle_duration_sec=5.0
+            )
 
     def _send_hello(self) -> None:
         self._send_frame(MSG_HELLO)

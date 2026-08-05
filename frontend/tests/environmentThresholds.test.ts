@@ -22,6 +22,7 @@ import {
   TEMP_WARN_LOW_C,
   readHumidity,
   readTemperature,
+  sanitizeEnvironmentPoint,
   saturationNote,
 } from "@/features/telemetry/environmentThresholds";
 
@@ -181,5 +182,29 @@ describe("saturationNote", () => {
 
   it("결측은 포화가 아니다", () => {
     expect(saturationNote(readTemperature(null), readHumidity(null))).toBeNull();
+  });
+});
+
+describe("이력 그래프 정제 (S15P11A301-280)", () => {
+  it("(0, 0) 쌍은 미측정 신호다 — 둘 다 결측", () => {
+    // 소급 연결(#275)로 들어온 실측 사례: 부팅 직후 DHT11 이 (0.0, 0.0) 을 보냈다.
+    expect(sanitizeEnvironmentPoint(0, 0)).toEqual({ temperature: null, humidity: null });
+  });
+
+  it("범위 밖 값은 그 값만 결측 — 다른 쪽은 살린다", () => {
+    expect(sanitizeEnvironmentPoint(23.7, 10)).toEqual({ temperature: 23.7, humidity: null });
+    expect(sanitizeEnvironmentPoint(60, 65.5)).toEqual({ temperature: null, humidity: 65.5 });
+  });
+
+  it("정상 값과 결측은 그대로 통과한다", () => {
+    expect(sanitizeEnvironmentPoint(23.7, 65.5)).toEqual({ temperature: 23.7, humidity: 65.5 });
+    expect(sanitizeEnvironmentPoint(null, null)).toEqual({ temperature: null, humidity: null });
+  });
+
+  it("경계값 자체는 실측일 수 있다 — 버리지 않는다", () => {
+    // 온도 0°C 단독(습도 정상)은 겨울 실외일 수 있다. (0,0) 쌍과 다르다.
+    expect(sanitizeEnvironmentPoint(0, 45)).toEqual({ temperature: 0, humidity: 45 });
+    expect(sanitizeEnvironmentPoint(23.7, DHT11_HUMIDITY_MIN_PCT))
+      .toEqual({ temperature: 23.7, humidity: DHT11_HUMIDITY_MIN_PCT });
   });
 });

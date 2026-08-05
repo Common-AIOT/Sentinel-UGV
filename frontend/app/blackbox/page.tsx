@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { ChevronLeft, Play, Film, User, MapPin, Clock, Volume2, VolumeX } from "lucide-react";
 import {
@@ -11,6 +11,7 @@ import {
   type TelemetryPoint,
 } from "@/lib/api";
 import TelemetryChart from "@/features/telemetry/TelemetryChart";
+import { sanitizeEnvironmentPoint } from "@/features/telemetry/environmentThresholds";
 import MissionMap from "@/features/mapping/MissionMap";
 import {
   createStompClient,
@@ -304,6 +305,13 @@ export default function MissionHistoryPage() {
     };
   }, [denoised, videoUrl, denoisedUrl]);
 
+  // 온습도는 센서 미측정 0값·범위 밖 값을 결측으로 바꿔 그린다 (S15P11A301-280).
+  // 부팅 0값 한 점이 세로축을 0까지 늘려 실제 1°C 변화가 안 보이게 눌렸다.
+  const envTelemetry = useMemo(
+    () => telemetry.map(p => ({ ...p, ...sanitizeEnvironmentPoint(p.temperature, p.humidity) })),
+    [telemetry],
+  );
+
   /** 영상 오버레이 닫기 — 지도로 복귀. */
   const closeOverlay = useCallback(() => {
     setDetail(null);
@@ -518,10 +526,10 @@ export default function MissionHistoryPage() {
               컨테이너에 두면 퍼센트 높이가 무너져 아래 목록과 겹친다(실측). */}
           <div className="p-2 space-y-2 flex-shrink-0">
             <div className="h-28">
-              <TelemetryChart points={telemetry} metric="temperature" label="임무 중 온도" unit="°C" />
+              <TelemetryChart points={envTelemetry} metric="temperature" label="임무 중 온도" unit="°C" />
             </div>
             <div className="h-28">
-              <TelemetryChart points={telemetry} metric="humidity" label="임무 중 습도" unit="%" />
+              <TelemetryChart points={envTelemetry} metric="humidity" label="임무 중 습도" unit="%" />
             </div>
           </div>
 

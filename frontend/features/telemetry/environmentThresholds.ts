@@ -106,6 +106,41 @@ export function readHumidity(value: number | null): Reading {
 }
 
 /**
+ * 이력 그래프용 온습도 정제 (S15P11A301-280).
+ *
+ * DHT11 은 측정에 실패하면(부팅 직후 등) (0, 0) 쌍을 보낸다 — 실내에서 물리적으로
+ * 나올 수 없는 조합이다. telemetry 소급 연결(#275)로 이런 행이 임무 그래프에
+ * 들어오자 세로축이 0까지 늘어나 실제 변화(1°C 폭)가 눌려 안 보이게 됐다.
+ *
+ * 규칙은 두 가지다. 판정 기준은 이 파일의 센서 유효 범위 상수를 그대로 쓴다.
+ *
+ * 1. (온도 0, 습도 0) 동시 → 둘 다 결측. 미측정 신호이지 측정값이 아니다.
+ * 2. 각 값이 센서 유효 범위 밖 → 그 값만 결측. 범위 밖은 센서가 잴 수 없는
+ *    숫자이므로 노이즈다.
+ *
+ * 경계값 자체(온도 0°C, 습도 20%)는 살린다 — 겨울 실외처럼 실제일 수 있고,
+ * 그 판단(포화 표시)은 위 read* 함수들의 몫이다. 버킷 평균이 정상값과 0값을
+ * 섞어 중간 숫자를 만들면 여기서는 못 걸러낸다 — 근본 수정은 젯슨이 미측정
+ * 값을 발행하지 않는 것이고, 이 함수는 표시 계층의 방어다.
+ */
+export function sanitizeEnvironmentPoint(
+  temperature: number | null,
+  humidity: number | null,
+): { temperature: number | null; humidity: number | null } {
+  if (temperature === 0 && humidity === 0) {
+    return { temperature: null, humidity: null };
+  }
+  const tempValid = temperature === null
+    || (temperature >= DHT11_TEMP_MIN_C && temperature <= DHT11_TEMP_MAX_C);
+  const humidityValid = humidity === null
+    || (humidity >= DHT11_HUMIDITY_MIN_PCT && humidity <= DHT11_HUMIDITY_MAX_PCT);
+  return {
+    temperature: tempValid ? temperature : null,
+    humidity: humidityValid ? humidity : null,
+  };
+}
+
+/**
  * 포화 상태를 한 줄로 설명한다. 없으면 null.
  *
  * 부등호만으로는 "왜 부등호인가"를 모른다. 센서 한계라는 사실을 적어야 보는 사람이

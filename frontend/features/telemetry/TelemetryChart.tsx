@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import type { TelemetryPoint } from "@/lib/api";
 
 /**
@@ -7,6 +8,9 @@ import type { TelemetryPoint } from "@/lib/api";
  *
  * 차트 라이브러리 없이 SVG 로 그린다(MVP 결정). null 은 결측으로 취급해 선을 끊는다 —
  * ESP32 미연동 배터리처럼 "없는 값" 을 0 으로 그리면 거짓 그래프가 된다.
+ *
+ * 마우스를 올리면 가장 가까운 측정점의 시각·값을 보여준다(S15P11A301-280).
+ * 점이 하나뿐인 짧은 임무에서도 그 점의 정체를 확인할 수 있다.
  */
 
 interface Props {
@@ -28,6 +32,9 @@ export default function TelemetryChart({
   label = "CPU",
   unit = "%",
 }: Props) {
+  // 호버 중인 점의 인덱스. null 이면 툴팁 없음.
+  const [hover, setHover] = useState<number | null>(null);
+
   const values = points.map(p => p[metric]);
   const known = values.filter((v): v is number => v !== null);
 
@@ -65,6 +72,21 @@ export default function TelemetryChart({
   const fmtT = (iso: string) =>
     new Date(iso).toLocaleTimeString("ko-KR", { hour12: false, hour: "2-digit", minute: "2-digit" });
 
+  // ── 호버 → 가장 가까운 점 (S15P11A301-280) ──────────────────────────────
+  // 점이 균등 간격이므로 마우스 x 비율에서 인덱스가 바로 나온다. svg 좌표계(0~W)와
+  // 화면 폭의 비율 변환만 하면 된다 — preserveAspectRatio=none 이라 항상 성립한다.
+  const handleMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    if (rect.width === 0 || points.length === 0) return;
+    const svgX = ((e.clientX - rect.left) / rect.width) * W;
+    const frac = Math.max(0, Math.min(1, (svgX - PAD) / (W - PAD * 2)));
+    setHover(points.length === 1 ? 0 : Math.round(frac * (points.length - 1)));
+  };
+  const hoverValue = hover === null ? null : values[hover];
+  // 툴팁이 차트 밖으로 나가지 않게 좌우 12~88% 로 묶는다.
+  const hoverLeftPct = hover === null ? 0
+    : Math.max(12, Math.min(88, (xOf(hover) / W) * 100));
+
   return (
     // h-full flex — 그리드에서 옆 칸(요약 카드 2×2)과 같은 높이로 늘어나 빈틈 없이 채운다.
     <div className="border border-border rounded bg-card px-3 py-2.5 h-full flex flex-col">
@@ -75,22 +97,54 @@ export default function TelemetryChart({
           <span className="text-[9px] text-muted-foreground font-normal"> {unit}</span>
         </span>
       </div>
-      <svg viewBox={`0 0 ${W} ${H}`} className="w-full flex-1" style={{ minHeight: H }} preserveAspectRatio="none">
-        {segments.map((pts, i) => (
-          <polyline
-            key={i}
-            points={pts}
-            fill="none"
-            stroke="var(--chart-1)"
-            strokeWidth="1.5"
-            vectorEffect="non-scaling-stroke"
-          />
-        ))}
-        {/* 단일 점(폴리라인 불가) 구간 표시 */}
-        {segments.length === 0 && known.length >= 1 && (
-          <circle cx={W / 2} cy={yOf(last)} r="2" fill="var(--chart-1)" />
+      <div
+        className="relative flex-1 min-h-0"
+        style={{ minHeight: H }}
+        onMouseMove={handleMove}
+        onMouseLeave={() => setHover(null)}
+      >
+        <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-full" preserveAspectRatio="none">
+          {segments.map((pts, i) => (
+            <polyline
+              key={i}
+              points={pts}
+              fill="none"
+              stroke="var(--chart-1)"
+              strokeWidth="1.5"
+              vectorEffect="non-scaling-stroke"
+            />
+          ))}
+          {/* 단일 점(폴리라인 불가) 구간 표시 */}
+          {segments.length === 0 && known.length >= 1 && (
+            <circle cx={W / 2} cy={yOf(last)} r="2" fill="var(--chart-1)" />
+          )}
+          {/* 호버 안내선 + 측정점 강조. 결측 지점이면 세로선만 그린다. */}
+          {hover !== null && (
+            <line
+              x1={xOf(hover)} x2={xOf(hover)} y1={0} y2={H}
+              stroke="var(--chart-1)" strokeWidth="1" opacity="0.35"
+              vectorEffect="non-scaling-stroke"
+            />
+          )}
+          {hover !== null && hoverValue !== null && (
+            <circle cx={xOf(hover)} cy={yOf(hoverValue)} r="3" fill="var(--chart-1)" stroke="var(--background)" strokeWidth="1" />
+          )}
+        </svg>
+        {hover !== null && (
+          <div
+            className="absolute -top-1 -translate-x-1/2 -translate-y-full pointer-events-none z-10
+                       border border-border rounded bg-background/95 px-2 py-1 whitespace-nowrap"
+            style={{ left: `${hoverLeftPct}%` }}
+          >
+            <span className="font-mono text-[9px] text-muted-foreground">
+              {new Date(points[hover].time).toLocaleTimeString("ko-KR", { hour12: false })}
+            </span>
+            <span className="font-mono text-[10px] text-foreground ml-1.5 tabular-nums">
+              {hoverValue === null ? "측정 없음" : `${hoverValue.toFixed(1)} ${unit}`}
+            </span>
+          </div>
         )}
-      </svg>
+      </div>
       <div className="flex justify-between mt-1">
         <span className="font-mono text-[9px] text-muted-foreground/60">{fmtT(points[0].time)}</span>
         <span className="font-mono text-[9px] text-muted-foreground/60">

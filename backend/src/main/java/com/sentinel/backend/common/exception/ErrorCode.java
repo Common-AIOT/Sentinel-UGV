@@ -25,6 +25,7 @@ public enum ErrorCode {
     MEDIA_NOT_FOUND(HttpStatus.NOT_FOUND, "MEDIA-001", "미디어 자산을 찾을 수 없습니다."),
     MEDIA_UPLOAD_INCOMPLETE(HttpStatus.BAD_REQUEST, "MEDIA-002", "스토리지에서 업로드를 확인하지 못했습니다."),
     MEDIA_KEY_CONFLICT(HttpStatus.CONFLICT, "MEDIA-003", "같은 저장 위치의 미디어가 이미 등록되어 있습니다. 기존 mediaId 를 사용해야 합니다."),
+    MEDIA_CHECKSUM_MISMATCH(HttpStatus.BAD_REQUEST, "MEDIA-004", "저장된 파일의 체크섬이 통지된 값과 다릅니다. 파일을 다시 올린 뒤 완료를 재호출해야 합니다."),
 
     // 지도 (S15P11A301-185 업로드 계약)
     MAP_NOT_FOUND(HttpStatus.NOT_FOUND, "MAP-001", "지도를 찾을 수 없습니다. 업로드 URL 발급이 선행되어야 합니다."),

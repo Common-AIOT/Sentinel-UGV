@@ -53,8 +53,8 @@ public class MediaController {
 
     /** 업로드 완료 통지. 같은 mediaId 재시도에 같은 응답을 돌려준다(멱등, 31-10). */
     @Operation(summary = "업로드 완료 알리기 (젯슨용)",
-            description = "파일을 다 올린 뒤 '올렸다'고 서버에 알립니다. 서버가 파일이 진짜 있는지·크기가 맞는지 확인하고 재생 가능 상태로 바꿉니다. "
-                    + "실수로 두 번 불러도 문제없습니다(둘 다 200). 파일이 없거나 크기가 다르면 400 — 다시 올린 뒤 또 부르면 됩니다.")
+            description = "파일을 다 올린 뒤 '올렸다'고 서버에 알립니다. 서버가 파일이 진짜 있는지·크기와 체크섬(sha256)이 맞는지 확인하고 재생 가능 상태로 바꿉니다. "
+                    + "실수로 두 번 불러도 문제없습니다(둘 다 200). 파일이 없거나 크기·체크섬이 다르면 400 — 다시 올린 뒤 또 부르면 됩니다.")
     @PostMapping("/uploads/{mediaId}/complete")
     public ApiResponse<MediaCompleteResponse> completeUpload(
             @PathVariable UUID mediaId,

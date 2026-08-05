@@ -197,10 +197,18 @@ export default function MissionHistoryPage() {
         m => m.type === "EVENT_VIDEO" && m.storageStatus === "AVAILABLE",
       );
       if (!video) {
+        // 업로드 중(PENDING)과 유실(FAILED)을 구분한다 — 서버가 오래된 PENDING 을
+        // 실물 대조로 FAILED 판정하게 되면서(13.6) 화면도 다르게 말해야 한다.
+        // FAILED 도 젯슨이 다시 올리면 복구되므로 단정하지 않는다.
+        const failed = d.media.some(
+          m => m.type === "EVENT_VIDEO" && m.storageStatus === "FAILED",
+        );
         setVideoError(
           d.media.length === 0
             ? "연결된 영상이 없습니다"
-            : "영상이 아직 업로드되지 않았습니다 (PENDING)",
+            : failed
+              ? "영상이 유실됐습니다 — 업로드 확인 실패"
+              : "영상 업로드 중입니다 — 잠시 후 다시 열어보세요",
         );
         return;
       }

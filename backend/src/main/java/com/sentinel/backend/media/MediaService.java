@@ -1,5 +1,6 @@
 package com.sentinel.backend.media;
 
+import java.io.IOException;
 import java.sql.Timestamp;
 import java.time.Duration;
 import java.util.List;
@@ -34,7 +35,9 @@ import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignReques
  * 상태를 안다. object key 와 Content-Type 은 서버가 결정한다(31-11) — 클라이언트가
  * 키를 정하면 버킷의 임의 경로에 쓸 수 있다.
  *
- * <p>상태는 13.6 을 따르되 UPLOADING 전이는 생략한다. 서버가 관측할 수 없는 상태다.
+ * <p>상태는 13.6 을 따르되 UPLOADING 전이는 생략한다 — PUT 이 원자적이라 서버가 관측할
+ * 수 없는 상태다. 서버가 쓰는 상태는 PENDING·AVAILABLE·FAILED 세 가지이고, 오래된
+ * PENDING 의 유실 판정은 {@link MediaReconciler} 가 맡는다.
  */
 @Service
 public class MediaService {
@@ -94,10 +97,17 @@ public class MediaService {
     /**
      * 업로드 완료를 반영해 storage_status 를 AVAILABLE 로 바꾼다 (31-7 5단계).
      *
-     * <p>멱등하다. 이미 AVAILABLE 이면 검증 없이 같은 응답을 돌려준다 — 젯슨은 응답을
-     * 못 받으면 같은 mediaId 로 재시도하며, 두 번째가 실패하면 영원히 PENDING 에 갇힌다.
+     * <p>멱등하다. 이미 AVAILABLE 이면 스토리지 재검증 없이 같은 응답을 돌려준다 — 젯슨은
+     * 응답을 못 받으면 같은 mediaId 로 재시도하며, 두 번째가 실패하면 영원히 PENDING 에
+     * 갇힌다. 단 메타데이터 UPDATE 는 다시 수행한다 — 완료 통지가 유실돼 MediaReconciler 가
+     * 메타데이터 없이 승격한 행을 젯슨의 뒤늦은 재시도가 채우는 경로다.
      *
-     * <p>완료 검증은 HeadObject 존재·크기 비교다. sha256 은 저장만 한다.
+     * <p>완료 검증은 HeadObject 존재·크기 비교 + 실물 SHA-256 비교다. 크기만 비교하던
+     * #132 를 마무리한 것 — 같은 크기의 손상은 크기 비교로 잡히지 않는다. 체크섬이
+     * 다르면 FAILED 로 남기고 400 을 돌려준다. 젯슨이 다시 올린 뒤 재호출하면 복구된다.
+     *
+     * <p>FAILED 행의 complete 도 같은 검증을 거쳐 AVAILABLE 이 된다 — FAILED 는
+     * 서버 관점의 유실 판정일 뿐 종착역이 아니다.
      */
     public MediaCompleteResponse completeUpload(UUID mediaId, MediaCompleteRequest request) {
         List<AssetRow> rows = jdbc.query(
@@ -109,11 +119,18 @@ public class MediaService {
         }
         AssetRow asset = rows.getFirst();
         if ("AVAILABLE".equals(asset.storageStatus())) {
+            updateCompleted(mediaId, request);
             return new MediaCompleteResponse(mediaId, asset.s3Key(), "AVAILABLE");
         }
 
         verifyUploaded(asset.s3Key(), request.sizeBytes());
+        verifyChecksum(mediaId, asset.s3Key(), request.sha256());
 
+        updateCompleted(mediaId, request);
+        return new MediaCompleteResponse(mediaId, asset.s3Key(), "AVAILABLE");
+    }
+
+    private void updateCompleted(UUID mediaId, MediaCompleteRequest request) {
         MediaCompleteRequest.Recorded recorded = request.recorded();
         jdbc.update(COMPLETE_ASSET,
                 request.sha256(),
@@ -124,7 +141,6 @@ public class MediaService {
                 recorded == null ? null : recorded.postRollSeconds(),
                 recorded == null ? null : recorded.endReason(),
                 mediaId);
-        return new MediaCompleteResponse(mediaId, asset.s3Key(), "AVAILABLE");
     }
 
     /** 조회용 Presigned GET URL 발급. key 가 아니라 mediaId 로 조회한다(27.4). */
@@ -190,6 +206,33 @@ public class MediaService {
         if (head.contentLength() == null || head.contentLength() != expectedSize) {
             throw new BusinessException(ErrorCode.MEDIA_UPLOAD_INCOMPLETE,
                     "객체 크기가 다릅니다. 요청 %d, 실제 %s".formatted(expectedSize, head.contentLength()));
+        }
+    }
+
+    private void verifyChecksum(UUID mediaId, String objectKey, String expectedSha256) {
+        String actual = hashObject(objectKey);
+        if (!actual.equalsIgnoreCase(expectedSha256)) {
+            // 화면이 "유실"로 정직하게 보이도록 FAILED 를 남긴다. 재업로드 후
+            // complete 재호출이 성공하면 AVAILABLE 로 덮인다.
+            jdbc.update("UPDATE media_assets SET storage_status = 'FAILED' WHERE id = ?", mediaId);
+            throw new BusinessException(ErrorCode.MEDIA_CHECKSUM_MISMATCH,
+                    "체크섬 불일치. 통지 %s, 실물 %s".formatted(expectedSha256, actual));
+        }
+    }
+
+    /** 저장된 객체의 SHA-256. MinIO 가 같은 호스트라 GET 스트리밍은 로컬 트래픽이다. */
+    String hashObject(String objectKey) {
+        GetObjectRequest get = GetObjectRequest.builder()
+                .bucket(props.bucket())
+                .key(objectKey)
+                .build();
+        try (var in = s3Client.getObject(get)) {
+            return Checksums.sha256Hex(in);
+        } catch (IOException e) {
+            // 읽기 실패는 업로드 잘못이 아니라 스토리지 문제다. 5xx 로 돌려
+            // 젯슨 Outbox 가 재시도하게 한다 (4xx 는 영구 실패 처리, 29.4).
+            throw new BusinessException(ErrorCode.INTERNAL_SERVER_ERROR,
+                    "객체를 읽지 못했습니다: " + objectKey);
         }
     }
 

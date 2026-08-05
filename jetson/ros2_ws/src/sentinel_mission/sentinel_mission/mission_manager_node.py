@@ -517,6 +517,23 @@ class MissionManagerNode(Node):
         machine = self.machine
         body = {
             'state': machine.state.value,
+            # `command_mux` 가 이 값으로 자율/수동을 고른다 (S15P11A301-278).
+            #
+            # 없으면 mux 는 **모든 명령을 0으로 막는다** — "모르면 기본값을 자율로
+            # 두지 않는다"는 그쪽 규칙 때문이다(mux.py). 그것은 옳은 설계이고,
+            # 문제는 소유자가 값을 내보내지 않는 것이었다. `mux.py` 주석이
+            # 「controlMode 는 mission_manager 가 소유한다」로 계약을 적어 두었는데
+            # 발행 쪽이 비어 있었다.
+            #
+            # 종전에는 안전 체인을 켜도 로봇이 움직이지 않았고, 원인 표시는
+            # mux 의 경고 한 줄뿐이었다. S15P11A301-237 의 관통 시험이 이것을
+            # 놓친 이유는 가짜 상태 메시지에 controlMode 를 직접 넣어 통과시켰기
+            # 때문이다 — 조건이 실제 스택과 달랐다.
+            #
+            # 파생 규칙은 `cloud_bridge` 가 관제로 보낼 때 쓰던 것과 같다
+            # (state == MANUAL ? MANUAL : AUTO). 어휘는 state.schema.json 을
+            # 따른다.
+            'controlMode': machine.control_mode,
             'movementAllowed': machine.movement_allowed,
             'speedLimit': machine.speed_limit,
             'changedAt': format_utc(at or self._now()),

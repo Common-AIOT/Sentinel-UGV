@@ -264,6 +264,22 @@ class MissionStateMachine:
     def person_count(self) -> int:
         return self.encounter.person_count if self.encounter else 0
 
+    @property
+    def control_mode(self) -> str:
+        """자율/수동. `command_mux` 가 이 값으로 명령 소스를 고른다.
+
+        **상태에서 파생되며 독립 필드가 아니다.** 26.3 이 수동 전환을 `PAUSED`
+        경유로 정했고 `MANUAL` 이 그 상태이므로, "수동인데 임무가 진행 중" 이라는
+        조합은 존재하지 않는다. 그 덕에 수동 주행 중에는 후보를 봐도 encounter 가
+        생기지 않는다(`observe_candidates` 가 `EXPLORING` 만 받는다) — 정지·STT·
+        녹화가 수동 조종과 뒤엉키는 일이 구조적으로 막힌다.
+
+        어휘는 `state.schema.json` 을 따른다(`MANUAL` 또는 `AUTO`). `cloud_bridge`
+        가 관제로 보낼 때 같은 규칙으로 파생하고 있었는데, 규칙이 두 곳에 있으면
+        어긋날 때 어느 쪽이 맞는지 알 수 없다. 소유자는 이쪽이다(S15P11A301-278).
+        """
+        return 'MANUAL' if self.state is MissionState.MANUAL else 'AUTO'
+
     def is_in_encounter(self) -> bool:
         """encounter 처리 중인 상태인가.
 

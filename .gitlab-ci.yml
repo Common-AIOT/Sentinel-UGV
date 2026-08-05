@@ -277,6 +277,10 @@ test:backend-dockerfile:
       changes:
         - backend/Dockerfile
   script:
+    # DinD 데몬 대기 — build:backend-image 와 같은 기동 플레이크 대응.
+    # retry 는 두지 않는다. 이 job 은 Dockerfile 실수를 잡는 것이 목적이라
+    # script 실패를 자동 재시도하면 진짜 실패까지 세 번 돌게 된다.
+    - timeout 90 sh -c 'until docker info >/dev/null 2>&1; do sleep 3; done'
     - cd backend
     - docker build -t spring-backend:mr-check .
 
@@ -383,7 +387,23 @@ build:backend-image:
     DOCKER_TLS_CERTDIR: ""
     # Docker 클라이언트가 DinD 서비스의 비-TLS 포트로 접속하도록 지정
     DOCKER_HOST: tcp://docker:2375
+  # DinD 서비스가 가끔 기동 중 죽는다(zombie 네트워크 경고 → 2375 무응답 →
+  # "Cannot connect to the Docker daemon"). 기본 retry 는 script_failure 를
+  # 재시도하지 않아 매번 사람이 재실행했다. 이 job 의 코드 실패는 MR 단계
+  # (test:backend·test:backend-dockerfile)가 먼저 잡으므로, 기본 브랜치에서의
+  # script 실패는 사실상 러너 인프라 문제다 — 자동 재시도가 안전하다.
+  retry:
+    max: 2
+    when:
+      - api_failure
+      - runner_system_failure
+      - stuck_or_timeout_failure
+      - script_failure
   script:
+    # 0. DinD 데몬 대기 — 러너 헬스체크(30초)보다 늦게 뜨는 경우를 흡수한다.
+    #    끝내 안 뜨면 여기서 실패하고, 위 retry 가 새 서비스 컨테이너로 재시도한다.
+    - timeout 90 sh -c 'until docker info >/dev/null 2>&1; do sleep 3; done'
+
     # 1. 도커 허브 로그인 (GitLab Variables에 등록한 변수 사용)
     - echo "$DOCKER_HUB_PASSWORD" | docker login -u "$DOCKER_HUB_USER" --password-stdin
 

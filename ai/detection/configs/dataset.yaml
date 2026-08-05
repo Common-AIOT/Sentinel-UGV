@@ -1,0 +1,28 @@
+# YOLO 학습 데이터셋 정의 (AGENTS.md §12)
+#
+# ⚠️ path는 이 파일 기준 상대경로가 **아니다.** Ultralytics는 상대경로를 전역 설정
+#    (%APPDATA%/Ultralytics/settings.json 의 datasets_dir) 기준으로 푼다. 그 값은
+#    다른 프로젝트를 가리키고 있을 수 있고, 실제로 그래서 학습이 실패했다(2026-08-04).
+#
+#    scripts/train_detect.py 가 이 파일을 읽어 **절대경로로 바꾼 사본**을 만들어
+#    Ultralytics에 넘긴다. 전역 설정을 건드리면 사용자의 다른 프로젝트가 깨지므로
+#    그 방법은 쓰지 않는다.
+#
+#    따라서 아래 path는 **이 yaml 파일이 있는 위치 기준**으로 적는다
+#    (train_detect.py 가 그렇게 해석한다).
+#
+# 현재 채워지는 데이터: AI-Hub 71550 실내(편의점·매장) 사람 이상행동 — 전도
+#   scripts/convert_71550.py 로 생성한다. 관절 17개에서 bbox를 유도한다.
+#
+# ⚠️ 이 데이터는 **누운 자세에 치우쳐 있다.** 전도 클립만 변환했으므로 대부분이
+#    쓰러지는 중이거나 쓰러진 사람이다. 이것만으로 파인튜닝하면 서 있는 사람의
+#    탐지 성능이 떨어질 수 있다(catastrophic forgetting). 명세는 서 있거나 앉아
+#    있는 요구조자도 구조 대상으로 두므로(src/persistence.py 참고), 서 있는 사람
+#    데이터를 섞어야 한다. 혼합 비율은 미정이며 실측으로 정한다.
+
+path: ../data/processed
+train: images/train
+val: images/val
+
+names:
+  0: person

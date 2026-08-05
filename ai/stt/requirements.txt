@@ -32,6 +32,9 @@ openai                # GMS API 호출 (팀 결정 2026-07-24, 온디바이스 L
 # 남는다. 상시 실패가 있으면 진짜 실패를 못 알아본다(S15P11A301-179).
 pytest
 jsonschema            # 공통 스키마 계약 검증
+fastapi>=0.116,<1      # gpu_server API 계약 테스트·서빙
+python-multipart>=0.0.20,<1
+httpx>=0.28,<1        # FastAPI TestClient
 
 # 안내 음성 자산 변환 전용 — tools/convert_guide_assets
 #

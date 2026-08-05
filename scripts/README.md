@@ -59,6 +59,7 @@ ESP32 두 보드는 같은 CH340(1a86:7523)이고 **이 칩은 시리얼 번호�
 | `viz_up.sh` | 돌고 있는 스택에 Foxglove Bridge를 붙인다 |
 | `viz_down.sh` | Bridge만 떼고 스택은 그대로 둔다 |
 | `ros_env.sh` | **source 전용.** ROS 소싱과 DDS 격리 설정이 있는 유일한 곳 |
+| `jetson_voice_preflight.sh` | 원격 ASR·VAD·GMS·사전녹음·마이크·rclpy를 실제 호출해 음성 기동 전 점검 |
 
 **`stop_sentinel.sh`로 데모 스택을 내릴 수 없다.** 이름 때문에 그렇게 보이지만
 그것은 `start_sentinel.sh`의 짝이고 센서·스트리밍만 덮는다. 데모 스택은
@@ -79,6 +80,7 @@ ESP32 두 보드는 같은 CH340(1a86:7523)이고 **이 칩은 시리얼 번호�
 ./scripts/demo_up.sh enable_viz:=false      # Foxglove Bridge 없이 (아래 참고)
 ./scripts/demo_down.sh                       # 전부 내린다
 ./scripts/demo_down.sh --dry-run             # 무엇을 정리할지만 본다
+./scripts/jetson_voice_preflight.sh           # 음성 노드 기동 전 실장비 점검
 
 # 센서·스트리밍만 (개발용)
 ./scripts/start_sentinel.sh                  # HTTPS (기본)

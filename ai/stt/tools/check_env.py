@@ -133,6 +133,8 @@ if LOAD:
     def _load_stt():
         from sentinel_voice import config
         if config.STT_BACKEND == "remote":
+            import numpy as np
+
             from sentinel_voice.remote_asr import RemoteASRClient
 
             client = RemoteASRClient(
@@ -144,8 +146,21 @@ if LOAD:
                 retry_delay_seconds=config.ASR_RETRY_DELAY,
                 allow_insecure_http=config.ASR_ALLOW_INSECURE_HTTP,
             )
-            client.close()
-            return f"원격 ASR 설정 검증 성공 ({config.ASR_MODEL_LABEL})"
+            try:
+                health = client.health()
+                # /health는 의도적으로 공개되어 있다. 짧은 디지털 무음을 한 번
+                # 전사해 Bearer 키와 /v1/asr 경로까지 실제로 검증한다. 결과 텍스트는
+                # 환각 여부와 무관하게 버리며 로그에 남기지 않는다.
+                client.transcribe(
+                    np.zeros(config.FS // 4, dtype=np.float32),
+                    sample_rate=config.FS,
+                )
+            finally:
+                client.close()
+            return (
+                "원격 ASR health+인증 전사 성공 "
+                f"(backend={health.get('backend')}, model={health.get('model')})"
+            )
 
         from faster_whisper import WhisperModel
 

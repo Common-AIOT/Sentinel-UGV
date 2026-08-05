@@ -82,6 +82,68 @@ class RemoteASRClient:
         if self._owns_client:
             self._client.close()
 
+    def health(self) -> dict[str, object]:
+        """서버가 실제 추론 가능한 상태인지 확인한다.
+
+        단순히 URL 형식과 API 키 존재만 검사하면 Jetson 배포 직전에 방화벽,
+        터널, 모델 로드 실패를 놓친다. health 응답에는 키나 오디오가 없으며,
+        예외에도 서버 응답 본문을 넣지 않는다.
+        """
+        request_id = f"jetson-health-{uuid.uuid4().hex}"
+        last_error: RemoteASRError | None = None
+
+        for attempt in range(1, self.max_attempts + 1):
+            try:
+                response = self._client.get(
+                    f"{self.base_url}/health",
+                    headers={"X-Request-ID": request_id},
+                )
+                try:
+                    body = response.json()
+                except ValueError as error:
+                    raise RemoteASRError(
+                        "ASR_INVALID_RESPONSE",
+                        retryable=True,
+                        status_code=response.status_code,
+                    ) from error
+
+                if response.is_error:
+                    raise RemoteASRError(
+                        f"ASR_HTTP_{response.status_code}",
+                        retryable=response.status_code in {429, 502, 503, 504},
+                        status_code=response.status_code,
+                    )
+                if not isinstance(body, dict) or not isinstance(
+                    body.get("ready"), bool
+                ):
+                    raise RemoteASRError(
+                        "ASR_INVALID_RESPONSE",
+                        retryable=True,
+                        status_code=response.status_code,
+                    )
+                if not body["ready"]:
+                    raise RemoteASRError(
+                        str(body.get("error_code") or "ASR_NOT_READY"),
+                        retryable=True,
+                        status_code=response.status_code,
+                    )
+                return body
+            except httpx.TimeoutException as error:
+                last_error = RemoteASRError("ASR_TIMEOUT", retryable=True)
+                last_error.__cause__ = error
+            except httpx.TransportError as error:
+                last_error = RemoteASRError("ASR_UNAVAILABLE", retryable=True)
+                last_error.__cause__ = error
+            except RemoteASRError as error:
+                last_error = error
+
+            if not last_error.retryable or attempt >= self.max_attempts:
+                raise last_error
+            if self.retry_delay_seconds:
+                self.sleep(self.retry_delay_seconds * attempt)
+
+        raise last_error or RemoteASRError("ASR_UNAVAILABLE", retryable=True)
+
     def transcribe(
         self,
         wav: np.ndarray,

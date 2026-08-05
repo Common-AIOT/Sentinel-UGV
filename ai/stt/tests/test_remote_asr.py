@@ -44,6 +44,59 @@ class RemoteASRClientTest(unittest.TestCase):
         self.assertIn("multipart/form-data", observed["content_type"])
         self.assertIn(b"RIFF", observed["body"])
 
+    def test_health_requires_ready_server(self):
+        client = self.client(
+            lambda request: httpx.Response(
+                200,
+                json={
+                    "status": "ok",
+                    "ready": True,
+                    "backend": "qwen3-asr",
+                    "model": "Qwen/Qwen3-ASR-1.7B",
+                    "cuda_visible_devices": "3",
+                    "error_code": None,
+                },
+            )
+        )
+
+        health = client.health()
+
+        self.assertTrue(health["ready"])
+        self.assertEqual("qwen3-asr", health["backend"])
+
+    def test_health_rejects_degraded_server(self):
+        client = self.client(
+            lambda request: httpx.Response(
+                200,
+                json={
+                    "status": "degraded",
+                    "ready": False,
+                    "backend": "qwen3-asr",
+                    "model": "Qwen/Qwen3-ASR-1.7B",
+                    "cuda_visible_devices": "3",
+                    "error_code": "MODEL_LOAD_FAILED",
+                },
+            ),
+            max_attempts=1,
+        )
+
+        with self.assertRaises(RemoteASRError) as caught:
+            client.health()
+
+        self.assertEqual("MODEL_LOAD_FAILED", caught.exception.code)
+        self.assertTrue(caught.exception.retryable)
+
+    def test_health_transport_failure_is_stable(self):
+        def handler(request):
+            raise httpx.ConnectError("unreachable", request=request)
+
+        client = self.client(handler, max_attempts=1)
+        with self.assertRaises(RemoteASRError) as caught:
+            client.health()
+
+        self.assertEqual("ASR_UNAVAILABLE", caught.exception.code)
+        self.assertTrue(caught.exception.retryable)
+
     def test_retryable_503_is_retried_once(self):
         calls = []
 

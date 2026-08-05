@@ -1,0 +1,15 @@
+# Jetson에서 STT 추론을 L40S GPU 서버로 보낼 때 필요한 런타임 의존성만 설치한다.
+# faster-whisper/CTranslate2, FastAPI 서버, 개발 테스트 도구는 설치하지 않는다.
+#
+# 선행 조건:
+#   JetPack 버전에 맞는 NVIDIA PyTorch가 이미 설치되어 있어야 한다.
+#   pip가 일반 x86/CPU torch로 바꾸지 않도록 torch를 이 파일에 넣지 않는다.
+
+numpy<2
+scipy
+librosa
+sounddevice
+soundfile
+silero-vad
+openai
+httpx>=0.28,<1

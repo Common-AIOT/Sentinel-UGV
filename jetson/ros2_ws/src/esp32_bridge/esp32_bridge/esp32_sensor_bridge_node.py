@@ -380,7 +380,13 @@ class Esp32SensorBridgeNode(Node):
         try:
             self._transport.write_frame(frame)
         except Exception as exc:  # noqa: BLE001 - 포트가 아직 안 열렸을 수 있다
-            self.get_logger().warn(f"HELLO 전송 실패: {exc}")
+            # HELLO 는 150ms 마다 나가므로 포트가 끊긴 동안 이 경고가 6.7Hz 로
+            # 쌓인다. S15P11A301-264 관찰 구간에서 로그가 6142줄이 됐다.
+            # 억제해도 정보는 잃지 않는다 — 재연결 성공·실패 전이는
+            # SerialTransport 가 따로 남긴다.
+            self.get_logger().warning(
+                f"HELLO 전송 실패: {exc}", throttle_duration_sec=5.0
+            )
 
     # ---- 수신 ----
 

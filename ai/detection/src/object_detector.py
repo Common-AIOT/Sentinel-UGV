@@ -121,7 +121,7 @@ class ObjectDetector:
         ⚠️ **이 결과를 충돌 회피에 쓰지 않는다.** 명세는 물리 장애물 회피를
         LiDAR/Nav2에, 급정지를 Collision Monitor/초음파에 맡기고 AI 추론 실패와
         무관하게 로컬 안전을 확보하도록 정했다
-        (docs/01-프로젝트-개요.md:136, docs/07-AI-탐지-음성.md "COCO에 없는 물체도
+        (docs/01-프로젝트-개요.md:136, docs/07-AI-탐지.md "COCO에 없는 물체도
         거리 기반으로 처리한다"). 여기서 나오는 값은 **관제 표시·기록용**이다.
         """
         wanted = {c.lower() for c in class_names}

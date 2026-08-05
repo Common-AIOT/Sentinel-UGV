@@ -17,7 +17,7 @@ npm run dev --prefix frontend
 
 ### 샘플 미디어는 커밋되지 않는다
 
-실육성이 들어 있어 개인 음성 커밋 금지 규정(`ai/voice/docs/README.md` §11-6)에
+실육성이 들어 있어 개인 음성 커밋 금지 규정(`docs/08-AI-음성.md` 33.5)에
 걸린다. `frontend/.gitignore`에 등록해 두었고, 직접 만들어 넣는다.
 
 ```bash

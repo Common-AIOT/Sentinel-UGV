@@ -14,7 +14,7 @@
 따로 재서 페이로드에 싣는다(명세 DB의 detections.pose_status에 대응).
 
 ByteTrack/BoT-SORT는 사람이 가려지면 새 trackId를 부여하므로, 시간·위치의 단순
-조건으로 상태를 승계한다(docs/07-AI-탐지-음성.md 25.4가 허용하는 범위. 외형은 쓰지 않는다).
+조건으로 상태를 승계한다(docs/07-AI-탐지.md 25.1이 허용하는 범위. 외형은 쓰지 않는다).
 """
 
 from __future__ import annotations

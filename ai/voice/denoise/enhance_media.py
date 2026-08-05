@@ -10,7 +10,7 @@ DeepFilterNet의 고유 샘플레이트라 그 규격에서는 재샘플이 일�
 
 출력(m4a)은 관제 블랙박스 토글의 두 번째 소스다. **원본을 대체하지 않는다** —
 잡음 제거는 사람 귀 전용이고 STT에는 해롭다는 실측이 있다
-(ai/voice/docs/measurements/잡음제거-실측.md §3).
+(docs/08-AI-음성.md 33.9).
 """
 
 from __future__ import annotations
@@ -42,7 +42,7 @@ OVERLAP_SECONDS = 1.0
 #   10dB       -9.0dB     17.8%                부분 복구
 #
 # 합성 혼합 시험에서는 이 문제가 드러나지 않았다 — 모델의 훈련 방식(가산 혼합)과
-# 같은 조건이라 유리했기 때문이다. 근거: docs/measurements/잡음제거-실측.md §9
+# 같은 조건이라 유리했기 때문이다. 근거: docs/08-AI-음성.md 33.9
 #
 # 값은 관제 청취 판정으로 확정한다. 사람 귀가 소비자이므로 지표가 아니라 귀가 기준이다.
 ATTEN_LIMIT_DB: float | None = None

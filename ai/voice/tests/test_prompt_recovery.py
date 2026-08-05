@@ -8,7 +8,7 @@
   ② 운영 프라이밍을 제거한다 — 슬롯 이득 0, 목적 미달성, 무발화에서 허위
      긴급 보고 15.8%.
 
-근거: docs/measurements/STT-오류율-실측.md §3, Jira S15P11A301-251.
+근거: docs/08-AI-음성.md 33.8, Jira S15P11A301-251.
 """
 
 import unittest

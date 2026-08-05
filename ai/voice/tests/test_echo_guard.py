@@ -136,7 +136,7 @@ class GuideEchoMatchTest(unittest.TestCase):
         # 이 단정이 깨지면 측정 전제가 바뀐 것이므로 값을 다시 골라야 한다.
         self.assertTrue(
             guide_echo_match(answer, GUIDE_BY_TEXT, ratio=0.55)[0],
-            "실측 포함률이 0.600에서 벗어났다. docs/README.md 11-3의 측정표를 갱신할 것",
+            "실측 포함률이 0.600에서 벗어났다. docs/08-AI-음성.md의 측정 기록을 갱신할 것",
         )
         self.assertGreaterEqual(
             config.ECHO_MATCH_RATIO,

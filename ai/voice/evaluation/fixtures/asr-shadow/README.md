@@ -17,4 +17,4 @@
 - `riskPatterns`, `safePatterns`: 위험→안전 뒤집힘을 보수적으로 탐지하는 표현이다.
 - `condition`: `silence`, `noise-only`는 전사문이 생기면 환각으로 센다.
 
-실행 예시는 상위의 `docs/ASR-shadow-벤치마크.md`를 따른다.
+실행 예시와 선정 결과는 `docs/08-AI-음성.md` 33.8을 따른다.

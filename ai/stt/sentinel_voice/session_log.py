@@ -62,7 +62,12 @@ class SessionLog:
                 "sampleRate": config.FS,
                 "silenceRms": config.SILENCE_RMS,
                 "normTargetRms": config.NORM_TARGET_RMS,
-                "sttModel": config.STT_MODEL,
+                "sttBackend": config.STT_BACKEND,
+                "sttModel": (
+                    config.STT_MODEL
+                    if config.STT_BACKEND == "local"
+                    else config.ASR_MODEL_LABEL
+                ),
                 "llmModel": config.LLM_MODEL,
                 "device": config.DEVICE,
                 "timeoutSeconds": timeout_seconds,

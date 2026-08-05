@@ -1,7 +1,8 @@
 # STT 음성 파이프라인
 
 요구조자의 음성을 듣고 → 상태 정보를 구조화 → 관제 보고 상태에 맞는 안전
-안내 음성을 내보내는 **음성 파이프라인**입니다. 청취(VAD·STT)는 Jetson 로컬,
+안내 음성을 내보내는 **음성 파이프라인**입니다. VAD는 Jetson 로컬, STT는 기본
+Jetson 로컬 또는 인증된 GPU ASR 서버 중 선택 가능하며,
 정보 구조화(LLM)는 **GMS API 호출**, 안내 음성은 **사전녹음 재생**으로 동작합니다.
 
 ```
@@ -22,7 +23,7 @@
 | 단계 | 선택 | 근거 |
 |------|------|------|
 | VAD | Silero VAD (로컬) | 노이즈 1차 컷, torch 기반 경량 |
-| STT | faster-whisper **`small`** (로컬, 젯슨은 CPU/int8) | 저SNR·약한발화 강건성 |
+| STT | 기본 faster-whisper **`small`** (로컬) / 선택 Qwen3-ASR-1.7B (GPU 서버) | `SENTINEL_STT_BACKEND`로 안전 롤백 가능. 원격 장애는 무응답이 아닌 STT 실패로 분류 |
 | LLM | **`gpt-5.4-mini`** (GMS API) | Jira 118 프롬프트 v2 실측 44/44 완전 정답으로 선정. 로컬 3b는 젯슨 피크 5.62GB·OOM([근거](docs/measurements/메모리-예산.md)) |
 | LLM 폴백 | 키워드 파서(`llm.keyword_extract`) | STT 완료 후 GMS 호출만 실패한 경우의 축소 보고 |
 | 안내 음성 | **승인된 사전녹음 WAV 재생**(`assets/`) | TTS 모델 미탑재로 RAM 절약. 형식 검사는 `python -m tools.validate_guide_assets` |
@@ -44,6 +45,7 @@
 | `sentinel_voice/pipeline.py` | 엔드투엔드 실행(다턴 대화 세션 조립·보고). 모델은 첫 사용 시 지연 로딩 |
 | `sentinel_voice/conversation.py` | 다턴 상태머신(질문 4개, 부상 우선 순서)과 VAD·STT·구조화 결과 4분류. 재질문은 INTRO 무응답 1회뿐 |
 | `sentinel_voice/session_runner.py` | 상태머신에 실제 마이크·STT·GMS·안내 음성을 연결하는 어댑터 |
+| `sentinel_voice/remote_asr.py` | GPU ASR 인증·타임아웃·제한 재시도 클라이언트. 원음·키를 로그에 남기지 않음 |
 | `sentinel_voice/guide_audio.py` | 승인 문구 목록, WAV 형식 검사, 안전 재생 결과 |
 | `tools/` | 배포 전 환경·오디오·사전녹음 자산 점검 |
 | `bench/` | 측정용 다회차 벤치(지연·일관성) |
@@ -83,6 +85,30 @@ cp .env.example .env       # Linux/Jetson
 > Jetson 직접 호출을 사용하는 개발 단계에서는 `ai/stt/.env`에만 두며 커밋하지 않습니다.
 > 네트워크 단절이 확인되면 신규 STT 대화를 시작하지 않습니다. 이미 STT가 완료된 뒤
 > GMS 호출만 실패한 경우에 한해 `llm.py`의 33-8 키워드 폴백을 사용합니다.
+
+## GPU ASR 원격 모드
+
+기본값은 기존 `local`이라 배포 직후 동작이 바뀌지 않습니다. GPU 서버를 TLS
+reverse proxy 또는 Jetson의 SSH 터널 뒤에 준비하고 API 키를 안전하게 전달한 뒤에만
+다음 값을 `.env`에 넣습니다.
+
+```dotenv
+SENTINEL_STT_BACKEND=remote
+SENTINEL_ASR_BASE_URL=https://asr.example.internal
+SENTINEL_ASR_API_KEY=replace_with_random_asr_key
+SENTINEL_ASR_TIMEOUT=8
+SENTINEL_ASR_CONNECT_TIMEOUT=2
+SENTINEL_ASR_MAX_ATTEMPTS=2
+```
+
+- loopback 외 평문 HTTP는 기본 거부합니다. 개발망에서 불가피할 때만
+  `SENTINEL_ASR_ALLOW_INSECURE_HTTP=1`을 명시합니다.
+- 429·503·timeout·전송 오류는 안정된 오류 코드로 바뀌며, VAD가 이미 사람 음성을
+  찾은 턴은 `VOICE_DETECTED_STT_FAILED`로 남습니다. `NO_RESPONSE`로 바뀌지 않습니다.
+- Qwen3-ASR에는 Whisper의 `no_speech_prob`이 없으므로 로컬 VAD를 통과한 비어 있지
+  않은 전사만 0.0으로 호환 매핑하고, 빈 전사는 1.0으로 처리합니다.
+- 장애 시 `SENTINEL_STT_BACKEND=local`로 되돌리면 기존 faster-whisper 경로를 그대로
+  사용합니다. API 키와 원음은 원격 클라이언트 로그에 남기지 않습니다.
 
 ## 음성 세션 보고 스키마
 
@@ -272,9 +298,15 @@ python -m bench.gms_model_bench \
 
 | 변수 | 기본값 | 설명 |
 |------|--------|------|
+| `SENTINEL_STT_BACKEND` | local | `local` faster-whisper 또는 `remote` GPU ASR |
 | `SENTINEL_DEVICE` | 자동(cuda/cpu) | 강제 지정 (젯슨 STT는 `cpu` — CTranslate2 CUDA 없음) |
 | `SENTINEL_COMPUTE` | Jetson=int8, PC=float16 | STT 양자화 |
 | `SENTINEL_STT_MODEL` | small | tiny/base/small/medium/large-v3 |
+| `SENTINEL_ASR_BASE_URL` | 127.0.0.1:18100 | 원격 ASR 기본 URL. loopback 외 HTTPS 필수 |
+| `SENTINEL_ASR_API_KEY` | (없음, remote 필수) | GPU ASR 인증 키 — `.env`로만 관리 |
+| `SENTINEL_ASR_TIMEOUT` | 8 | 전사 요청 총 제한 시간(초) |
+| `SENTINEL_ASR_CONNECT_TIMEOUT` | 2 | 연결 제한 시간(초) |
+| `SENTINEL_ASR_MAX_ATTEMPTS` | 2 | 일시 장애 최대 시도 횟수 |
 | `SENTINEL_LLM` | gpt-5.4-mini | GMS 모델명 |
 | `GMS_KEY` | (없음, **필수**) | GMS API 키 — `ai/stt/.env`로 관리, 커밋 금지 |
 | `SENTINEL_GMS_BASE` | gms.ssafy.io/…/v1 | GMS OpenAI 호환 엔드포인트 |

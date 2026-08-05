@@ -22,6 +22,7 @@ silero-vad
 
 # LLM 클라이언트 (GMS API — https://gms.ssafy.io)
 openai                # GMS API 호출 (팀 결정 2026-07-24, 온디바이스 LLM 전환)
+httpx                 # GPU ASR FastAPI 클라이언트
 
 # 안내 음성은 승인된 PCM WAV를 재생하므로 TTS 모델 의존성이 없다.
 

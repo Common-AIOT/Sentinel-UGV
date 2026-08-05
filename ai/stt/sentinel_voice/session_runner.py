@@ -37,6 +37,7 @@ from .conversation import (
     SessionState,
 )
 from .guide_audio import GUIDE_BY_TEXT, GuidePlayer, PlaybackResult
+from .remote_asr import RemoteASRError
 from .safety import guide_echo_match, is_valid_stt
 from .session_log import SessionLog, open_session_log
 
@@ -226,7 +227,17 @@ class VoiceSessionRunner:
             self.on_event(f"[NOVOICE] {question.value}: VAD 음성 미검출")
             return AudioObservation(False)
 
-        text, no_speech_prob = self.deps.transcribe(normalized)
+        try:
+            text, no_speech_prob = self.deps.transcribe(normalized)
+        except RemoteASRError as error:
+            # VAD까지 통과했으므로 사람 음성은 관찰됐다. 원격 서버 실패를 무응답으로
+            # 바꾸지 않고 VOICE_DETECTED_STT_FAILED로 넘겨 관제 확인을 요구한다.
+            diagnostic.stt_invalid_reason = error.code
+            self.on_event(
+                f"[STTFAIL] {question.value}: 원격 ASR 오류 "
+                f"{error.code} retryable={error.retryable}"
+            )
+            return AudioObservation(True, None)
         diagnostic.stt_text = text
         diagnostic.no_speech_prob = no_speech_prob
 

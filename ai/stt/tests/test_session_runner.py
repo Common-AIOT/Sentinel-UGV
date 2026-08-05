@@ -11,11 +11,11 @@ from sentinel_voice.conversation import (
     SessionState,
 )
 from sentinel_voice.guide_audio import (
-    GUIDE_ASSETS,
     GuideCode,
     GuidePlayer,
     PlaybackStatus,
 )
+from sentinel_voice.remote_asr import RemoteASRError
 from sentinel_voice.session_runner import SessionDependencies, VoiceSessionRunner
 
 
@@ -70,6 +70,7 @@ def build_runner(
     record_error=False,
     has_speech=True,
     no_speech_prob=0.1,
+    transcribe_error=None,
 ):
     player = RecordingPlayer()
 
@@ -79,6 +80,8 @@ def build_runner(
         return audio if audio is not None else speech()
 
     def transcribe(wav):
+        if transcribe_error is not None:
+            raise transcribe_error
         return text, no_speech_prob
 
     def extract(value, question=None):
@@ -139,6 +142,23 @@ class SessionRunnerTest(unittest.TestCase):
         # 발화는 감지됐으므로 무응답으로 기록하지 않는다.
         self.assertTrue(result.fields["anyResponseDetected"])
         self.assertTrue(result.fields["operatorReviewRequired"])
+
+    def test_remote_asr_failure_is_not_recorded_as_no_response(self):
+        """GPU 서버 실패도 사람의 무응답으로 바뀌면 안 된다."""
+        runner, _ = build_runner(
+            transcribe_error=RemoteASRError("ASR_TIMEOUT", retryable=True)
+        )
+        result = runner.run()
+
+        intro_turn = next(
+            turn for turn in result.turns if turn.question == QuestionCode.INTRO
+        )
+        self.assertEqual(
+            intro_turn.response_class, ResponseClass.VOICE_DETECTED_STT_FAILED
+        )
+        self.assertTrue(result.fields["anyResponseDetected"])
+        self.assertTrue(result.fields["operatorReviewRequired"])
+        self.assertEqual(runner.diagnostics[0].stt_invalid_reason, "ASR_TIMEOUT")
 
     def test_silence_is_no_voice_detected(self):
         """무음이면 재질문 후 무응답으로 기록한다."""

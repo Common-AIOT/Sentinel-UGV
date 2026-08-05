@@ -292,6 +292,11 @@ python -m bench.gms_model_bench \
 단계별 실측 결과와 모델 선정 근거는
 [`docs/measurements/GMS-모델-비교-결과.md`](docs/measurements/GMS-모델-비교-결과.md)에 누적합니다.
 
+L40S의 `Qwen/Qwen3.5-4B` 로컬 shadow 서버와 동일 46케이스 비교 결과는
+[`docs/measurements/Qwen3.5-4B-로컬-shadow.md`](docs/measurements/Qwen3.5-4B-로컬-shadow.md)에
+기록했습니다. 안전 치명 오분류 1건과 P50 7.58초 때문에 운영 전환하지 않고
+`gpt-5.4-mini` GMS 경로를 유지합니다.
+
 ---
 
 ## 환경 변수 (config 오버라이드)

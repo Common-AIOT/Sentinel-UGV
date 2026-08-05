@@ -320,8 +320,17 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
           break;
 
         case "return":
+          // 이 명령은 STOP 을 보내 **임무를 종료**한다. 복귀 주행이 아니다
+          // (S15P11A301-274). 종전에는 낙관적으로 RETURNING("복귀 중")을 세웠는데,
+          // RETURNING 은 미구현(S15P11A301-246)이라 로봇이 결코 그 상태가 되지
+          // 않는다. 즉 화면만 복귀하는 것처럼 보였다. 대기 상태에서 잘못 누르면
+          // 젯슨은 무의미한 전이를 하고 화면은 "복귀 중"을 띄웠다.
+          //
+          // 백엔드가 STOP ACK 에서 missions.status 를 COMPLETED 로 닫고 그 값을
+          // STOMP 로 밀어 주므로(CommandAckWriter), 낙관적 표시도 COMPLETED 로
+          // 맞춘다. 서버가 곧 같은 값으로 덮으므로 깜빡임이 없다.
           if (from !== "ESTOP" && from !== "ERROR") {
-            missionState = "RETURNING";
+            missionState = "COMPLETED";
             controlMode = "AUTO";
           }
           break;

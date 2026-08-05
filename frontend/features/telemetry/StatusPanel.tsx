@@ -23,7 +23,12 @@ const MISSION_LABEL: Record<MissionState, string> = {
   PAUSED: "일시정지",
   MANUAL: "수동 조종",
   RETURNING: "복귀 중",
-  COMPLETED: "임무 완료",
+  // "임무 완료"가 아니라 "대기"다 (S15P11A301-274). 종료는 알람으로 이미 알렸고
+  // 완료 이력은 관제 DB(missions.status·ended_at)에 남는다. 상태창은 "지금 로봇이
+  // 어떤가"를 보여주는 자리이므로, 임무를 끝낸 로봇의 현재 조건은 대기다.
+  // SAFE_IDLE 과 같은 표시가 되는 것이 맞다 — 조작자에게 둘은 같은 상황이고
+  // (다음 임무를 시작할 수 있다) 구별은 내부 사정이다.
+  COMPLETED: "대기",
   ESTOP: "비상 정지",
   ERROR: "오류",
 };
@@ -39,7 +44,9 @@ const MISSION_TONE: Record<MissionState, string> = {
   PAUSED: "text-accent border-accent/40 bg-accent/10",
   MANUAL: "text-info border-info/30 bg-info/10",
   RETURNING: "text-accent border-accent/30 bg-accent/10",
-  COMPLETED: "text-primary border-primary/30 bg-primary/10",
+  // 표시가 "대기"이므로 톤도 SAFE_IDLE 과 같이 중립이다. 종전에는 초록(정상
+  // 진행)이라 대기 중인데 활동 중처럼 보였다 (S15P11A301-274).
+  COMPLETED: "text-muted-foreground border-border bg-muted",
   ESTOP: "text-destructive border-destructive/40 bg-destructive/15",
   ERROR: "text-destructive border-destructive/40 bg-destructive/15",
 };
@@ -207,18 +214,25 @@ export default function StatusPanel() {
         {/* 이 버튼은 STOP 을 보내 임무를 종료한다. 복귀 주행이 아니다
             (S15P11A301-274). RETURNING 이 미구현이라(S15P11A301-246) 복귀
             버튼이 갈 곳이 없어 STOP 에 붙어 있었고, 이름만 "베이스캠프 복귀"
-            여서 누르면 복귀할 것으로 읽혔다. 동작대로 이름을 맞춘다.
+            여서 누르면 복귀할 것으로 읽혔다. 동작대로 이름을 맞췄다.
 
             내부 타입 "return" 은 그대로 둔다 — RobotContext 의 STOP 매핑을
-            건드리지 않는다. 복귀 주행이 구현되면 복귀 버튼을 다시 넣는다. */}
-        <button
-          onClick={() => handleCommand("return", "임무 종료")}
-          disabled={danger}
-          className="w-full text-xs font-medium px-3 py-2 rounded border border-accent/30 bg-accent/10 text-accent hover:bg-accent/20 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
-        >
-          <CornerUpLeft size={13} />
-          임무 종료
-        </button>
+            건드리지 않는다. 복귀 주행이 구현되면 복귀 버튼을 다시 넣는다.
+
+            **끝낼 임무가 있을 때만 보인다.** 대기(SAFE_IDLE)·완료(COMPLETED)에는
+            종료할 대상이 없다. 종전에는 항상 보여서 대기 상태에서 잘못 누르면
+            젯슨이 무의미한 전이를 하고 화면은 "복귀 중"을 띄웠다. 위 일시정지
+            버튼이 주행 중에만 보이는 것과 같은 기준이다. */}
+        {missionState !== "SAFE_IDLE" && missionState !== "COMPLETED" && (
+          <button
+            onClick={() => handleCommand("return", "임무 종료")}
+            disabled={danger}
+            className="w-full text-xs font-medium px-3 py-2 rounded border border-accent/30 bg-accent/10 text-accent hover:bg-accent/20 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
+          >
+            <CornerUpLeft size={13} />
+            임무 종료
+          </button>
+        )}
       </div>
       )}
     </div>

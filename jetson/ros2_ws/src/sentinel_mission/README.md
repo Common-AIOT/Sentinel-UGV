@@ -74,7 +74,7 @@ QoS(RELIABLE, depth 10)로 구독하므로 맞아야 합니다.
 
 ## 음성 파이프라인과의 연결
 
-`ai/stt`는 순수 파이썬이고 ROS를 모릅니다. `report_lifecycle.execute_outcome`이
+`ai/voice`는 순수 파이썬이고 ROS를 모릅니다. `report_lifecycle.execute_outcome`이
 `request_mission_resume: Callable[[], bool]` 콜백을 받는데, 그 구현체가 없는 것이
 현재 상태입니다.
 

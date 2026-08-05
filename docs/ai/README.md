@@ -9,7 +9,7 @@
 | 객체탐지 | [../07-AI-탐지-음성.md](../07-AI-탐지-음성.md) 25.7 | Jetson 실행·검증 절차, 성능 조정, 흔한 오류 (2026-07-30 통합) |
 | 객체탐지 | [detection/dataset_selection.md](detection/dataset_selection.md) | 학습·검증 데이터셋 조사와 선정 근거 |
 | 객체탐지 | [detection/requirements.md](detection/requirements.md) | 객체탐지 MVP 요구사항 초안·이월 항목 |
-| STT·LLM·TTS | [`ai/stt/docs/README.md`](../../ai/stt/docs/README.md) | 설계·안전 정책·실행·검증 통합 문서 (단일 기준) |
+| STT·LLM·TTS | [`ai/voice/docs/README.md`](../../ai/voice/docs/README.md) | 설계·안전 정책·실행·검증 통합 문서 (단일 기준) |
 
 - 구현 코드는 저장소 루트의 `ai/` 아래에 관리합니다.
 - 성능 수치는 측정 환경, commit, 하드웨어 버전과 함께 기록합니다(문서 유지 원칙 5).

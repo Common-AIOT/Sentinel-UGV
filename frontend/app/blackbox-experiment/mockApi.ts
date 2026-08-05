@@ -5,14 +5,14 @@
  * 나머지는 `app/blackbox/page.tsx`와 같다. 토글 기능 추가분만 diff 로 보인다.
  *
  * 미디어 파일은 **커밋하지 않는다.** 실육성이 들어간 샘플이라 개인 음성 커밋 금지
- * 규정(ai/stt/docs/README.md §11-6)에 걸린다. 아래 경로에 직접 두고 실행한다.
+ * 규정(ai/voice/docs/README.md §11-6)에 걸린다. 아래 경로에 직접 두고 실행한다.
  *
  *   frontend/public/experiment/event_sample.mp4           원본 (오디오 트랙 포함)
  *   frontend/public/experiment/event_sample-denoised.m4a  잡음 제거본
  *
  * 만드는 방법:
  *   python denoise_try/make_demo_event.py                 샘플 이벤트 영상 생성
- *   python ai/denoise/enhance_media.py <위 파일>           제거본 생성
+ *   python ai/voice/denoise/enhance_media.py <위 파일>           제거본 생성
  */
 
 import type {

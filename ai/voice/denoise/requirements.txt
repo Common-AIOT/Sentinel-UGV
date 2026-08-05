@@ -1,0 +1,24 @@
+# 블랙박스 오디오 잡음 제거 (서버측 전용) — S15P11A301-202
+#
+# ⚠️ 젯슨·ai/voice 환경에 설치하지 않는다.
+#    - DeepFilterLib(Rust 확장)에 aarch64 휠이 없다 (x86_64 · macOS · win만)
+#    - deepfilternet이 packaging<24, numpy<2 를 하드 핀해서 다른 환경을 강등시킨다
+#    별도 가상환경 또는 서버 컨테이너에서만 설치한다.
+
+deepfilternet==0.5.6   # 잡음 제거 모델. 0.5.6이 마지막 릴리스(2023-08)
+
+# ⚠️ 서버에는 CPU 전용 torch를 설치한다. 기본 인덱스의 Linux 휠은 CUDA 런타임을
+#    끌고 와 이미지가 2GB 이상 커지는데, EC2에 GPU가 없어 전부 죽은 무게다.
+#
+#      pip install --index-url https://download.pytorch.org/whl/cpu torch torchaudio
+#
+#    측정: 1스레드에서 60초 오디오를 1.0초에 처리한다(RTF 0.017). GPU가 필요 없다.
+torch                  # deepfilternet 런타임
+torchaudio             # deepfilternet이 요구. 2.11+는 torchaudio_compat.py로 보완
+numpy<2                # deepfilternet 핀과 일치시켜 해석 충돌을 줄인다
+scipy                  # 리샘플(48kHz 아닌 입력 대비)
+av                     # MP4 디먹스·AAC 인코딩 (ffmpeg CLI 불필요)
+requests               # worker.py의 백엔드 media API 호출
+
+# 검증 전용
+pytest

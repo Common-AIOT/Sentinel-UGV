@@ -146,6 +146,16 @@ GMS와 키워드 폴백은 인원 수·이동 가능 여부·긴급 상태 언�
 
 ## Jetson Orin Nano 배포
 
+원격 L40S Qwen3-ASR 구성으로 Jetson을 준비할 때는 먼저
+[`docs/Jetson-원격-ASR-실행.md`](docs/Jetson-원격-ASR-실행.md)의 실제 연결 확인,
+경량 의존성 설치, 자동 preflight, ROS 2 단독 E2E 순서를 따른다. 소음 벤치는 이
+preflight와 단독 E2E가 통과한 뒤 실행한다.
+
+Jetson 앞에서 명령을 한 줄씩 실행하는 실기 절차와 기대 결과, 수동 Encounter
+트리거, 증적 확인, 장애별 중단 기준은
+[`docs/Jetson-원격-ASR-테스트-가이드.md`](docs/Jetson-원격-ASR-테스트-가이드.md)에
+정리한다.
+
 x86(개발 PC) → ARM64(Jetson) 아키텍처 차이와 8GB 메모리 제약이 최대 함정입니다.
 `torch`·`faster-whisper(CTranslate2)`를 **일반 pip로 설치하면 거의 반드시 막힙니다.**
 

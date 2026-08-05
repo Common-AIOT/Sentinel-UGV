@@ -184,6 +184,16 @@ def generate_launch_description():
         # 끝나기 전에는 데모 기본 구성을 건드리지 않는다 — 탐지가 이미 10.80FPS
         # 로 목표 미달이라, 얹었을 때 얼마나 깎이는지 수치 없이 켤 수 없다.
         DeclareLaunchArgument('enable_nav2', default_value='false'),
+        # 안전 체인 (S15P11A301-237). Nav2 와 같은 이유로 기본 꺼짐이며, 추가로
+        # **켜는 순간 바퀴가 돌 수 있는 상태가 된다.** 지금까지 데모 스택은
+        # /cmd_vel 발행자가 없어서 구조적으로 못 움직였는데, 이 체인이 그 연결을
+        # 만든다. 트랙폭·바퀴 지름이 미실측이라(TBD-CAL-002) 지령과 실제 속도의
+        # 관계가 아직 확정되지 않았으므로, 실차 캘리브레이션(S15P11A301-248)
+        # 전까지는 사람이 명시적으로 켜야 한다.
+        #
+        # 체인만 켜도 안전하다 — Nav2 가 꺼져 있으면 /cmd_vel_nav 가 없어 게이트가
+        # COMMAND_STALE 로 0 을 낸다. 체인 단독 기동은 그 검증에 쓴다.
+        DeclareLaunchArgument('enable_safety', default_value='false'),
         # EKF 도 기본 꺼짐 (S15P11A301-236). 입력이 ESP32 센서 보드의 휠
         # 오도메트리·IMU 라, 보드 없이 켜면 예측만으로 0 을 내고 그것이 TF 로
         # 나가 로봇이 영원히 원점에 있는 것으로 보인다. 아래에서 enable_esp32 와
@@ -255,6 +265,14 @@ def generate_launch_description():
         # costmap 으로 시작한다 — latched 구독이라 회복은 되지만 로그가 어지럽다.
         _include('sentinel_bringup', 'nav2.launch.py',
                  'enable_nav2', 8.0),
+        # 안전 체인은 Nav2 **뒤**에 띄운다 (S15P11A301-237). 순서가 중요한 이유는
+        # collision_monitor 가 /scan 을, safety_gate 가 /mission/status 를 요구하는
+        # 것이 아니라(둘 다 늦게 와도 기다린다) command_mux 가 붙기 전에 Nav2 의
+        # 첫 명령이 나가면 그 명령이 아무도 안 듣는 토픽으로 사라져 로그에
+        # "명령을 냈는데 안 움직인다" 만 남기 때문이다. 10초면 Nav2 lifecycle
+        # activate 가 끝난 뒤다.
+        _include('sentinel_bringup', 'safety.launch.py',
+                 'enable_safety', 10.0),
         _include('sentinel_streaming', 'streaming.launch.py',
                  'enable_streaming', 4.0,
                  {'webrtc_encryption': LaunchConfiguration('webrtc_encryption')}),

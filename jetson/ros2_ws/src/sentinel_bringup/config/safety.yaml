@@ -1,0 +1,142 @@
+# 안전 체인 가운데 두 층 (S15P11A301-237, 명세 24.1·34-7)
+#
+# 이 두 노드는 **직접 만들지 않는다.** nav2 것이 이미 설치돼 있고
+# (nav2_velocity_smoother·nav2_collision_monitor 1.1.20), 우리가 만들면 같은 일을
+# 하는 코드가 둘 생긴다. 우리 몫은 양 끝단(command_mux·safety_gate)이다.
+#
+# ## 체인 순서와 그 근거
+#
+#   /cmd_vel_nav ─┐
+#                 ├→ command_mux → /cmd_vel_muxed
+#   /cmd_vel_manual┘
+#     → velocity_smoother → /cmd_vel_smoothed
+#     → collision_monitor → /cmd_vel_safe
+#     → safety_gate       → /cmd_vel → vehicle_kinematics
+#
+# **smoother 가 collision_monitor 보다 앞이다.** 명세 04장 요약(8.1)은 반대로
+# 적혀 있었는데 그것이 틀렸다 — smoother 를 뒤에 두면 collision_monitor 의 급정지가
+# 감가속 제한에 걸려 **천천히 멈춘다.** 비상 정지가 완만해지는 것은 안전 기능의
+# 실패다. 03장 34-7 의 순서가 이 순서이며 그쪽이 규범이다.
+#
+# ## 값은 잠정이다
+#
+# 제동거리·트랙폭·바퀴 지름이 아직 실측되지 않았다(TBD-CAL-001·TBD-CAL-002).
+# 그래서 정지 구역을 보수적으로 크게 잡았다. 실측이 오면 여기만 고친다.
+
+velocity_smoother:
+  ros__parameters:
+    # safety_gate·command_mux 와 같은 20Hz 다. 체인 전체가 한 주기로 돌면
+    # 층마다 지연이 쌓이는 것을 계산하기 쉽다(20Hz × 4층 = 최악 200ms).
+    smoothing_frequency: 20.0
+
+    # OPEN_LOOP 다. CLOSED_LOOP 는 odom 을 읽어 실제 속도에서 출발하는데, 우리
+    # 오도메트리는 전방 캐스터 슬립으로 오차가 있고(03장) IMU 장착이 아직
+    # 미확정이다(TBD-HW-012). 틀린 피드백으로 보정하면 지령이 흔들린다.
+    feedback: "OPEN_LOOP"
+    odom_topic: "/odometry/filtered"
+    odom_duration: 0.1
+
+    # [x, y, theta]. y 는 차동 구동이라 항상 0 이다.
+    # x 상한 0.25 는 nav2.yaml 의 desired_linear_vel 과 같은 값이어야 한다 —
+    # 여기가 더 낮으면 컨트롤러가 낸 속도를 이 층이 깎아 추종이 어긋난다.
+    max_velocity: [0.25, 0.0, 1.0]
+    min_velocity: [-0.25, 0.0, -1.0]
+
+    # 가감속 상한. 급가속이 전방 캐스터를 튀게 만들고 그 슬립이 오도메트리 yaw 를
+    # 갉아먹는다(03장). 0.5 m/s² 면 0 → 0.25m/s 가 0.5초다.
+    max_accel: [0.5, 0.0, 2.0]
+    max_decel: [-0.5, 0.0, -2.0]
+
+    # 지령 성분을 비율로 함께 줄이지 않는다. 곡률이 바뀌면 컨트롤러가 자기가
+    # 보낸 호대로 간다고 가정한 것이 깨져 보정하려다 진동한다
+    # (kinematics.saturate 가 양쪽을 같은 비율로 줄이는 것과 같은 이유다).
+    scale_velocities: false
+
+    # 아주 작은 지령은 0 으로 만든다. 모터가 돌지 못하는 크기의 명령은
+    # 소음과 열만 만든다. 실측 전 잠정값이다(TBD-CAL-001).
+    deadband_velocity: [0.02, 0.0, 0.05]
+
+    # 입력이 이 시간 이상 없으면 0 을 낸다. 명령 TTL(300ms)보다 길게 두어
+    # 판정 주체를 safety_gate 하나로 유지한다 — 여기서 먼저 끊으면 게이트가
+    # COMMAND_STALE 이유를 낼 기회가 없어져 로그에 원인이 안 남는다.
+    velocity_timeout: 1.0
+
+collision_monitor:
+  ros__parameters:
+    base_frame_id: "base_footprint"
+    odom_frame_id: "odom"
+    cmd_vel_in_topic: "cmd_vel_smoothed"
+    cmd_vel_out_topic: "cmd_vel_safe"
+    state_topic: "collision_monitor_state"
+
+    transform_tolerance: 0.2
+    # 소스가 이 시간 이상 낡으면 collision_monitor 는 그 소스를 **건너뛴다.**
+    # 즉 라이다가 죽으면 "장애물 없음" 과 똑같이 통과시킨다. 그래서 /scan
+    # 신선도는 safety_gate 가 따로 본다(gate.py 의 SCAN_STALE). 여기 값을
+    # 줄여도 그 구멍은 막히지 않는다 — 막는 곳이 다르다.
+    source_timeout: 0.5
+
+    # **끈다.** 켜면 스캔 시각 기준으로 `odom → base_footprint` 를 조회해 그 사이
+    # 로봇이 움직인 만큼 구역을 보정하는데, 그 조회가 실측에서 계속 실패했다:
+    #
+    #   Failed to get "lidar_link"->"base_footprint" ... Lookup would require
+    #   extrapolation into the future ... when looking up transform from
+    #   frame [odom] to frame [base_footprint]
+    #
+    # 휠 오도메트리 TF 가 스캔보다 수십 ms 늦게 올라오기 때문이고, 그 상태에서
+    # collision_monitor 는 **아무것도 발행하지 않았다**(2026-08-04 실측:
+    # /cmd_vel_smoothed 18.33Hz 가 들어오는데 /cmd_vel_safe 0.00Hz). 체인이
+    # 가운데서 끊긴 것이며 증상은 "로봇이 안 움직인다" 뿐이다.
+    #
+    # 끄는 대가는 계산해서 받아들였다. 보정 대상은 소스 시각과 현재의 로봇 이동량인데,
+    # 체인 주기 50ms + TF 지연 20ms ≈ 70ms 이고 최고 속도 0.25m/s 에서 **1.75cm** 다.
+    # 정지 구역은 전방 0.40m 로 로봇 반경 0.20m 보다 20cm 여유가 있어 그 안에 든다.
+    # 속도 상한을 올리면 이 계산을 다시 해야 한다.
+    base_shift_correction: False
+    # 입력이 끊긴 뒤에도 이 시간 동안 0 을 계속 낸다. 하류가 침묵과 정지를
+    # 구별할 수 있게 하는 것이 이 체인 전체의 방침이다.
+    stop_pub_timeout: 2.0
+
+    polygons: ["PolygonStop", "PolygonSlow"]
+
+    # 좌표는 base_footprint 기준 [x1,y1, x2,y2, ...] 평면 배열이다.
+    # **전부 소수점을 붙인다** — ROS 2 YAML 파서는 int 와 float 이 섞인 배열을
+    # 거부한다("Sequence should be of same type", S15P11A301-236 에서 겪었다).
+    #
+    # 로봇 반경은 0.20(nav2.yaml). 정지 구역은 전방 0.40m·좌우 ±0.28m 로,
+    # 반경보다 여유를 두고 잡았다. 최고 속도 0.25m/s 에서 20Hz 체인 지연
+    # 최악 200ms 면 5cm 를 더 가므로 그만큼이 여유에 들어 있다. 제동거리
+    # 실측(TBD-CAL-001)이 오면 다시 계산한다.
+    PolygonStop:
+      type: "polygon"
+      points: [0.40, 0.28, 0.40, -0.28, 0.0, -0.28, 0.0, 0.28]
+      action_type: "stop"
+      # 이 개수를 **넘는** 점이 구역 안에 있으면 발동한다. 3 은 잡음 한두 점에
+      # 반응하지 않으면서 실제 장애물은 놓치지 않는 값이다(nav2 예제 기본값).
+      max_points: 3
+      visualize: True
+      polygon_pub_topic: "polygon_stop"
+      enabled: True
+
+    # 감속 구역은 정지 구역 앞이다. 여기서 미리 줄여 두면 정지 구역에
+    # 들어갈 때의 속도가 낮아 실제 정지거리가 짧아진다.
+    PolygonSlow:
+      type: "polygon"
+      points: [0.75, 0.40, 0.75, -0.40, 0.0, -0.40, 0.0, 0.40]
+      action_type: "slowdown"
+      slowdown_ratio: 0.3
+      max_points: 3
+      visualize: True
+      polygon_pub_topic: "polygon_slowdown"
+      enabled: True
+
+    # approach 형(FootprintApproach)은 쓰지 않는다. local costmap 의
+    # published_footprint 를 구독해 충돌까지의 시간을 예측하는데, 그 예측이
+    # 오도메트리 품질에 의존한다. 캐스터 슬립이 있는 상태에서 예측 기반
+    # 판정을 넣으면 틀린 시점에 멈추거나 안 멈춘다. 거리 기반 두 구역만 쓴다.
+
+    observation_sources: ["scan"]
+    scan:
+      type: "scan"
+      topic: "/scan"
+      enabled: True

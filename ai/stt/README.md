@@ -303,6 +303,20 @@ pip install -r requirements.txt   # 젯슨과 달리 x86은 이대로 설치 가
 python -m tools.check_env
 ```
 
+## GPU ASR 후보 shadow 벤치마크
+
+Qwen3-ASR, faster-whisper large-v3, large-v3-turbo를 동일 음성으로 비교하는 도구는
+`bench/asr_shadow_bench.py`다. 한국어·영어 합성 스모크 코퍼스와 무음·잡음 케이스,
+L40S 실측 결과, 현장 코퍼스 승격 기준은
+[`docs/ASR-shadow-벤치마크.md`](docs/ASR-shadow-벤치마크.md)에 정리했다.
+
+```bash
+ASR_API_KEY=... python -m bench.asr_shadow_bench \
+  --manifest bench/fixtures/asr-shadow/manifest.jsonl \
+  --endpoint qwen=http://127.0.0.1:18100 \
+  --runs 3
+```
+
 ## 알려진 이슈
 
 - **사투리 미지원:** 현재 검증·합격 범위는 표준 한국어와 일반 구어체다. 사투리

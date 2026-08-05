@@ -190,6 +190,7 @@ class InferencePipeline:
             torso_horizontal_deg=posture_cfg["torso_horizontal_deg"],
             bbox_aspect_ratio=posture_cfg["bbox_aspect_ratio"],
             vertical_extent_ratio=posture_cfg["vertical_extent_ratio"],
+            upright_angle_deg=posture_cfg.get("upright_angle_deg", 30.0),
             min_valid_keypoints=posture_cfg["min_valid_keypoints"],
             keypoint_confidence=self.keypoint_confidence,
             depth_tilt=posture_cfg.get("depth_tilt", True),

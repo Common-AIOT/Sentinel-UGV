@@ -69,6 +69,7 @@ class PostureClassifier:
         torso_horizontal_deg: float = 55.0,
         bbox_aspect_ratio: float = 1.2,
         vertical_extent_ratio: float = 0.25,
+        upright_angle_deg: float = 30.0,
         min_valid_keypoints: int = 4,
         keypoint_confidence: float = 0.5,
         depth_tilt: bool = True,
@@ -85,6 +86,19 @@ class PostureClassifier:
         self.torso_horizontal_deg = torso_horizontal_deg
         self.bbox_aspect_ratio = bbox_aspect_ratio
         self.vertical_extent_ratio = vertical_extent_ratio
+        # 상체가 이 각도보다 수직에 가까우면 vertical_extent 신호를 **버린다**.
+        #
+        # 두 신호는 같은 것을 다르게 재는데, 어긋나면 한쪽이 틀린 것이다. 상체가
+        # 수직인데 어깨-엉덩이 y 간격이 좁게 나오는 것은 물리적으로 불가능하므로,
+        # 그때는 extent 쪽이 측정 오류다. 실측(2026-08-04, 관측 27,556건)에서
+        # FALLEN 판정의 상체 각도 평균이 10.98°였다. 거의 수직인데 쓰러졌다고
+        # 판정하고 있었다. 원인은 하체가 가려져 엉덩이 keypoint가 어깨 근처로
+        # 잘못 찍히는 것이다(FALLEN일 때 엉덩이 검출률 23~28%, NORMAL은 41~45%).
+        #
+        # 임계값 조정이 아니라 **모순 제거**다. 같은 데이터에서 FALLEN 22.4% →
+        # 13.1%로 줄었고, 71850의 실제 쓰러짐 트랙 점수는 전혀 변하지 않았다
+        # (중앙 0.049, 최대 0.713 동일). 오탐만 제거된다.
+        self.upright_angle_deg = upright_angle_deg
         self.min_valid_keypoints = min_valid_keypoints
         self.keypoint_confidence = keypoint_confidence
         # 카메라 광축 방향(앞뒤) 기울기를 각도에 반영할지. 아래 _depth_tilt_deg 참고.
@@ -196,14 +210,22 @@ class PostureClassifier:
                 torso_angle, self.torso_horizontal_deg, self.width_torso_angle,
                 higher_is_fallen=True,
             )
-            s_extent = _sigmoid_score(
-                extent, self.vertical_extent_ratio, self.width_vertical_extent,
-                higher_is_fallen=False,
-            )
             signals["score_torso_angle"] = round(s_angle, 3)
-            signals["score_vertical_extent"] = round(s_extent, 3)
             scored.append((s_angle, self.weight_torso_angle))
-            scored.append((s_extent, self.weight_vertical_extent))
+
+            # 상체가 명백히 수직이면 extent는 믿지 않는다(self.upright_angle_deg 참고).
+            # 각도와 수직신장비는 같은 것을 다르게 재므로, 어긋나면 하체 가림으로
+            # 엉덩이 keypoint가 틀린 경우다. 각도 신호는 그대로 쓴다.
+            if torso_angle < self.upright_angle_deg:
+                signals["vertical_extent_dropped"] = True
+                reason = "상체 수직 — 수직신장비 신호 제외"
+            else:
+                s_extent = _sigmoid_score(
+                    extent, self.vertical_extent_ratio, self.width_vertical_extent,
+                    higher_is_fallen=False,
+                )
+                signals["score_vertical_extent"] = round(s_extent, 3)
+                scored.append((s_extent, self.weight_vertical_extent))
 
         total_weight = sum(w for _, w in scored)
         base = sum(v * w for v, w in scored) / total_weight if total_weight > 0 else 0.0
@@ -227,8 +249,8 @@ class PostureClassifier:
         score = min(1.0, base * multiplier)
 
         status = POSTURE_FALLEN if score >= self.fallen_threshold else POSTURE_NORMAL
-        if not reason:
-            reason = f"점수 {score:.2f} (기본 {base:.2f} × 부동 {multiplier:.2f})"
+        detail = f"점수 {score:.2f} (기본 {base:.2f} × 부동 {multiplier:.2f})"
+        reason = f"{detail} · {reason}" if reason else detail
 
         return PostureResult(
             status=status,

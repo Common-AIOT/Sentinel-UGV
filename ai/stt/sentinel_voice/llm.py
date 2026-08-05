@@ -7,7 +7,7 @@ import re
 
 from . import config
 from .gms_resilience import GmsCallResult, call_with_limited_retry
-from .safety import coerce_extraction
+from .safety import coerce_extraction, mobility_no_implied_by_text
 
 
 PROMPT = config.PROMPT_PATH.read_text(encoding="utf-8")
@@ -151,6 +151,7 @@ def keyword_extract(text):
     cannot_move = bool(
         re.search(r"(못\s*(가|움직|일어나)|움직일\s*수\s*없|일어날\s*수\s*없|이동\s*불가)", normalized)
         or _HARD_TO_MOVE_PATTERN.search(normalized)
+        or mobility_no_implied_by_text(normalized)
     )
     can_move = bool(
         re.search(r"(움직일\s*수\s*있|이동\s*가능|갈\s*수\s*있|걸을\s*수\s*있)", normalized)

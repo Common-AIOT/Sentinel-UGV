@@ -1,6 +1,6 @@
 """pipeline.report_session의 보고값 보정 규칙 검증.
 
-pipeline 모듈은 sounddevice·torch·faster_whisper를 import하므로, 해당 패키지가
+pipeline 모듈은 sounddevice·torch·silero_vad를 import하므로, 해당 패키지가
 없는 환경에서는 이 테스트를 건너뛴다. 세션 배선 자체는 test_session_runner에서
 하드웨어 없이 검증한다.
 """

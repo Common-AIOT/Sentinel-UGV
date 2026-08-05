@@ -2,9 +2,8 @@
 """
 젯슨 측정용 다회차 벤치마크.
 
-STT는 시나리오당 1회(음성 고정) 캐싱하고, LLM은 NUM_RUNS회 반복해
+원격 FastAPI STT는 시나리오당 1회(음성 고정) 캐싱하고, LLM은 NUM_RUNS회 반복해
 평균/최소/최대 지연과 구조화 필드·위험도 참고값 일관성(%)을 집계한다.
-device/compute 는 config가 자동 감지(Jetson=int8).
 
   cd ai/stt && python -m bench.pipeline_bench
 
@@ -19,13 +18,13 @@ from collections import Counter
 
 import numpy as np
 import torch
-from faster_whisper import WhisperModel
 from silero_vad import load_silero_vad, get_speech_timestamps
 
 from sentinel_voice import config
 from sentinel_voice.audio import load_mono
 from sentinel_voice.config import FS
 from sentinel_voice.llm import llm_extract as gms_extract
+from sentinel_voice.remote_asr import RemoteASRClient
 from sentinel_voice.safety import (
     RISK_RULE_VERSION,
     coerce_report,
@@ -57,7 +56,15 @@ print(f"🚀 Sentinel 벤치마크 ({config.summary()}, runs={NUM_RUNS})")
 print("=" * 60)
 print("📦 STT/VAD 로딩...")
 vad = load_silero_vad()
-stt = WhisperModel(config.STT_MODEL, device=config.DEVICE, compute_type=config.COMPUTE)
+stt = RemoteASRClient(
+    base_url=config.ASR_BASE_URL,
+    api_key=config.ASR_API_KEY,
+    timeout_seconds=config.ASR_TIMEOUT,
+    connect_timeout_seconds=config.ASR_CONNECT_TIMEOUT,
+    max_attempts=config.ASR_MAX_ATTEMPTS,
+    retry_delay_seconds=config.ASR_RETRY_DELAY,
+    allow_insecure_http=config.ASR_ALLOW_INSECURE_HTTP,
+)
 
 
 def normalize(wav):
@@ -77,13 +84,15 @@ def run_stt(path):
     if raw_rms < config.SILENCE_RMS or not has_speech(wav):
         return dict(status="NO_SPEECH", text="", nsp=1.0, stt_ms=0.0)
     t = time.time()
-    segs, _ = stt.transcribe(wav, initial_prompt=config.STT_PROMPT, **config.STT_DECODE)
-    segs = list(segs)
+    text, no_speech_prob = stt.transcribe(wav, sample_rate=FS, language="ko")
     stt_ms = (time.time() - t) * 1000
-    text = "".join(s.text for s in segs).strip()
-    nsp = float(np.mean([s.no_speech_prob for s in segs])) if segs else 1.0
-    ok, why = is_valid_stt(text, nsp, config.STT_PROMPT)
-    return dict(status="OK" if ok else f"INVALID:{why}", text=text, nsp=nsp, stt_ms=stt_ms)
+    ok, why = is_valid_stt(text, no_speech_prob, None)
+    return dict(
+        status="OK" if ok else f"INVALID:{why}",
+        text=text,
+        nsp=no_speech_prob,
+        stt_ms=stt_ms,
+    )
 
 
 def llm_extract(text, model):
@@ -120,7 +129,7 @@ def non_ok_outcome(source):
 
 # 1단계: STT 1회 캐싱
 print("\n[1단계] STT 처리 및 시나리오 검사...")
-list(stt.transcribe(np.zeros(FS, dtype=np.float32), language="ko"))  # warm-up
+stt.transcribe(np.zeros(FS, dtype=np.float32), sample_rate=FS, language="ko")
 stt_cache = {}
 for name, rel, source in SCENARIOS:
     path = os.path.join(BASE, rel)

@@ -479,7 +479,7 @@ def cmd_noise_gate(args):
                 _elapsed, text, no_speech = transcribe(to_wav_bytes(mixed), verbose=True)
                 verdict = ""
                 if no_speech is not None:
-                    accepted = no_speech < config.STT_DECODE["no_speech_threshold"]
+                    accepted = no_speech < config.WHISPER_BENCH_DECODE["no_speech_threshold"]
                     if accepted and not is_speech:
                         verdict = " ⚠환각통과"
                     elif not accepted and is_speech:

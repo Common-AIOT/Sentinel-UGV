@@ -215,7 +215,6 @@ cd /home/orin/projects/S15P11A301/ai/stt
 ../../.venv/bin/python - <<'PY'
 from sentinel_voice import config
 
-assert config.STT_BACKEND == "remote"
 assert config.ASR_API_KEY and not config.ASR_API_KEY.startswith("replace_")
 assert config.GMS_KEY and not config.GMS_KEY.startswith("replace_")
 print(config.summary())

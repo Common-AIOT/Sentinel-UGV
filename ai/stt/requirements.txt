@@ -1,8 +1,6 @@
 # STT-GMS-사전녹음 안내 파이프라인 의존성
 #
-# ⚠️ Jetson(ARM64+CUDA)에서는 pip 직접 설치가 막히는 패키지가 있다.
-#    torch / faster-whisper(CTranslate2) 는 반드시 Jetson 전용 휠 또는
-#    jetson-containers 이미지를 사용한다. 자세한 절차는 README.md 참고.
+# ⚠️ Jetson(ARM64+CUDA)의 torch는 JetPack 전용 휠을 사용한다.
 #
 # 개발 PC(x86)에서는 아래를 그대로 pip install 해도 된다.
 
@@ -12,9 +10,6 @@ soundfile
 numpy
 scipy
 librosa
-
-# STT
-faster-whisper        # Jetson: jetson-containers 또는 whisper.cpp 대체 검토
 
 # VAD (torch 의존)
 silero-vad
@@ -40,5 +35,4 @@ httpx>=0.28,<1        # FastAPI TestClient
 # 안내 음성 자산 변환 전용 — tools/convert_guide_assets
 #
 # ffmpeg의 libavfilter(loudnorm) 바인딩. ffmpeg 실행 파일을 설치하지 않기 위해 쓴다.
-# faster-whisper의 전이 의존으로 딸려오지만, 도구가 직접 import하므로 명시 선언한다.
 av

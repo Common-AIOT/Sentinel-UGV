@@ -41,6 +41,7 @@ from .remote_asr import RemoteASRError
 from .safety import (
     guide_echo_match,
     is_valid_stt,
+    mobility_no_implied_by_text,
     mobility_yes_conflicts_with_text,
 )
 from .session_log import SessionLog, open_session_log
@@ -285,7 +286,7 @@ class VoiceSessionRunner:
             self._finish_turn_timing(diagnostic)
             return AudioObservation(False)
 
-        valid, reason = is_valid_stt(text, no_speech_prob, config.STT_PROMPT)
+        valid, reason = is_valid_stt(text, no_speech_prob, None)
         if not valid:
             # 음성은 있었다. STT만 실패했으므로 무응답으로 기록하지 않는다.
             diagnostic.stt_invalid_reason = reason
@@ -324,6 +325,16 @@ class VoiceSessionRunner:
             self.on_event(f"[LLM] {question.value}: 추출 경로 {source}")
 
         value = extraction.get(field_name)
+        if (
+            question == QuestionCode.MOBILITY
+            and mobility_no_implied_by_text(text)
+        ):
+            diagnostic.safety_reason = "MOBILITY_RHETORICAL_NEGATION"
+            self.on_event(
+                "[SAFE] MOBILITY: 반문형 이동 불가 표현을 NO로 보정"
+            )
+            self._finish_turn_timing(diagnostic)
+            return "NO"
         if (
             question == QuestionCode.MOBILITY
             and value == "YES"

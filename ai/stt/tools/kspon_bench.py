@@ -42,11 +42,12 @@ AI Hub 「한국어 음성」(KsponSpeech)에서 **두 개만** 받는다. 01~05
 총 편집거리 ÷ 총 정답 길이. 발화별 오류율의 평균이 아니다 — 위의 초단문 문제 때문이다.
 한국어는 띄어쓰기가 불안정해 CER을 주로 보고 WER은 함께 참고한다.
 
-## 운영과 같은 설정으로 돌린다
+## 과거 Whisper 비교 설정을 재현한다
 
-`config.STT_DECODE`와 `audio.normalize`를 그대로 쓴다. 벤치 전용 설정으로 재면 그
-숫자는 우리 시스템의 값이 아니다. 다르게 두는 것은 `initial_prompt` 하나뿐이며, 그것도
-운영값과 없음을 **둘 다** 재서 나란히 보고한다.
+`config.WHISPER_BENCH_DECODE`와 `audio.normalize`를 쓴다. 이 도구는 운영 경로가
+아닌 과거 faster-whisper 비교 재현용이다. 실행 환경에는
+`pip install -r gpu_server/requirements-whisper.txt`가 별도로 필요하다. 결과는 현재
+Qwen3-ASR 운영 수치가 아니다. `initial_prompt` 유무만 바꿔 나란히 보고한다.
 
 ## 이 숫자가 뜻하는 것
 
@@ -166,6 +167,9 @@ def main() -> int:
     parser.add_argument("--min-chars", type=int, default=5)
     parser.add_argument("--snr", type=float, nargs="*", default=[10, 5, 0])
     parser.add_argument("--out", type=Path, default=None, help="결과 JSONL 경로")
+    parser.add_argument("--whisper-model", default="small")
+    parser.add_argument("--whisper-device", default="cpu")
+    parser.add_argument("--whisper-compute", default="int8")
     parser.add_argument(
         "--no-prompt-compare",
         action="store_true",
@@ -176,15 +180,27 @@ def main() -> int:
     root = args.root.expanduser()
     from sentinel_voice import config
     from sentinel_voice.audio import normalize
-    from sentinel_voice.pipeline import load_models
+    from faster_whisper import WhisperModel
 
-    _, stt = load_models()
+    stt = WhisperModel(
+        args.whisper_model,
+        device=args.whisper_device,
+        compute_type=args.whisper_compute,
+    )
 
     def run(wav: np.ndarray, prompt: str | None) -> str:
-        segments, _ = stt.transcribe(wav, initial_prompt=prompt, **config.STT_DECODE)
+        segments, _ = stt.transcribe(
+            wav,
+            initial_prompt=prompt,
+            **config.WHISPER_BENCH_DECODE,
+        )
         return "".join(segment.text for segment in segments).strip()
 
-    print(f"STT 설정  {config.summary()}")
+    print(
+        "Whisper 비교 설정  "
+        f"model={args.whisper_model} device={args.whisper_device} "
+        f"compute={args.whisper_compute}"
+    )
     rng = np.random.default_rng(SEED)
     kept, counts = select(root, args.split, args.min_chars, args.limit, rng)
     print(f"{args.split}.trn  " + "  ".join(f"{k} {v}" for k, v in counts.items()))
@@ -195,7 +211,7 @@ def main() -> int:
         print(f"!! 소음 wav가 없다: {args.noise_dir}")
         return 2
     conditions = ["clean"] + [f"snr{int(s)}" for s in args.snr]
-    prompts = {"운영": config.STT_PROMPT}
+    prompts = {"과거 설정": config.WHISPER_BENCH_PROMPT}
     if not args.no_prompt_compare:
         prompts["무프롬"] = None
     print(f"소음 {len(noises)}종  조건 {conditions}  프롬프트 {list(prompts)}")

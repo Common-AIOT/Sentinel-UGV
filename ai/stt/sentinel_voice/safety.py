@@ -67,6 +67,29 @@ _MOBILITY_NEGATION_MARKERS = (
     "불가능",
 )
 
+_MOBILITY_RHETORICAL_NEGATION_PATTERNS = (
+    # 직접 질문에 대한 "그게 가능하겠냐" 식 반문. 단순 미래/의지 표현인
+    # "움직일 수 있겠어요"까지 NO로 만들지 않도록 `겠냐`만 확정한다.
+    re.compile(r"(?:움직일수|걸을수|이동할수|일어날수)있겠냐"),
+    # 이동 방법을 되묻는 반문. 재난 대화에서 질문 직후의 "어떻게 움직여요"는
+    # 이동 가능 답변이 아니라 불가능을 강조하는 표현이다.
+    re.compile(r"(?:어떻게|무슨수로).{0,12}(?:움직|걷|이동|일어나)"),
+)
+
+
+def mobility_no_implied_by_text(text: str) -> bool:
+    """이동 질문에 대한 강한 한국어 반문형 부정을 판별한다.
+
+    자유로운 추론은 하지 않고, 직접 이동 가능성을 반문하는 형태만 다룬다.
+    이 함수는 GMS가 ``UNKNOWN`` 또는 잘못된 ``YES``를 내더라도 실기에서 확인된
+    표현을 결정적으로 ``NO``로 보정하기 위한 안전 규칙이다.
+    """
+    squashed = _squashed(text)
+    return any(
+        pattern.search(squashed)
+        for pattern in _MOBILITY_RHETORICAL_NEGATION_PATTERNS
+    )
+
 
 def mobility_yes_conflicts_with_text(text: str) -> bool:
     """이동 가능 ``YES``와 함께 확정하면 위험한 부정 흔적을 찾는다.
@@ -127,7 +150,7 @@ def guide_echo_match(
 def is_valid_stt(text, no_speech_prob, prompt_text=""):
     """STT 출력이 유효한 발화인지 보수적으로 판정한다.
 
-    「프롬프트 복사」 가드는 `config.STT_PROMPT`가 제거되어(S15P11A301-251) 실제로는
+    「프롬프트 복사」 가드는 운영 프라이밍이 제거되어(S15P11A301-251) 실제로는
     돌지 않는다. 남겨 둔 이유는 프라이밍을 다시 켜는 경우를 대비한 것이다.
 
     이 가드에는 원래 위험이 하나 있었다 — 요구조자가 실제로 "살려주세요 도와주세요

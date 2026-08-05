@@ -62,14 +62,10 @@ class SessionLog:
                 "sampleRate": config.FS,
                 "silenceRms": config.SILENCE_RMS,
                 "normTargetRms": config.NORM_TARGET_RMS,
-                "sttBackend": config.STT_BACKEND,
-                "sttModel": (
-                    config.STT_MODEL
-                    if config.STT_BACKEND == "local"
-                    else config.ASR_MODEL_LABEL
-                ),
+                "sttBackend": "remote",
+                "sttModel": config.ASR_MODEL_LABEL,
                 "llmModel": config.LLM_MODEL,
-                "device": config.DEVICE,
+                "device": "remote-gpu",
                 "timeoutSeconds": timeout_seconds,
             }
         )

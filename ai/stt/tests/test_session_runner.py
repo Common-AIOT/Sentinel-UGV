@@ -269,6 +269,32 @@ class SessionRunnerTest(unittest.TestCase):
 
         self.assertEqual(result.fields["mobilityStatus"], "YES")
 
+    def test_rhetorical_mobility_negation_is_no(self):
+        """실기에서 확인된 한국어 반문은 이동 불가로 확정한다."""
+        runner, _ = build_runner(
+            text="다리 다쳤는데 움직일 수 있겠냐고요.",
+            extraction={"mobilityStatus": "UNKNOWN"},
+        )
+        result = runner.run()
+
+        self.assertEqual(result.fields["mobilityStatus"], "NO")
+        mobility = next(
+            item for item in runner.diagnostics
+            if item.question == QuestionCode.MOBILITY
+        )
+        self.assertEqual(
+            mobility.safety_reason, "MOBILITY_RHETORICAL_NEGATION"
+        )
+
+    def test_tentative_positive_is_not_forced_to_no(self):
+        runner, _ = build_runner(
+            text="조금 쉬면 움직일 수 있겠어요.",
+            extraction={"mobilityStatus": "YES"},
+        )
+        result = runner.run()
+
+        self.assertEqual(result.fields["mobilityStatus"], "YES")
+
     def test_turn_diagnostics_capture_stage_timings(self):
         runner, _ = build_runner()
         runner.run()

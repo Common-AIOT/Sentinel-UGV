@@ -6,6 +6,7 @@
   "type": "object",
   "required": [
     "state",
+    "controlMode",
     "movementAllowed",
     "changedAt"
   ],
@@ -27,6 +28,14 @@
         "COMPLETED",
         "ESTOP",
         "ERROR"
+      ]
+    },
+    "controlMode": {
+      "description": "자율/수동. command_mux 가 이 값으로 명령 소스를 고른다. 상태에서 파생되며(MANUAL 상태면 MANUAL, 그 외 AUTO) 독립 필드가 아니다. 없으면 mux 가 모든 명령을 0으로 막는다 (S15P11A301-278). 어휘는 state.schema.json 과 같다.",
+      "type": "string",
+      "enum": [
+        "MANUAL",
+        "AUTO"
       ]
     },
     "movementAllowed": {

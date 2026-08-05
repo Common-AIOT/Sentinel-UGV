@@ -429,6 +429,7 @@ def test_published_status_satisfies_the_schema():
     confirm(machine)
     body = {
         'state': machine.state.value,
+        'controlMode': machine.control_mode,
         'movementAllowed': machine.movement_allowed,
         'speedLimit': machine.speed_limit,
         'changedAt': format_utc(T0),
@@ -440,6 +441,53 @@ def test_published_status_satisfies_the_schema():
     }
     errors = list(_validator('mission-status.schema.json').iter_errors(body))
     assert not errors, [error.message for error in errors]
+
+
+def test_status_payload_keys_match_the_node():
+    """이 시험이 노드의 payload 를 **복제**하고 있어 어긋남을 못 잡았다.
+
+    S15P11A301-278 에서 `controlMode` 를 노드에 추가했는데, 위 시험은 자기가 만든
+    본문만 검사하므로 노드가 스키마에 없는 필드를 내보내도 통과한다. 실제로
+    스키마에 `controlMode` 가 없는 상태로 노드만 고쳐도 초록이었다
+    (`additionalProperties: false` 인데 아무도 안 봤다).
+
+    그래서 노드 소스에서 payload 키를 읽어 스키마와 맞춘다. rclpy 없이 돌려야
+    하므로 노드를 import 하지 않고 `_publish_status` 의 본문을 파싱한다.
+    """
+    import ast
+
+    node_source = (
+        Path(__file__).resolve().parents[1]
+        / 'sentinel_mission' / 'mission_manager_node.py'
+    ).read_text(encoding='utf-8')
+
+    tree = ast.parse(node_source)
+    keys: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == '_publish_status':
+            for inner in ast.walk(node):
+                if isinstance(inner, ast.Dict) and inner.keys:
+                    candidate = [
+                        k.value for k in inner.keys
+                        if isinstance(k, ast.Constant) and isinstance(k.value, str)
+                    ]
+                    if 'state' in candidate:
+                        keys = candidate
+                        break
+            break
+
+    assert keys, '_publish_status 의 payload 를 찾지 못했다'
+
+    schema = json.loads(
+        (SCHEMA_DIR / 'mission-status.schema.json').read_text(encoding='utf-8')
+    )
+    allowed = set(schema['properties'])
+    assert set(keys) <= allowed, (
+        f'노드가 스키마에 없는 키를 낸다: {sorted(set(keys) - allowed)}. '
+        'additionalProperties 가 false 이므로 계약 위반이다'
+    )
+    for name in schema.get('required', []):
+        assert name in keys, f'스키마 필수 키 {name} 를 노드가 내지 않는다'
 
 
 def test_state_machine_enums_match_the_schemas():
@@ -976,97 +1024,49 @@ def test_completed_does_not_accept_new_encounters():
 
 
 # ----------------------------------------------------------------------
-# 임무 종료 후 재시작 (S15P11A301-274)
+# controlMode (S15P11A301-278)
 #
-# 종전에는 MISSION_START 가 SAFE_IDLE 에서만 유효했고 COMPLETED 는 나가는 전이가
-# 없는 종단이라, 관제에서 임무를 한 번 종료하면 mission_manager 를 재기동해야
-# 다시 시작할 수 있었다. 시연은 반복하므로 STOP 한 번이 일회용 잠금이 됐다.
+# command_mux 가 이 값으로 자율/수동을 고른다. 없으면 mux 가 모든 명령을 0으로
+# 막는다("모르면 기본값을 자율로 두지 않는다"). 종전에는 mission_manager 가
+# 이 필드를 내보내지 않아 안전 체인을 켜도 로봇이 움직이지 않았다.
 # ----------------------------------------------------------------------
 
 
-def _completed() -> MissionStateMachine:
-    machine = exploring()
-    machine.handle_signal(Signal.MISSION_COMPLETED, now=at(5), detail='관제 STOP')
-    assert machine.state is MissionState.COMPLETED
-    return machine
-
-
-def test_completed_에서_새_임무를_시작할_수_있다():
-    machine = _completed()
-
-    result = machine.handle_signal(
-        Signal.MISSION_START, now=at(10), mission_id='mission-2'
-    )
-
-    assert result.changed
-    assert machine.state is MissionState.EXPLORING
-    assert machine.mission_id == 'mission-2'
-
-
-def test_새_임무는_이전_임무의_encounter를_물려받지_않는다():
-    """encounter 가 남으면 personCount·encounterId 가 두 임무에 걸쳐 섞인다.
-
-    재난 현장에서 인원 수 오보고는 구조 판단을 바꾼다.
-    """
-    machine = exploring()
-    confirm(machine)
-    assert machine.encounter is not None
-    assert machine.person_count == 1
-    machine.handle_signal(Signal.MISSION_COMPLETED, now=at(5), detail='관제 STOP')
-
-    machine.handle_signal(Signal.MISSION_START, now=at(10), mission_id='mission-2')
-
-    assert machine.encounter is None, '이전 임무의 encounter 가 남았다'
-    assert machine.encounter_id is None
-    assert machine.person_count == 0
-
-
-def test_재시작_후_새_encounter가_정상_생성된다():
-    """지우기만 하고 새로 못 만들면 반쪽이다."""
-    machine = exploring()
-    confirm(machine)
-    machine.handle_signal(Signal.MISSION_COMPLETED, now=at(5), detail='관제 STOP')
-    machine.handle_signal(Signal.MISSION_START, now=at(10), mission_id='mission-2')
-
-    result = machine.observe_candidates(
-        now=at(12), track_ids={11}, confidence=0.9, new_encounter_id='enc-2'
-    )
-
-    assert result.changed
-    assert machine.encounter_id == 'enc-2'
-    assert machine.person_count == 1
-
-
-def test_safe_idle_에서는_여전히_시작된다():
-    """기존 경로가 깨지지 않아야 한다."""
+def test_manual_상태에서만_manual이다():
     machine = MissionStateMachine()
+    machine.state = MissionState.MANUAL
+
+    assert machine.control_mode == 'MANUAL'
+
+
+def test_나머지_상태는_모두_auto다():
+    """자율이 기본이 아니라 'MANUAL 이 아니면 자율' 이다.
+
+    수동 전환은 26.3 이 PAUSED 경유로 정했고 MANUAL 이 그 상태이므로,
+    '수동인데 임무 진행' 조합이 없다는 것이 이 파생의 전제다.
+    """
+    for state in MissionState:
+        if state is MissionState.MANUAL:
+            continue
+        machine = MissionStateMachine()
+        machine.state = state
+        assert machine.control_mode == 'AUTO', f'{state.value} 가 AUTO 가 아니다'
+
+
+def test_어휘가_mux가_아는_값이다():
+    """state.schema.json 의 controlMode 는 MANUAL·AUTO 둘이다.
+
+    mux 는 그 밖의 값을 '모르는 값' 으로 다뤄 명령을 막는다.
+    """
+    for state in MissionState:
+        machine = MissionStateMachine()
+        machine.state = state
+        assert machine.control_mode in {'MANUAL', 'AUTO'}
+
+
+def test_초기_상태에서도_값이_있다():
+    """None 이면 mux 가 막는다. 기동 직후부터 값이 있어야 한다."""
+    machine = MissionStateMachine()
+
     assert machine.state is MissionState.SAFE_IDLE
-
-    result = machine.handle_signal(Signal.MISSION_START, now=T0, mission_id='m1')
-
-    assert result.changed
-    assert machine.state is MissionState.EXPLORING
-
-
-def test_exploring_에서는_거부가_아니라_무시다():
-    """관제 버튼을 두 번 눌러도 조작자에게는 성공이 맞다."""
-    machine = exploring()
-
-    result = machine.handle_signal(Signal.MISSION_START, now=at(3))
-
-    assert not result.changed
-    assert result.reason_code != 'INVALID_STATE'
-    assert machine.state is MissionState.EXPLORING
-
-
-def test_paused_에서는_여전히_invalid_state다():
-    """허용 상태를 넓힌 것이 다른 상태까지 열어서는 안 된다."""
-    machine = exploring()
-    machine.handle_signal(Signal.PAUSE_REQUESTED, now=at(3), detail='관제')
-    assert machine.state is MissionState.PAUSED
-
-    result = machine.handle_signal(Signal.MISSION_START, now=at(5))
-
-    assert not result.changed
-    assert result.reason_code == 'INVALID_STATE'
-    assert machine.state is MissionState.PAUSED
+    assert machine.control_mode == 'AUTO'

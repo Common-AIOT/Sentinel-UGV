@@ -198,7 +198,11 @@ Optional small LLM
 
 ### 현재 진행 중 / 남은 것
 - **AI-Hub 데이터셋 선정 및 확보 (ISSUE-03/04/05 차단 요인 — `data/raw`가 비어 있음, §11.1·§26)**
-- Detect 파인튜닝 및 threshold 실측 조정 (ISSUE-05/06)
+- ~~Detect 파인튜닝~~ → **2026-08-05 미채택 결정.** 데이터 3종 × 학습 방식 4종을 교차
+  평가했고 사전학습을 이긴 조합이 없었다. 근거·재현 방법·평가 함정 3건은
+  [`../../docs/ai/detection/finetuning_evaluation.md`](../../docs/ai/detection/finetuning_evaluation.md).
+  **다시 시도하기 전에 그 문서의 4절(평가 방법의 함정)을 반드시 읽는다.**
+- threshold 실측 조정 (ISSUE-06)
 - **성능 미달**: Jetson 실측 9.45FPS로 목표 약 15FPS에 못 미친다.
   imgsz 축소 → TensorRT 변환 순서로 조정한다(§7.1, §35 11번).
 - **MQTT 발행 미구현** — detection은 후보까지만 만들고, MQTT는 `cloud_bridge_node`가 담당한다(§17).
@@ -1834,7 +1838,8 @@ AI-Hub 데이터가 끝내 확보되지 않아도 아래는 반드시 충족한�
 
 | # | 항목 | 성격 | 해결 주체 | 관련 |
 |---|---|---|---|---|
-| 1 | AI-Hub 데이터셋 선정 및 다운로드 (`data/raw` 비어 있음) | ISSUE-03/04/05만 차단 | 사용자(본인인증·신청 필요) | §11.1, §28 |
+| 1 | ~~AI-Hub 데이터셋 선정 및 다운로드~~ → **2026-08-05 해결.** AI-Hub 71550(전도 645클립)과 E-FPDS(6,982장) 확보·변환 완료 | 해결됨 | — | `docs/ai/detection/dataset_selection.md` |
+| 1b | **Detect 파인튜닝 미채택 확정** — 교차 평가에서 사전학습을 이긴 조합 없음. 재시도 시 평가 함정 3건을 먼저 읽을 것 | 결정 완료 | — | `docs/ai/detection/finetuning_evaluation.md` |
 | 2 | 선정 데이터셋의 실제 JSON 라벨 스키마 미확인 | ISSUE-04만 차단 (parser 작성 불가) | 샘플 확보 후 에이전트 | §12, §28 |
 | 2b | **테스트 영상 4종(standing/sitting/bending/lying) 미확보** | **실영상 검증 차단** | 사용자(직접 촬영 가능) | §26, §28.1 |
 | 2c | `FALLEN` 판정이 **실제 누운 사람 영상으로 미검증** | 임계값·가중치 신뢰도 미확보 | 2b 확보 후 | §15, §28.1 |
@@ -1846,7 +1851,7 @@ AI-Hub 데이터가 끝내 확보되지 않아도 아래는 반드시 충족한�
 | 7 | **명세 이탈 2건(BoT-SORT, ReID) 미승인** | **팀 결정 필요** | 팀 | §0, §7.1 |
 | 8 | `../../docs/ai/detection/requirements.md`가 최초 초안 상태(클래스 4종) | 문서 정합 | ISSUE-01 | §6 |
 | 9 | `requirements.txt`에 `lap`·`onnxruntime` 미반영 | 재현성 | 사용자 승인 후 | §7 |
-| 10 | 자세 임계값 4개가 실측 근거 없는 임의값 | 신뢰도 | 테스트 영상 확보 후 | §15 |
+| 10 | 자세 임계값 7개가 실측 근거 없는 임의값. **단, 정답 데이터는 확보됐다** — E-FPDS가 쓰러짐(1)/비쓰러짐(-1)을 라벨로 구분하므로 보정이 가능해졌다 | 신뢰도 | 착수 가능 | §15, `docs/ai/detection/finetuning_evaluation.md` |
 | 11 | **Detect 상시 15FPS 미달** — Jetson 실측 9.45FPS(사람 4명, 스트리밍 동시 구동). 계측·벤치 도구는 준비 완료, **Jetson 실측 대기** | **성능 미달 확정** | ISSUE-06 | §7.2 |
 | 12 | ~~Linux/aarch64 실행 이력 없음~~ → **2026-07-30 해결: Jetson 실기기 검증 완료** | 해결됨 | — | §7.1 |
 | 13 | ~~JetPack 버전 미확인~~ → **해결: JetPack 6.x / L4T R36.4.7, torch 2.8.0 확인** | 해결됨 | — | §7.1 |

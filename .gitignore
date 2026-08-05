@@ -92,3 +92,6 @@ ai/detection/runs/
 ai/detection/.claude/
 *.dump
 *.sql.gz
+
+# train_detect.py가 만드는 절대경로 사본 (머신마다 다르다)
+ai/detection/configs/.*.resolved.yaml

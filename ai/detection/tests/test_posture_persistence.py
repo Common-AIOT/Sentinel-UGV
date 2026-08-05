@@ -659,6 +659,84 @@ def test_no_person_no_event() -> None:
     assert len(tracker._states) == 0
 
 
+# 2026-08-04 실측(관측 27,556건)에서 FALLEN 오탐 집단의 평균값이다.
+# 합성값이 아니라 관측된 수치를 그대로 재현한다.
+#   torso_angle_deg 10.98 · torso_shoulder_ratio 1.967 · vertical_extent_ratio 0.140
+#   bbox_aspect_ratio 1.161 · inactivity 0.979
+_SEATED_FP_ASPECT = 1.159
+_SEATED_FP_W, _SEATED_FP_H = 640.0, 552.0
+
+
+def _seated_occluded_pose() -> PoseResult:
+    """앉아 있고 하체가 가려져 엉덩이가 어깨 근처로 잘못 찍힌 경우.
+
+    상체는 거의 수직(11°)인데 어깨-엉덩이 y 간격이 몸 높이의 14%로 나온다.
+    이 둘은 물리적으로 양립할 수 없으며, 틀린 쪽은 엉덩이 keypoint다.
+    실측에서 FALLEN일 때 엉덩이 검출률은 23~28%, NORMAL은 41~45%였다.
+
+    어깨 폭 40, 상체 길이 78.7(비 1.967)이라 앞뒤 기울기 추정은 0°가 된다
+    (기대비 1.3보다 길어 clamp). 즉 각도는 순수하게 좌우 기울기 10.98°다.
+    """
+    return _pose(
+        {
+            "left_shoulder": (100.0, 100.0),
+            "right_shoulder": (140.0, 100.0),
+            "left_hip": (120.0, 177.3),
+            "right_hip": (150.0, 177.3),
+        }
+    )
+
+
+def test_seated_false_positive_reproduces_without_gate() -> None:
+    """게이트가 없으면 실측 오탐이 그대로 재현된다. 회귀 기준선이다."""
+    clf = PostureClassifier(upright_angle_deg=0.0)
+    det = _det(w=_SEATED_FP_W, h=_SEATED_FP_H)
+    result = clf.classify(det, _seated_occluded_pose(), inactivity=0.979)
+    # 각도는 수직인데 extent가 수평이라고 말한다 — 모순이 점수를 밀어 올린다
+    assert result.signals["torso_angle_deg"] < 15.0
+    assert result.signals["score_vertical_extent"] > 0.7
+    assert result.status == POSTURE_FALLEN, result.reason
+
+
+def test_upright_gate_rejects_seated_person_with_bad_hips() -> None:
+    """상체가 수직이면 수직신장비가 이상해도 FALLEN이 되지 않는다."""
+    clf = PostureClassifier()
+    det = _det(w=_SEATED_FP_W, h=_SEATED_FP_H)
+    # 부동까지 최대로 줘서 가장 불리한 조건을 만든다.
+    result = clf.classify(det, _seated_occluded_pose(), inactivity=1.0)
+    assert result.signals.get("vertical_extent_dropped") is True
+    assert "score_vertical_extent" not in result.signals
+    assert result.status == POSTURE_NORMAL, result.reason
+
+
+def test_upright_gate_keeps_torso_angle_signal() -> None:
+    """게이트는 extent만 버리고 각도 신호는 그대로 쓴다."""
+    clf = PostureClassifier()
+    result = clf.classify(
+        _det(w=_SEATED_FP_W, h=_SEATED_FP_H), _seated_occluded_pose(), inactivity=1.0
+    )
+    assert "score_torso_angle" in result.signals
+    # extent가 빠졌으므로 관절 신호 1개 + 형상 1개 + 부동 1개 = 3
+    assert result.signal_count == 3
+
+
+def test_upright_gate_does_not_touch_lying_person() -> None:
+    """수평인 사람은 게이트에 걸리지 않는다. 정탐을 해치면 안 된다."""
+    clf = PostureClassifier()
+    result = clf.classify(_det(w=300.0, h=120.0), _lying_pose(), inactivity=1.0)
+    assert result.signals.get("vertical_extent_dropped") is not True
+    assert "score_vertical_extent" in result.signals
+    assert result.status == POSTURE_FALLEN, result.reason
+
+
+def test_upright_gate_can_be_disabled() -> None:
+    """0으로 두면 이전 동작으로 되돌아간다(롤백 경로)."""
+    clf = PostureClassifier(upright_angle_deg=0.0)
+    result = clf.classify(_det(w=180.0, h=200.0), _seated_occluded_pose(), inactivity=1.0)
+    assert result.signals.get("vertical_extent_dropped") is not True
+    assert "score_vertical_extent" in result.signals
+
+
 def _run_all() -> int:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

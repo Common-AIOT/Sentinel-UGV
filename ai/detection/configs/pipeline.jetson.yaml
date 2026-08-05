@@ -104,6 +104,10 @@ posture:
   torso_horizontal_deg: 55.0
   bbox_aspect_ratio: 1.20
   vertical_extent_ratio: 0.25
+  # 상체가 거의 수직이면 vertical_extent 신호를 버린다(개발 PC 프로파일 주석 참고).
+  # 하체가 가려져 엉덩이 keypoint가 잘못 찍힐 때 생기는 오탐을 막는다.
+  # 실측 2026-08-04: FALLEN 22.4% → 13.1%, 실제 쓰러짐 트랙 점수는 불변.
+  upright_angle_deg: 30.0
   min_valid_keypoints: 4
   # 카메라 광축(앞뒤) 기울기 반영. torso_angle_deg는 이미지 좌표 기준이라
   # 좌우 기울기만 잡는다. 복도 방향으로 누운 사람이 사각지대가 되므로,

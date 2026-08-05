@@ -60,7 +60,21 @@ check("config", _config)
 
 
 # ── 3. 핵심 라이브러리 임포트 ───────────────────────────────
-check("faster-whisper", lambda: __import__("faster_whisper") and "")
+def _stt_client():
+    from sentinel_voice import config
+
+    if config.STT_BACKEND == "remote":
+        __import__("httpx")
+        if not config.ASR_API_KEY:
+            raise RuntimeError(
+                "SENTINEL_ASR_API_KEY 미설정 — ai/stt/.env에 추가 (커밋 금지)"
+            )
+        return f"remote, {config.ASR_MODEL_LABEL}"
+    __import__("faster_whisper")
+    return f"local, {config.STT_MODEL}/{config.COMPUTE}"
+
+
+check("STT client", _stt_client)
 check("silero-vad", lambda: __import__("silero_vad") and "")
 check("sounddevice(장치)", lambda: str(len(__import__("sounddevice").query_devices())) + " devices")
 check("librosa", lambda: __import__("librosa") and "")
@@ -118,8 +132,28 @@ check("memory/swap", _mem, warn=True)
 if LOAD:
     def _load_stt():
         from sentinel_voice import config
+        if config.STT_BACKEND == "remote":
+            from sentinel_voice.remote_asr import RemoteASRClient
+
+            client = RemoteASRClient(
+                base_url=config.ASR_BASE_URL,
+                api_key=config.ASR_API_KEY,
+                timeout_seconds=config.ASR_TIMEOUT,
+                connect_timeout_seconds=config.ASR_CONNECT_TIMEOUT,
+                max_attempts=config.ASR_MAX_ATTEMPTS,
+                retry_delay_seconds=config.ASR_RETRY_DELAY,
+                allow_insecure_http=config.ASR_ALLOW_INSECURE_HTTP,
+            )
+            client.close()
+            return f"원격 ASR 설정 검증 성공 ({config.ASR_MODEL_LABEL})"
+
         from faster_whisper import WhisperModel
-        WhisperModel(config.STT_MODEL, device=config.DEVICE, compute_type=config.COMPUTE)
+
+        WhisperModel(
+            config.STT_MODEL,
+            device=config.DEVICE,
+            compute_type=config.COMPUTE,
+        )
         return f"{config.STT_MODEL}/{config.COMPUTE} 로드 성공"
 
     def _load_vad():

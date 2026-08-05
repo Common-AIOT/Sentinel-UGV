@@ -7,7 +7,10 @@ device / compute_type 를 자동 감지한다. 환경 변수로 언제든 덮어
 
   SENTINEL_DEVICE   = cuda | cpu            (기본: cuda 가능하면 cuda)
   SENTINEL_COMPUTE  = int8 | float16 | ...  (기본: Jetson=int8, 그 외 GPU=float16)
-  SENTINEL_STT_MODEL= tiny|base|small|...   (기본: small)
+  SENTINEL_STT_BACKEND= local | remote       (기본: local)
+  SENTINEL_STT_MODEL= tiny|base|small|...    (기본: small)
+  SENTINEL_ASR_BASE_URL=https://...          (remote 전용)
+  SENTINEL_ASR_API_KEY=...                   (remote 전용, 커밋 금지)
   SENTINEL_LLM      = GMS 모델명             (기본: gpt-5.4-mini — Jira 118 실측 선정)
   GMS_KEY           = GMS API 키 (ai/stt/.env 파일 지원, 커밋 금지)
 """
@@ -75,7 +78,22 @@ DEVICE = pick_device()
 COMPUTE = pick_compute(DEVICE)
 
 # ── 모델 선택 ────────────────────────────────────────────────
+STT_BACKEND = os.getenv("SENTINEL_STT_BACKEND", "local").strip().lower()
+if STT_BACKEND not in {"local", "remote"}:
+    raise ValueError("SENTINEL_STT_BACKEND must be 'local' or 'remote'")
 STT_MODEL = os.getenv("SENTINEL_STT_MODEL", "small")   # faster-whisper
+
+# 원격 GPU ASR. API 키는 서버 인증에만 쓰며 로그·세션 파일에 남기지 않는다.
+ASR_BASE_URL = os.getenv("SENTINEL_ASR_BASE_URL", "http://127.0.0.1:18100")
+ASR_API_KEY = os.getenv("SENTINEL_ASR_API_KEY", "")
+ASR_TIMEOUT = float(os.getenv("SENTINEL_ASR_TIMEOUT", "8"))
+ASR_CONNECT_TIMEOUT = float(os.getenv("SENTINEL_ASR_CONNECT_TIMEOUT", "2"))
+ASR_MAX_ATTEMPTS = int(os.getenv("SENTINEL_ASR_MAX_ATTEMPTS", "2"))
+ASR_RETRY_DELAY = float(os.getenv("SENTINEL_ASR_RETRY_DELAY", "0.2"))
+ASR_ALLOW_INSECURE_HTTP = os.getenv(
+    "SENTINEL_ASR_ALLOW_INSECURE_HTTP", "0"
+).strip().lower() in {"1", "true", "yes", "on"}
+ASR_MODEL_LABEL = os.getenv("SENTINEL_ASR_MODEL_LABEL", "Qwen/Qwen3-ASR-1.7B")
 
 # LLM — 온디바이스 ollama에서 GMS API로 전환 후 Jira 118 비교로 모델 선정.
 # 근거: 젯슨 로컬 3b 피크 5.62GB·OOM, gpt-5.4-mini 프롬프트 v2 44/44 정답.
@@ -195,5 +213,7 @@ PROMPT_PATH = STT_ROOT / "prompts" / "triage_extract.txt"
 def summary() -> str:
     return (
         f"device={DEVICE} compute={COMPUTE} jetson={is_jetson()} "
-        f"stt={STT_MODEL} llm={LLM_MODEL}"
+        f"stt_backend={STT_BACKEND} "
+        f"stt={STT_MODEL if STT_BACKEND == 'local' else ASR_MODEL_LABEL} "
+        f"llm={LLM_MODEL}"
     )

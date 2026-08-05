@@ -26,14 +26,14 @@ import time
 import numpy as np
 import sounddevice as sd
 import torch
-from faster_whisper import WhisperModel
-from silero_vad import load_silero_vad, get_speech_timestamps
+from silero_vad import get_speech_timestamps, load_silero_vad
 
 from . import config
 from .config import FS
 from .conversation import SessionResult, SessionState
 from .guide_audio import GUIDE_ASSETS, GuidePlayer
 from .llm import extract_with_status
+from .remote_asr import RemoteASRClient
 from .report_delivery import queue_report
 from .safety import coerce_report, risk_assessment
 from .session_gate import SessionGateResult, check_session_gate
@@ -72,13 +72,29 @@ def load_models() -> tuple:
     global _models
     if not _models:
         say(f"모델 로딩... ({config.summary()})")
-        _models = (
-            load_silero_vad(),
-            WhisperModel(
+        if config.STT_BACKEND == "remote":
+            stt = RemoteASRClient(
+                base_url=config.ASR_BASE_URL,
+                api_key=config.ASR_API_KEY,
+                timeout_seconds=config.ASR_TIMEOUT,
+                connect_timeout_seconds=config.ASR_CONNECT_TIMEOUT,
+                max_attempts=config.ASR_MAX_ATTEMPTS,
+                retry_delay_seconds=config.ASR_RETRY_DELAY,
+                allow_insecure_http=config.ASR_ALLOW_INSECURE_HTTP,
+            )
+        else:
+            # 원격 모드에서는 faster-whisper를 import조차 하지 않아 Jetson 메모리에
+            # 로컬 STT 런타임이 올라가지 않게 한다.
+            from faster_whisper import WhisperModel
+
+            stt = WhisperModel(
                 config.STT_MODEL,
                 device=config.DEVICE,
                 compute_type=config.COMPUTE,
-            ),
+            )
+        _models = (
+            load_silero_vad(),
+            stt,
         )
     return _models
 
@@ -118,6 +134,8 @@ def has_speech(wav: np.ndarray) -> bool:
 
 def transcribe(wav: np.ndarray) -> tuple[str, float]:
     _, stt = load_models()
+    if config.STT_BACKEND == "remote":
+        return stt.transcribe(wav, sample_rate=FS, language="ko")
     segments, _ = stt.transcribe(
         wav, initial_prompt=config.STT_PROMPT, **config.STT_DECODE
     )

@@ -1,0 +1,4 @@
+endpoint,model,requests,successRate,cerMean,werMean,cerMicro,werMicro,criticalTermRecall,riskToSafe,nonSpeechHallucinations,latencyP50Ms,latencyP95Ms,inferenceP50Ms,inferenceP95Ms,rtfMean,vramMiB
+qwen,Qwen/Qwen3-ASR-1.7B,27,1.0,0.0,0.0,0.0,0.0,1.0,0,6,260.667,425.847,246.516,419.831,0.1024,5014
+whisper-large-v3,faster-whisper large-v3,27,1.0,0.013,0.0714,0.0097,0.0645,1.0,0,6,417.319,509.149,410.79,502.673,0.1607,3528
+whisper-large-v3-turbo,faster-whisper turbo (large-v3-turbo),27,1.0,0.0487,0.119,0.0291,0.0968,1.0,0,6,302.578,367.649,299.31,363.917,0.1134,2170

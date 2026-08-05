@@ -37,17 +37,17 @@
 - `docs/01-프로젝트-개요.md:95` "다수 사람의 정밀 재식별" (제외 목록)
 - `docs/07-AI-탐지-음성.md` 25.4 "정밀 재식별은 범위에서 제외한다"
 
-현재 `configs/tracker_sentinel.yaml`은 `with_reid: True` + `yolo26n-reid.onnx`를 쓴다.
+**이탈은 개발 PC 프로파일에만 남아 있다.** 로봇에 실제로 올라가는 Jetson 프로파일은
+명세 준수 상태다.
+
+| 프로파일 | 트래커 설정 | `with_reid` | 명세 |
+|---|---|---|---|
+| 개발 PC | `configs/tracker_sentinel.yaml` | `True` + `yolo26n-reid.onnx` | ⚠️ 이탈 |
+| **Jetson** | `configs/tracker_jetson.yaml` | **`False`** | ✅ 준수 |
 
 - 사유: 시야를 벗어난 사람의 trackId 유지. IoU 기반으로는 원리적으로 불가능함을 실측 확인
   (카메라 팬 2200px에서 GMC 보정 후에도 예측 오차 564px, 사람 폭 240px).
-- 대가: Jetson Orin Nano 8GB에서 SLAM·Nav2와 자원을 나눠 쓰는데 ReID 추론이 추가된다.
-  명세가 제외한 이유가 이 자원 제약일 가능성이 높다.
-- **되돌리는 법**(명세 준수 상태로 복귀): `with_reid: False`, `proximity_thresh: 0.5`,
-  `model: auto`. 되돌리면 시야 이탈 후 ID 유지는 포기하고, 중복 판정은 명세 방식인
-  지도 좌표 기반(1m/15초, 25.4)에 맡긴다.
-- **2026-08-05: 로봇 프로파일에서도 활성화했다.** 이전에는 `tracker_jetson.yaml`만
-  명세 준수 상태였다. 개발 PC 실측 근거:
+- 개발 PC 실측 근거:
 
   | 설정 | 발급 trackId (3,660프레임, 동시 최대 7명) |
   |---|---|
@@ -58,11 +58,17 @@
   임베딩 판별력도 71550 다중 카메라로 확인했다(같은 사람 0.572 / 타인 0.278, AUC 0.915).
   `model: auto`로 두면 분류 모델로 대체되어 타인 간 0.835가 되므로 경로를 명시했다.
 
-- ⚠️ **Jetson FPS 영향은 실측하지 않은 채 채택했다.** 개발 PC에서 약 30% 하락했고,
-  Jetson 실측 9.45FPS 기준이면 6~7FPS가 될 수 있다. 명세 25.6의 Detect 15FPS 목표에서
-  더 멀어진다. **문제가 생기면 위 "되돌리는 법"이 첫 번째 조치다.**
-- 전제: `models/yolo26n-reid.onnx` 배치와 `onnxruntime` GPU 동작. ReID만 ONNX Runtime을
-  쓰며 CPU 폴백 시 FPS가 크게 떨어진다. Jetson은 `requirements.txt`로 설치되지 않는다(§7).
+- **2026-08-05: Jetson에서 켰다가 같은 날 되돌렸다.** 젯슨 담당자가 채택하지 않기로 했다.
+  로봇 쪽 전제 조건 두 가지(① `yolo26n-reid.onnx` 수동 배치 — `yolo export`가
+  ultralytics 8.4.104에서 실패한다, ② aarch64용 `onnxruntime-gpu` — PyPI 휠이 없어
+  JetPack 매칭 휠이 필요하다)가 얻는 것보다 부담이 컸다. **Jetson FPS는 끝내 재지
+  못했다.** 개발 PC에서 약 30% 하락했고 Jetson 9.45FPS 기준이면 6~7FPS 추정이었다.
+- 포기하는 것: 로봇에서는 시야 이탈 후 ID 유지를 포기한다. **팀 계약은 깨지지 않는다** —
+  명세의 중복 판정은 trackId가 아니라 지도 좌표 기반(1m/15초, 25.4)이고, 페이로드의
+  `trackIds`는 nullable 배열이며 중복 제거는 Mission Manager가 한다.
+- **다시 켜는 법**: `configs/tracker_jetson.yaml`에 `with_reid: True`,
+  `proximity_thresh: 0.0`, `model: models/yolo26n-reid.onnx`. 위 전제 조건 2개를 먼저
+  갖추고, 켠 뒤 `avg_fps`를 9.45FPS 기준과 비교한다.
 
 **이탈 3. Pose를 전체 화면이 아니라 person crop으로 실행한다 (2026-07-30)**
 
@@ -462,8 +468,9 @@ python -m src.main --source 0 --config configs/pipeline.jetson.yaml --output run
 - 카메라: 1280x720 MJPG, backend `v4l2` (개발 PC는 `auto`)
 - `imgsz: 640`, Pose `imgsz: 320`, `quantize: 16`
 - `with_reid: False`, `proximity_thresh: 0.5` → **§0 이탈 2가 Jetson에서는 발생하지 않는다.**
-  ReID를 켜려면 `yolo26n-reid.onnx` 배치 + `onnxruntime` 설치가 필요하고, SLAM·Nav2와
-  자원을 나눠 쓰는 상황에서 여유가 있는지 실측 후 결정한다.
+  2026-08-05에 켰다가 같은 날 되돌렸다(젯슨 담당자 미채택). 다시 켜려면
+  `yolo26n-reid.onnx` 수동 배치 + aarch64용 `onnxruntime-gpu`가 필요하다.
+  전제 조건과 절차는 `configs/tracker_jetson.yaml` 주석에 있다.
 
 **규칙**
 - 설정 파일 안의 상대 경로는 `_resolve_path()`가 `ai/detection`을 기준으로 해석한다.
@@ -604,7 +611,7 @@ conda activate sentinel-yolo && python --version   # 또는 §7의 절대경로 
 | `data/` | 존재 (`raw/`, `processed/`, `pose_test/`만 존재, 각 `.gitkeep.txt`). **`raw/`는 여전히 비어 있음** |
 | `notebooks/` | 존재(내용 없음) — 용도 확인 필요 |
 | `README.md`(detection 전용) | **미존재** (상위 `ai/README.md`, `../../docs/ai/README.md`만 존재) |
-| `requirements.txt` | 존재. **`lap`·`onnxruntime` 미반영**(§35 9번) |
+| `requirements.txt` | 존재. `lap`·`onnxruntime-gpu` 반영 완료(2026-08-05, §35 9번) |
 | `requirements-jetson.txt` | **미존재 — 의도적**(JetPack 버전 미확인, §7.1) |
 | `pyproject.toml` / `setup.cfg` | **미존재** |
 | `.gitignore`(detection 전용) | **미존재** (Git 루트 `.gitignore`가 적용됨) |
@@ -1864,9 +1871,9 @@ AI-Hub 데이터가 끝내 확보되지 않아도 아래는 반드시 충족한�
 | 4 | ~~가중치 미다운로드~~ → **해결: yolo26n.pt / yolo26n-pose.pt / yolo26n-reid.onnx 확보** | 해결됨 | — | §13, §14 |
 | 5 | `aihubshell`의 Windows 동작 여부 미확인 | 경미(대안 있음) | 사용자 | §11.1 |
 | 6 | `notebooks/` 디렉터리 용도 불명 | 경미 | 팀 | §8 |
-| 7 | ~~명세 이탈 미승인~~ → **2026-08-05 팀 승인.** BoT-SORT·ReID·Pose crop 3건 모두 현재 구현대로 간다. 명세 개정(`pose_status` 2값) 공지도 완료 | 해결됨 | — | §0 |
+| 7 | ~~명세 이탈 미승인~~ → **2026-08-05 팀 승인.** BoT-SORT·Pose crop은 현재 구현대로 간다. **ReID는 같은 날 Jetson에서 되돌렸다**(담당자 미채택) — 로봇 프로파일은 명세 준수, 이탈은 개발 PC에만 남는다. 명세 개정(`pose_status` 2값) 공지도 완료 | 해결됨 | — | §0 |
 | 8 | `../../docs/ai/detection/requirements.md`가 최초 초안 상태(클래스 4종) | 문서 정합 | ISSUE-01 | §6 |
-| 9 | ~~`requirements.txt`에 `lap`·`onnxruntime` 미반영~~ → **2026-08-05 해결.** 단, **Jetson(aarch64)은 마커에서 제외**했다. PyPI `onnxruntime-gpu`가 aarch64를 지원하지 않아 그냥 넣으면 CPU 빌드가 조용히 깔린다. NVIDIA Jetson 인덱스에서 수동 설치해야 한다 | 부분 해결 | Jetson 담당 | §7 |
+| 9 | ~~`requirements.txt`에 `lap`·`onnxruntime` 미반영~~ → **2026-08-05 해결.** 단, **Jetson(aarch64)은 마커에서 제외**했다. PyPI `onnxruntime-gpu`가 aarch64를 지원하지 않아 그냥 넣으면 CPU 빌드가 조용히 깔린다. NVIDIA Jetson 인덱스에서 수동 설치해야 한다. **Jetson에서는 ReID가 꺼져 있어 `onnxruntime` 자체가 필요 없다**(§0 이탈 2) — 다시 켤 때만 문제가 된다 | 해결됨 | — | §7 |
 | 10 | ~~자세 임계값이 실측 근거 없는 임의값~~ → **2026-08-05 부분 해결.** 자세·형상 임계값 5개 + 가중치 3개는 E-FPDS 정답 2,658건과 대조해 검증했다(쓰러짐 0.919 / 비쓰러짐 0.032로 분리). **변경 불필요** | 해결됨 | — | `docs/ai/detection/posture_threshold_calibration.md` |
 | 10b | **부동(inactivity) 신호 3개는 미검증** — `inactivity_boost`, `motion.still_ratio`, `motion.full_still_seconds`. E-FPDS가 정지 이미지라 측정에서 빠졌다. "가구 위에 누워도 미동 없으면 쓰러짐" 판단을 담당하므로 재난 시나리오에서 중요하다 | 신뢰도 | **영상 데이터 필요** | §15, 위 문서 4절 |
 | 11 | **Detect 상시 15FPS 미달** — Jetson 실측 9.45FPS(사람 4명, 스트리밍 동시 구동). 계측·벤치 도구는 준비 완료, **Jetson 실측 대기** | **성능 미달 확정** | ISSUE-06 | §7.2 |

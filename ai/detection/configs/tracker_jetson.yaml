@@ -1,55 +1,52 @@
 # Sentinel UGV 트래커 설정 [Jetson 프로파일]
 #
-# 2026-08-05: ReID를 **활성화**했다. 이전에는 명세 준수를 위해 꺼두었다.
+# **ReID는 꺼져 있다. 명세 준수 상태다.**
 #
-# ## 켠 이유 — 추적 ID 파편화가 절반으로 준다
+# 2026-08-05에 잠시 켰다가 같은 날 되돌렸다. 젯슨 담당자가 채택하지 않기로 해서다.
+# 개발 PC 프로파일(configs/tracker_sentinel.yaml)에서는 계속 켜둔다 — 실험·측정용이다.
 #
-# AI-Hub 영상(3,660프레임, 동시 최대 7명) 실측:
+# ## 왜 껐나
 #
-#     ReID 끔   발급 trackId 33개
-#     ReID 켬   발급 trackId 19개   (-42%)
+# 켜려면 로봇 쪽에 두 가지가 더 필요한데, 그 부담이 얻는 것보다 크다고 봤다.
 #
-# 끊긴 트랙 16건을 분석하니 **100%가 "사람은 화면에 있는데 트래커가 잇지 못한"**
-# 경우였다. 탐지 문제가 아니라 ReID로 개선되는 영역이다.
-# 임베딩 판별력도 확인했다 — 같은 사람 0.572 / 다른 사람 0.278, AUC 0.915.
+#   1) models/yolo26n-reid.onnx 를 따로 배치해야 한다. models/ 는 Git에 없고,
+#      ultralytics 8.4.104에서는 `yolo export`로 뽑히지도 않는다(ReidModel 클래스 부재).
+#      즉 파일을 사람이 직접 옮겨야 하고, 없으면 기동이 실패한다.
+#   2) aarch64용 onnxruntime-gpu 가 필요하다. PyPI 휠이 없어 JetPack 매칭 휠을
+#      NVIDIA Jetson 인덱스에서 받아야 한다. CPU 빌드로 깔리면 조용히 느려진다.
 #
-# ## ⚠️ 대가 — FPS가 떨어진다
+# 여기에 FPS 대가가 겹친다. ReID는 매 프레임 사람 수만큼 추가 추론이 들어가
+# 개발 PC 실측으로 약 30% 하락했다. Jetson 실측 9.45FPS 기준이면 약 6.6FPS이며,
+# 명세 25.6의 Detect 15FPS 목표에서 더 멀어진다. **Jetson 실측은 끝내 없었다.**
 #
-# ReID는 **매 프레임 사람 수만큼** 추가 추론이 들어간다. 개발 PC 실측으로 약 30%
-# 하락했다. Jetson 실측 9.45FPS 기준이면 약 6.6FPS가 되며, 명세 25.6의
-# Detect 15FPS 목표에서 더 멀어진다.
+# ## 무엇을 포기하는가
 #
-# **Jetson 실측이 아직 없다.** 켜고 FPS를 재본 뒤 감당 가능한지 판단한다.
-# 감당이 안 되면 아래 "되돌리는 법"으로 원복한다.
+# 시야를 벗어났다 돌아온 사람의 trackId 유지를 포기한다. 개발 PC 실측 기준으로
+# 추적 ID 파편화가 그만큼 늘어난다.
 #
-# ## ⚠️ 명세 이탈이다 — 팀 결정 필요
+#     ReID 켬   발급 trackId 19개
+#     ReID 끔   발급 trackId 33개   (AI-Hub 3,660프레임, 동시 최대 7명)
 #
-# 명세가 정밀 재식별을 세 곳에서 제외한다(AGENTS.md §0 이탈 2).
-#    docs/01-프로젝트-개요.md:85  "피해자 정밀 재식별" (제외 목록)
-#    docs/01-프로젝트-개요.md:95  "다수 사람의 정밀 재식별" (제외 목록)
-#    docs/07-AI-탐지-음성.md:404  "정밀 재식별은 범위에서 제외한다"
+# **이것이 팀 계약을 깨지는 않는다.** 명세의 중복 판정은 trackId가 아니라 위치·시간
+# 기반이다 — "기존 위치 1m 이내 AND 최근 15초 이내"(docs/07-AI-탐지-음성.md 25.4).
+# 페이로드의 trackIds 도 nullable 배열이며 중복 제거는 Mission Manager가 한다.
+# SLAM 연동 후 mapPose가 붙으면 명세가 의도한 방식으로 해결된다.
 #
-# 제외 사유가 Orin Nano 8GB의 자원 제약(SLAM·Nav2·WebRTC와 공유)일 가능성이
-# 높으므로, FPS 실측 결과를 근거로 팀에서 최종 결정한다.
+# ## 다시 켜려면
 #
-# ## 되돌리는 법
+# 위 전제 조건 2개를 먼저 갖춘 뒤:
 #
-#     with_reid: False
-#     proximity_thresh: 0.5
-#     model: auto
+#     proximity_thresh: 0.0     # 0.5는 "IoU 0.5 이상일 때만 외모를 본다"라
+#                               # 시야 이탈 후 재등장에 무용지물이다
+#     with_reid: True
+#     model: models/yolo26n-reid.onnx
 #
-# ## 전제 조건
+# model 을 "auto"로 두면 안 된다. YOLO26 Detect 헤드가 end2end라서 yolo26n-cls.pt
+# (ImageNet 분류 모델)로 조용히 대체되는데, 분류 특징은 "사람인가"만 인코딩하고
+# "누구인가"를 구분하지 못한다(실측: 타인 간 유사도 0.835). ID가 뒤바뀐다.
+# 전용 ReID 모델은 타인 간 0.278, AUC 0.915다.
 #
-# 1) models/yolo26n-reid.onnx 가 있어야 한다. models/ 는 Git에 없다.
-#        cd ai/detection/models && yolo export model=yolo26n-reid.pt format=onnx
-# 2) onnxruntime 이 **GPU로 돌아야** 한다. ReID만 ONNX Runtime을 쓴다.
-#        python -c "import onnxruntime as ort; print(ort.get_available_providers())"
-#    CUDAExecutionProvider 또는 TensorrtExecutionProvider 가 없으면 CPU로 폴백되어
-#    FPS가 크게 떨어진다. aarch64용 onnxruntime-gpu 가 필요하다.
-#
-# 대안: 시야를 벗어난 사람의 trackId 유지는 SLAM 연동 후 mapPose로도 가능하다.
-# 명세의 중복 판정이 위치·시간 기반이기 때문이다
-# (docs/07-AI-탐지-음성.md "기존 위치 1m 이내 AND 최근 15초 이내").
+# 켠 뒤에는 반드시 avg_fps 를 재고 9.45FPS 기준과 비교한다.
 
 tracker_type: botsort
 
@@ -65,15 +62,8 @@ fuse_score: True
 # (명세는 ByteTrack을 지정하지만 ByteTrack에는 GMC가 없다 — AGENTS.md §0 이탈 1)
 gmc_method: sparseOptFlow
 
-# ReID 활성 (2026-08-05)
-#
-# proximity_thresh 0.0 이 핵심이다. 0.5는 "IoU 0.5 이상일 때만 외모를 본다"는 뜻이라
-# 시야를 벗어난 재등장에는 무용지물이다. 0으로 두면 위치 제약 없이 외모로 매칭한다.
-proximity_thresh: 0.0
+# ReID 비활성 (명세 준수). 켜는 법은 위 주석 참고.
+proximity_thresh: 0.5
 appearance_thresh: 0.8
-with_reid: True
-# model은 반드시 명시한다. "auto"로 두면 YOLO26 Detect 헤드가 end2end라서
-# yolo26n-cls.pt(ImageNet 분류 모델)로 조용히 대체된다. 분류 특징은 "사람인가"를
-# 인코딩할 뿐 "누구인가"를 구분하지 못해(실측: 타인 간 유사도 0.835) ID가 뒤바뀐다.
-# 전용 ReID 모델은 타인 간 0.278이다.
-model: models/yolo26n-reid.onnx
+with_reid: False
+model: auto

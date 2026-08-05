@@ -32,8 +32,9 @@ detector:
     - person
   confidence: 0.50
   iou: 0.70
-  # 로봇용 트래커 설정. 2026-08-05부터 ReID를 켠다(팀 승인, AGENTS.md §0 이탈 2).
-  # 근거와 되돌리는 법은 configs/tracker_jetson.yaml 주석에 있다.
+  # 로봇용 트래커 설정. ReID는 꺼져 있다(명세 준수).
+  # 2026-08-05에 잠시 켰다가 같은 날 되돌렸다 — 젯슨 담당자 미채택.
+  # 껐을 때 무엇을 포기하는지와 다시 켜는 법은 configs/tracker_jetson.yaml 주석에 있다.
   tracker: configs/tracker_jetson.yaml
   # 추론 해상도. 개발 PC 실측(사람 4명): 640 → 19.7 FPS / 480 → 23.5 FPS (약 +19%)
   # 480은 작은 사람(멀리 있는 요구조자) 탐지력이 떨어진다. 재난 탐색에서

@@ -1,8 +1,8 @@
 """
 젯슨(및 개발 PC)에서 STT 파이프라인이 돌아갈 수 있는지 점검한다.
 
-  python -m tools.check_env          # 임포트/CUDA/장치/모델가용성 점검
-  python -m tools.check_env --load   # 실제 STT/VAD 모델까지 로드(무거움, 최종 확인)
+  python -m tools.check_env          # 원격 ASR 설정/오디오/GMS 점검
+  python -m tools.check_env --load   # 원격 ASR 인증 전사/VAD 실제 로드
 
 [OK]/[FAIL]/[WARN] 로 한 줄씩 출력. 하나라도 FAIL이면 그 원인부터 해결한다.
 """
@@ -39,15 +39,18 @@ def _platform():
 check("platform", _platform)
 
 
-# ── 1. Torch + CUDA (GPU 가속의 전제) ───────────────────────
-def _torch_cuda():
+# ── 1. Torch (Jetson에서는 Silero VAD에만 사용) ─────────────
+def _torch_runtime():
     import torch
-    if not torch.cuda.is_available():
-        raise RuntimeError("torch.cuda.is_available()=False (Jetson용 torch 휠 확인)")
-    return f"torch {torch.__version__}, GPU: {torch.cuda.get_device_name(0)}"
+    accelerator = (
+        f"CUDA: {torch.cuda.get_device_name(0)}"
+        if torch.cuda.is_available()
+        else "CPU"
+    )
+    return f"torch {torch.__version__}, VAD runtime={accelerator}"
 
 
-check("torch+CUDA", _torch_cuda)
+check("torch(VAD)", _torch_runtime)
 
 
 # ── 2. 선택된 device/compute (config 자동감지 결과) ─────────
@@ -63,15 +66,12 @@ check("config", _config)
 def _stt_client():
     from sentinel_voice import config
 
-    if config.STT_BACKEND == "remote":
-        __import__("httpx")
-        if not config.ASR_API_KEY:
-            raise RuntimeError(
-                "SENTINEL_ASR_API_KEY 미설정 — ai/stt/.env에 추가 (커밋 금지)"
-            )
-        return f"remote, {config.ASR_MODEL_LABEL}"
-    __import__("faster_whisper")
-    return f"local, {config.STT_MODEL}/{config.COMPUTE}"
+    __import__("httpx")
+    if not config.ASR_API_KEY:
+        raise RuntimeError(
+            "SENTINEL_ASR_API_KEY 미설정 — ai/stt/.env에 추가 (커밋 금지)"
+        )
+    return f"remote FastAPI, {config.ASR_MODEL_LABEL}"
 
 
 check("STT client", _stt_client)
@@ -132,44 +132,33 @@ check("memory/swap", _mem, warn=True)
 if LOAD:
     def _load_stt():
         from sentinel_voice import config
-        if config.STT_BACKEND == "remote":
-            import numpy as np
+        import numpy as np
 
-            from sentinel_voice.remote_asr import RemoteASRClient
+        from sentinel_voice.remote_asr import RemoteASRClient
 
-            client = RemoteASRClient(
-                base_url=config.ASR_BASE_URL,
-                api_key=config.ASR_API_KEY,
-                timeout_seconds=config.ASR_TIMEOUT,
-                connect_timeout_seconds=config.ASR_CONNECT_TIMEOUT,
-                max_attempts=config.ASR_MAX_ATTEMPTS,
-                retry_delay_seconds=config.ASR_RETRY_DELAY,
-                allow_insecure_http=config.ASR_ALLOW_INSECURE_HTTP,
-            )
-            try:
-                health = client.health()
-                # /health는 의도적으로 공개되어 있다. 짧은 디지털 무음을 한 번
-                # 전사해 Bearer 키와 /v1/asr 경로까지 실제로 검증한다. 결과 텍스트는
-                # 환각 여부와 무관하게 버리며 로그에 남기지 않는다.
-                client.transcribe(
-                    np.zeros(config.FS // 4, dtype=np.float32),
-                    sample_rate=config.FS,
-                )
-            finally:
-                client.close()
-            return (
-                "원격 ASR health+인증 전사 성공 "
-                f"(backend={health.get('backend')}, model={health.get('model')})"
-            )
-
-        from faster_whisper import WhisperModel
-
-        WhisperModel(
-            config.STT_MODEL,
-            device=config.DEVICE,
-            compute_type=config.COMPUTE,
+        client = RemoteASRClient(
+            base_url=config.ASR_BASE_URL,
+            api_key=config.ASR_API_KEY,
+            timeout_seconds=config.ASR_TIMEOUT,
+            connect_timeout_seconds=config.ASR_CONNECT_TIMEOUT,
+            max_attempts=config.ASR_MAX_ATTEMPTS,
+            retry_delay_seconds=config.ASR_RETRY_DELAY,
+            allow_insecure_http=config.ASR_ALLOW_INSECURE_HTTP,
         )
-        return f"{config.STT_MODEL}/{config.COMPUTE} 로드 성공"
+        try:
+            health = client.health()
+            # /health는 공개되어 있다. 짧은 디지털 무음을 한 번 전사해 Bearer 키와
+            # /v1/asr 경로까지 검증하고 결과 텍스트는 버린다.
+            client.transcribe(
+                np.zeros(config.FS // 4, dtype=np.float32),
+                sample_rate=config.FS,
+            )
+        finally:
+            client.close()
+        return (
+            "원격 ASR health+인증 전사 성공 "
+            f"(backend={health.get('backend')}, model={health.get('model')})"
+        )
 
     def _load_vad():
         from silero_vad import load_silero_vad

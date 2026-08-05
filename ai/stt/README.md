@@ -1,8 +1,8 @@
 # STT 음성 파이프라인
 
 요구조자의 음성을 듣고 → 상태 정보를 구조화 → 관제 보고 상태에 맞는 안전
-안내 음성을 내보내는 **음성 파이프라인**입니다. VAD는 Jetson 로컬, STT는 기본
-Jetson 로컬 또는 인증된 GPU ASR 서버 중 선택 가능하며,
+안내 음성을 내보내는 **음성 파이프라인**입니다. VAD는 Jetson 로컬, STT는
+인증된 FastAPI GPU ASR 서버에서 수행하며,
 정보 구조화(LLM)는 **GMS API 호출**, 안내 음성은 **사전녹음 재생**으로 동작합니다.
 
 ```
@@ -23,7 +23,7 @@ Jetson 로컬 또는 인증된 GPU ASR 서버 중 선택 가능하며,
 | 단계 | 선택 | 근거 |
 |------|------|------|
 | VAD | Silero VAD (로컬) | 노이즈 1차 컷, torch 기반 경량 |
-| STT | 기본 faster-whisper **`small`** (로컬) / 선택 Qwen3-ASR-1.7B (GPU 서버) | `SENTINEL_STT_BACKEND`로 안전 롤백 가능. 원격 장애는 무응답이 아닌 STT 실패로 분류 |
+| STT | **Qwen3-ASR-1.7B** (L40S FastAPI 서버) | Jetson의 CTranslate2·모델 메모리를 제거. 원격 장애는 무응답이 아닌 STT 실패로 분류 |
 | LLM | **`gpt-5.4-mini`** (GMS API) | Jira 118 프롬프트 v2 실측 44/44 완전 정답으로 선정. 로컬 3b는 젯슨 피크 5.62GB·OOM([근거](docs/measurements/메모리-예산.md)) |
 | LLM 폴백 | 키워드 파서(`llm.keyword_extract`) | STT 완료 후 GMS 호출만 실패한 경우의 축소 보고 |
 | 안내 음성 | **승인된 사전녹음 WAV 재생**(`assets/`) | TTS 모델 미탑재로 RAM 절약. 형식 검사는 `python -m tools.validate_guide_assets` |
@@ -34,7 +34,7 @@ Jetson 로컬 또는 인증된 GPU ASR 서버 중 선택 가능하며,
 | 경로 | 역할 |
 |------|------|
 | `sentinel_voice/` | 실제 음성 서비스 패키지. 설정·오디오·안전 규칙·GMS·파이프라인 |
-| `sentinel_voice/config.py` | device/compute 자동 감지, GMS·모델·튜닝 파라미터, `.env` 로드 |
+| `sentinel_voice/config.py` | 원격 ASR·GMS·VAD·오디오 파라미터와 `.env` 로드 |
 | `sentinel_voice/audio.py` | 오디오 로더·레벨 처리(16kHz mono float32 통일, 무음 판정용 원본 RMS) |
 | `sentinel_voice/safety.py` | STT 환각 가드, LLM 출력 보정, 규칙 기반 triage |
 | `sentinel_voice/llm.py` | GMS 호출 + 33-8 키워드 폴백 (`extract()` 단일 진입점) |
@@ -86,14 +86,12 @@ cp .env.example .env       # Linux/Jetson
 > 네트워크 단절이 확인되면 신규 STT 대화를 시작하지 않습니다. 이미 STT가 완료된 뒤
 > GMS 호출만 실패한 경우에 한해 `llm.py`의 33-8 키워드 폴백을 사용합니다.
 
-## GPU ASR 원격 모드
+## GPU ASR 운영 경로
 
-기본값은 기존 `local`이라 배포 직후 동작이 바뀌지 않습니다. GPU 서버를 TLS
-reverse proxy 또는 Jetson의 SSH 터널 뒤에 준비하고 API 키를 안전하게 전달한 뒤에만
-다음 값을 `.env`에 넣습니다.
+STT 운영 경로는 FastAPI 원격 ASR 하나입니다. GPU 서버를 TLS reverse proxy 또는
+승인된 사설 경로 뒤에 준비하고 API 키를 안전하게 전달한 뒤 다음 값을 `.env`에 넣습니다.
 
 ```dotenv
-SENTINEL_STT_BACKEND=remote
 SENTINEL_ASR_BASE_URL=https://asr.example.internal
 SENTINEL_ASR_API_KEY=replace_with_random_asr_key
 SENTINEL_ASR_TIMEOUT=8
@@ -107,8 +105,8 @@ SENTINEL_ASR_MAX_ATTEMPTS=2
   찾은 턴은 `VOICE_DETECTED_STT_FAILED`로 남습니다. `NO_RESPONSE`로 바뀌지 않습니다.
 - Qwen3-ASR에는 Whisper의 `no_speech_prob`이 없으므로 로컬 VAD를 통과한 비어 있지
   않은 전사만 0.0으로 호환 매핑하고, 빈 전사는 1.0으로 처리합니다.
-- 장애 시 `SENTINEL_STT_BACKEND=local`로 되돌리면 기존 faster-whisper 경로를 그대로
-  사용합니다. API 키와 원음은 원격 클라이언트 로그에 남기지 않습니다.
+- API 키와 원음은 원격 클라이언트 로그에 남기지 않습니다. 비교용 Whisper backend는
+  `gpu_server/requirements-whisper.txt`와 shadow 벤치에만 격리되어 Jetson이 로드하지 않습니다.
 
 ## 음성 세션 보고 스키마
 
@@ -156,69 +154,32 @@ Jetson 앞에서 명령을 한 줄씩 실행하는 실기 절차와 기대 결�
 [`docs/Jetson-원격-ASR-테스트-가이드.md`](docs/Jetson-원격-ASR-테스트-가이드.md)에
 정리한다.
 
-x86(개발 PC) → ARM64(Jetson) 아키텍처 차이와 8GB 메모리 제약이 최대 함정입니다.
-`torch`·`faster-whisper(CTranslate2)`를 **일반 pip로 설치하면 거의 반드시 막힙니다.**
+x86과 ARM64의 차이는 이제 로컬 STT 엔진이 아니라 Jetson용 PyTorch(Silero VAD)와
+오디오 장치 설정에만 영향을 줍니다. Jetson에는
+`requirements-jetson-remote.txt`만 설치하며 CTranslate2를 설치하지 않습니다.
 
-> ✅ **2026-07-24 실측으로 검증된 절차는 [`docs/README.md` §7 실행 절차](docs/README.md)를 따르세요.**
-> 아래 STEP들은 초기 계획으로, 실전에서 일부가 달랐습니다 — 특히 **jetson-containers 경로는
-> 디스크 초과(이미지 19.6GB)로 실패**했고 **네이티브 설치가 정답**이었습니다. 시계 리셋(RTC 없음),
-> numpy<2, STT CPU 실행, page cache OOM 등 함정도 런북의 트러블슈팅에 정리돼 있습니다.
-
-### STEP 0 — 기본 준비
-
-```bash
-cat /etc/nv_tegra_release        # JetPack 6.2 기대
-sudo pip3 install -U jetson-stats && sudo reboot   # jtop (RAM/GPU/온도 감시)
-sudo nvpmodel -m 0 && sudo jetson_clocks           # 최대 성능 모드
-
-# 8GB 스왑 (모델 로딩 중 OOM 방지)
-sudo fallocate -l 8G /swapfile && sudo chmod 600 /swapfile
-sudo mkswap /swapfile && sudo swapon /swapfile
-echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
-```
-
-### STEP 1 — 런타임 구축 (권장: jetson-containers)
-
-의존성 지옥을 피하려면 NVIDIA 공식 [jetson-containers](https://github.com/dusty-nv/jetson-containers)의
-사전 빌드 이미지를 씁니다.
-
-```bash
-git clone https://github.com/dusty-nv/jetson-containers
-bash jetson-containers/install.sh
-jetson-containers run $(autotag faster-whisper)   # STT 환경
-```
-
-LLM은 GMS API 호출이므로 젯슨에 모델을 올리지 않습니다 — `pip install openai` + `.env`의
-`GMS_KEY`만 있으면 됩니다(위 "GMS 설정" 참고).
-
-> 네이티브 설치를 택할 경우 `torch`는 **반드시 NVIDIA Jetson 전용 휠**만 사용하고,
-> `faster-whisper`가 GPU로 안 잡히면 **whisper.cpp(CUDA 빌드)**로 대체합니다(파라미터 이식 가능).
-
-### STEP 1.5 — 로컬 모델 가중치 사전 캐싱 ⚠️
-
-`faster-whisper`·`silero-vad`는 **첫 로드 시 인터넷에서 가중치를 내려받는다**
-(각각 HuggingFace / torch.hub). 온라인 음성 세션 중 다운로드 지연을 방지하기 위해,
-**반드시 온라인 상태에서 한 번 로드해 캐시를 채운 뒤** 필드에 투입한다.
+Silero VAD는 첫 로드 시 가중치를 내려받을 수 있으므로 온라인 상태에서 preflight를
+한 번 수행해 캐시를 채웁니다.
 
 ```bash
 cd ai/stt
-python -m tools.check_env --load  # STT/VAD 로드 → 캐시 생성 + GMS 실호출 점검
+python -m tools.check_env --load  # 원격 ASR 인증 + VAD 로드 + GMS 실호출 점검
 ```
 
 > 안내 음성은 사전녹음 WAV(`assets/`, 저장소에 포함)라 캐싱이 필요 없고, LLM(GMS)은 온라인 전용
 > — 네트워크 단절이 확인되면 신규 STT 대화는 시작하지 않는다. 33-8 폴백은
 > STT 완료 후 GMS 호출만 실패한 경우에 사용한다.
 
-> 캐시 위치(참고): `~/.cache/huggingface`, `~/.cache/torch/hub`. 오프라인 배포 이미지를
-> 만들 때 이 디렉터리를 함께 포함하면 재현이 쉽다.
+> 로컬 캐시는 `~/.cache/torch/hub`의 VAD 가중치뿐입니다. Qwen3-ASR 가중치는 GPU
+> 서버에서 관리합니다.
 
 ### STEP 2 — 코드 이식 & 점검
 
 ```bash
 # 이 저장소를 젯슨에 clone 후
 cd ai/stt
-python -m tools.check_env          # 임포트/CUDA/장치/GMS/스왑 점검
-python -m tools.check_env --load   # STT/VAD 실제 로드까지 최종 확인
+python -m tools.check_env          # 원격 ASR 설정/오디오/GMS/스왑 점검
+python -m tools.check_env --load   # 원격 ASR 인증 전사/VAD 실제 로드까지 확인
 ```
 
 `python -m tools.check_env`가 전부 `[OK]`면 STT 구동 준비 완료입니다.
@@ -233,10 +194,10 @@ BRIO 100 마이크와 Bluetooth 스피커의 실제 장치 선택·녹음·재�
 python -m sentinel_voice.pipeline  # 1=마이크 8초, 2=파일 / 트리거는 VISION 기본
 ```
 
-### STEP 4 — 메모리 절약 3대 전략 (8GB 필수)
+### STEP 4 — Jetson 메모리 절약 전략
 
-1. **STT int8** — `config.py`가 젯슨에서 자동으로 `int8` 선택(float16 대비 메모리 절반).
-   강제하려면 `SENTINEL_COMPUTE=int8`.
+1. **STT 원격화** — Qwen3-ASR 모델과 추론 메모리는 L40S 서버가 담당하고 Jetson에는
+   HTTP 클라이언트만 둡니다.
 2. **안내 음성 사전녹음** — ✅ 적용됨. 문구 v2 WAV 6개 생성·변환·형식 검증 완료(2026-08-03). 블루투스 청취 검수는 실기에서.
 3. **LLM 미탑재** — ✅ 적용됨. GMS API 호출로 젯슨 LLM RAM 0 (구 로컬 3b는 피크 5.62GB였음).
 
@@ -256,7 +217,7 @@ python -m bench.pipeline_bench   # results/pipeline_bench_summary.csv
 | ⭐ **비전(YOLO)+SLAM 동시 구동** | 팀원과 통합 | **진짜 시험** — OOM·FPS 저하 |
 
 > 가장 중요한 측정은 마지막 줄입니다. GMS 전환으로 오디오 예상 피크가 ~3.3GB로 줄었지만
-> (LLM 미탑재), 통합 실측으로 확인하기 전까지는 여유를 단정하지 않습니다. 부족하면 STT `small`→`base` 검토.
+> (LLM·STT 미탑재), 통합 실측으로 확인하기 전까지는 여유를 단정하지 않습니다.
 
 > 📄 RAM 예산과 실측 기록은 [`docs/measurements/메모리-예산.md`](docs/measurements/메모리-예산.md)에 정리합니다(팀 공유용).
 > 예상 예산표 + 젯슨에서 채우는 실측 템플릿이 들어 있습니다.
@@ -313,10 +274,6 @@ L40S의 `Qwen/Qwen3.5-4B` 로컬 shadow 서버와 동일 46케이스 비교 결�
 
 | 변수 | 기본값 | 설명 |
 |------|--------|------|
-| `SENTINEL_STT_BACKEND` | local | `local` faster-whisper 또는 `remote` GPU ASR |
-| `SENTINEL_DEVICE` | 자동(cuda/cpu) | 강제 지정 (젯슨 STT는 `cpu` — CTranslate2 CUDA 없음) |
-| `SENTINEL_COMPUTE` | Jetson=int8, PC=float16 | STT 양자화 |
-| `SENTINEL_STT_MODEL` | small | tiny/base/small/medium/large-v3 |
 | `SENTINEL_ASR_BASE_URL` | 127.0.0.1:18100 | 원격 ASR 기본 URL. loopback 외 HTTPS 필수 |
 | `SENTINEL_ASR_API_KEY` | (없음, remote 필수) | GPU ASR 인증 키 — `.env`로만 관리 |
 | `SENTINEL_ASR_TIMEOUT` | 8 | 전사 요청 총 제한 시간(초) |

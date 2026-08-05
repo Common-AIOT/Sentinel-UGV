@@ -5,7 +5,7 @@
   ① LLM에 로봇이 물은 문구를 넘긴다 — 뭉개진 받아쓰기를 그 질문에 대한 답으로
      되돌릴 근거가 된다. 도메인 발화 16개 × 4조건에서 슬롯 정확도 45~47% → 52~55%
      (3회 반복, 망친 것 0건).
-  ② `config.STT_PROMPT`를 제거한다 — 슬롯 이득 0, 목적 미달성, 무발화에서 허위
+  ② 운영 프라이밍을 제거한다 — 슬롯 이득 0, 목적 미달성, 무발화에서 허위
      긴급 보고 15.8%.
 
 근거: docs/measurements/STT-오류율-실측.md §3, Jira S15P11A301-251.
@@ -85,11 +85,11 @@ class PromptContractTest(unittest.TestCase):
 class SttPrimingRemovedTest(unittest.TestCase):
     def test_stt_prompt_is_none(self):
         """프라이밍을 다시 켜려면 근거를 먼저 재야 한다 — 251 참고."""
-        self.assertIsNone(config.STT_PROMPT)
+        self.assertIsNone(config.WHISPER_BENCH_PROMPT)
 
     def test_is_valid_stt_tolerates_no_prompt(self):
-        """STT_PROMPT가 None이어도 판정이 깨지지 않아야 한다."""
-        valid, reason = is_valid_stt("다리를 다쳤어요", 0.1, config.STT_PROMPT)
+        """프라이밍이 없어도 판정이 깨지지 않아야 한다."""
+        valid, reason = is_valid_stt("다리를 다쳤어요", 0.1, None)
         self.assertTrue(valid, reason)
 
     def test_genuine_urgent_speech_is_no_longer_rejected(self):
@@ -99,16 +99,16 @@ class SttPrimingRemovedTest(unittest.TestCase):
         버려졌다. 프라이밍을 없앤 지금은 통과해야 한다.
         """
         valid, reason = is_valid_stt(
-            "살려주세요 도와주세요 다쳤어요", 0.2, config.STT_PROMPT
+            "살려주세요 도와주세요 다쳤어요", 0.2, None
         )
         self.assertTrue(valid, reason)
 
     def test_other_guards_still_work(self):
         """프라이밍 제거가 나머지 환각 가드를 무력화하지 않아야 한다."""
-        self.assertFalse(is_valid_stt("", 0.1, config.STT_PROMPT)[0])
-        self.assertFalse(is_valid_stt("네", 0.9, config.STT_PROMPT)[0])
+        self.assertFalse(is_valid_stt("", 0.1, None)[0])
+        self.assertFalse(is_valid_stt("네", 0.9, None)[0])
         self.assertFalse(
-            is_valid_stt("가스 가스 가스 가스 가스", 0.1, config.STT_PROMPT)[0]
+            is_valid_stt("가스 가스 가스 가스 가스", 0.1, None)[0]
         )
 
 

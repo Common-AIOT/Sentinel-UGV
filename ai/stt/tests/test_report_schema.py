@@ -116,6 +116,13 @@ class ReportSchemaTest(unittest.TestCase):
             keyword_extract("다리를 다쳤어요")["mobilityStatus"], "UNKNOWN"
         )
 
+    def test_rhetorical_negation_decides_mobility(self):
+        for text in (
+            "다리 다쳤는데 움직일 수 있겠냐고요.",
+            "이 상태로 어떻게 움직여요.",
+        ):
+            self.assertEqual(keyword_extract(text)["mobilityStatus"], "NO")
+
     def test_nearby_people_add_to_speaker(self):
         """주변 인원을 덧붙여 말하면 화자를 더한다 (2026-08-04 팀 결정)."""
         self.assertEqual(

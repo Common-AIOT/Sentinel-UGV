@@ -77,7 +77,6 @@ nano .env
 단기 직접 연결이 성공한 경우 다음 항목을 넣는다.
 
 ```dotenv
-SENTINEL_STT_BACKEND=remote
 SENTINEL_ASR_BASE_URL=http://70.12.130.105:18100
 SENTINEL_ASR_API_KEY=<GPU 서버 /home/j-i15a301/a301-gpu-asr/.env.runtime의 ASR_API_KEY와 같은 값>
 SENTINEL_ASR_ALLOW_INSECURE_HTTP=1

@@ -1,14 +1,10 @@
 # config.py
 """
-STT-LLM-TTS 음성 파이프라인 공통 설정.
+STT-LLM-사전녹음 음성 파이프라인 공통 설정.
 
-개발 PC(x86 + RTX)와 Jetson Orin Nano(ARM64 + Ampere)를 같은 코드로 돌리기 위해
-device / compute_type 를 자동 감지한다. 환경 변수로 언제든 덮어쓸 수 있다.
+개발 PC와 Jetson이 같은 FastAPI 원격 ASR·GMS 설정을 사용한다. Jetson 여부는
+진단 요약에만 기록하며 STT 모델이나 연산 장치는 Jetson에서 선택하지 않는다.
 
-  SENTINEL_DEVICE   = cuda | cpu            (기본: cuda 가능하면 cuda)
-  SENTINEL_COMPUTE  = int8 | float16 | ...  (기본: Jetson=int8, 그 외 GPU=float16)
-  SENTINEL_STT_BACKEND= local | remote       (기본: local)
-  SENTINEL_STT_MODEL= tiny|base|small|...    (기본: small)
   SENTINEL_ASR_BASE_URL=https://...          (remote 전용)
   SENTINEL_ASR_API_KEY=...                   (remote 전용, 커밋 금지)
   SENTINEL_LLM      = GMS 모델명             (기본: gpt-5.4-mini — Jira 118 실측 선정)
@@ -38,14 +34,6 @@ def _load_dotenv():
 _load_dotenv()
 
 
-def _has_cuda() -> bool:
-    try:
-        import torch
-        return bool(torch.cuda.is_available())
-    except Exception:
-        return False
-
-
 def is_jetson() -> bool:
     """NVIDIA Tegra(Jetson) 보드인지 감지."""
     if os.path.exists("/etc/nv_tegra_release"):
@@ -57,33 +45,9 @@ def is_jetson() -> bool:
         return False
 
 
-def pick_device() -> str:
-    env = os.getenv("SENTINEL_DEVICE")
-    if env:
-        return env
-    return "cuda" if _has_cuda() else "cpu"
-
-
-def pick_compute(device: str) -> str:
-    env = os.getenv("SENTINEL_COMPUTE")
-    if env:
-        return env
-    if device != "cuda":
-        return "int8"          # CPU 폴백
-    # Jetson 8GB는 메모리가 빠듯하므로 int8 권장. 데스크톱 GPU는 float16.
-    return "int8" if is_jetson() else "float16"
-
-
-DEVICE = pick_device()
-COMPUTE = pick_compute(DEVICE)
-
-# ── 모델 선택 ────────────────────────────────────────────────
-STT_BACKEND = os.getenv("SENTINEL_STT_BACKEND", "local").strip().lower()
-if STT_BACKEND not in {"local", "remote"}:
-    raise ValueError("SENTINEL_STT_BACKEND must be 'local' or 'remote'")
-STT_MODEL = os.getenv("SENTINEL_STT_MODEL", "small")   # faster-whisper
-
-# 원격 GPU ASR. API 키는 서버 인증에만 쓰며 로그·세션 파일에 남기지 않는다.
+# STT 운영 경로는 FastAPI 원격 ASR 하나다. 비교용 Whisper 구현은 bench와
+# gpu_server/requirements-whisper.txt에 격리하며 Jetson 런타임에서 선택하지 않는다.
+# API 키는 서버 인증에만 쓰며 로그·세션 파일에 남기지 않는다.
 ASR_BASE_URL = os.getenv("SENTINEL_ASR_BASE_URL", "http://127.0.0.1:18100")
 ASR_API_KEY = os.getenv("SENTINEL_ASR_API_KEY", "")
 ASR_TIMEOUT = float(os.getenv("SENTINEL_ASR_TIMEOUT", "8"))
@@ -115,8 +79,8 @@ VAD_OPTS = dict(
     speech_pad_ms=300,
 )
 
-# faster-whisper 디코딩 옵션 (저SNR·약한발화 강건성 + 환각 억제)
-STT_DECODE = dict(
+# 과거 faster-whisper 비교 실험 재현 전용. 운영 파이프라인에서는 사용하지 않는다.
+WHISPER_BENCH_DECODE = dict(
     language="ko",
     vad_filter=True,
     vad_parameters=VAD_OPTS,
@@ -146,7 +110,7 @@ STT_DECODE = dict(
 #
 # 근거: docs/measurements/STT-오류율-실측.md §3, Jira S15P11A301-251.
 # None이면 faster-whisper는 프라이밍 없이 디코딩한다.
-STT_PROMPT: str | None = None
+WHISPER_BENCH_PROMPT: str | None = None
 
 # 원본(정규화 전) RMS가 이보다 작으면 사실상 무음으로 판정
 SILENCE_RMS = 0.005
@@ -212,8 +176,7 @@ PROMPT_PATH = STT_ROOT / "prompts" / "triage_extract.txt"
 
 def summary() -> str:
     return (
-        f"device={DEVICE} compute={COMPUTE} jetson={is_jetson()} "
-        f"stt_backend={STT_BACKEND} "
-        f"stt={STT_MODEL if STT_BACKEND == 'local' else ASR_MODEL_LABEL} "
+        f"jetson={is_jetson()} stt_backend=remote "
+        f"stt={ASR_MODEL_LABEL} "
         f"llm={LLM_MODEL}"
     )

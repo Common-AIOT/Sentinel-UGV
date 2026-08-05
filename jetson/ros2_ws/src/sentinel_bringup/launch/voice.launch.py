@@ -31,7 +31,6 @@ def _voice_process(context):
             cmd=[str(python), "-u", "-m", "sentinel_voice.ros_node"],
             cwd=str(stt_root),
             additional_env={
-                "SENTINEL_DEVICE": "cpu",
                 "PYTHONUNBUFFERED": "1",
             },
             output="screen",

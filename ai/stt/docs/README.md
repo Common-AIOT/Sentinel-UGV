@@ -39,7 +39,7 @@ VISION 트리거 → 세션 게이트 → 다턴 대화(VAD → STT → 환각 �
 |---|---|---|
 | 트리거 | **비전 객체탐지** (SED 제외) | §1-4 |
 | VAD | Silero VAD | 노이즈 1차 컷, torch 경량 |
-| STT | **faster-whisper `small`** (젯슨 `cpu/int8`) | 저SNR·약한 발화 강건성 |
+| STT | **Qwen3-ASR-1.7B** (L40S FastAPI 서버) | Jetson 모델 메모리 제거, 실기 E2E 확인 |
 | LLM | **GMS API `gpt-5.4-mini`** | 프롬프트 v2 회귀 **44/44 완전 정답** ([data](measurements/GMS-모델-비교-결과.md)) |
 | TTS | **사전녹음 WAV 6개** (모델 미탑재) | RAM 절감 + 자유 생성 문장 위험 제거 |
 | 등급 | 규칙 `voice-risk-v1.1` | 재현·설명·감사 가능 |
@@ -842,7 +842,7 @@ pip install "numpy<2"            # torch 휠이 numpy 1.x 기준 빌드
 
 # 나머지 (melotts 제외 — PyPI 패키징 버그, 사전녹음 방식이라 불필요)
 sudo apt install -y portaudio19-dev libsndfile1 pulseaudio-utils v4l-utils
-pip install sounddevice soundfile scipy librosa faster-whisper silero-vad openai
+pip install -r requirements-jetson-remote.txt
 ```
 
 측정 세션마다 (부팅 시 초기화됨):
@@ -864,15 +864,15 @@ cd ~/projects/S15P11A301/ai/stt && cp -n .env.example .env
 ### 7-3. 환경 점검
 
 ```bash
-SENTINEL_DEVICE=cpu python -m tools.check_env --load
+python -m tools.check_env --load
 ```
 
 | 항목 | 통과 기준 |
 |---|---|
 | `platform` | `aarch64 / Jetson / R36.4.7` |
-| `torch+CUDA` | torch 2.8.0, Orin |
-| `config` | `device=cpu compute=int8 jetson=True stt=small llm=gpt-5.4-mini` |
-| `faster-whisper` `silero-vad` `sounddevice(장치)` `librosa` | 전부 `[OK]` |
+| `torch(VAD)` | Jetson용 torch 로드 성공 |
+| `config` | `jetson=True stt_backend=remote stt=Qwen/Qwen3-ASR-1.7B` |
+| `STT client` `silero-vad` `sounddevice(장치)` `librosa` | 전부 `[OK]` |
 | `guide-audio` | 사전녹음 WAV 6개 보유 |
 | `memory/swap` | RAM 7.4GB, Swap 8GB↑ |
 | `STT 로드` / `VAD 로드` | `[OK]` |
@@ -880,9 +880,8 @@ SENTINEL_DEVICE=cpu python -m tools.check_env --load
 
 마지막 줄이 `✅ 전부 통과`여야 한다.
 
-> `SENTINEL_DEVICE=cpu`인 이유: ARM64용 CTranslate2에 CUDA 빌드가 없어 faster-whisper는
-> **CPU로만 동작**한다. 빼면 `CTranslate2 not compiled with CUDA`로 실패한다.
-> GPU STT가 필요해지면 whisper.cpp(CUDA 빌드) 전환을 검토한다.
+> Jetson에는 CTranslate2와 Whisper 가중치를 설치하지 않는다. `STT 로드`는 GPU 서버의
+> `/health`와 인증된 `/v1/asr` 요청을 검사한다.
 
 ### 7-4. 오디오 입출력 검증
 
@@ -916,10 +915,10 @@ WAV 재청취 시 음성 식별 가능. RMS는 환경·거리에 따라 달라�
 
 ```bash
 # 단독 CLI (수동 트리거)
-SENTINEL_DEVICE=cpu python -u -m sentinel_voice.pipeline 2>&1 | tee ~/voice_test.log
+python -u -m sentinel_voice.pipeline 2>&1 | tee ~/voice_test.log
 
 # 진단이 필요할 때만 — 세션 기록과 청취 원본을 남긴다 (§11-6)
-SENTINEL_DEVICE=cpu SENTINEL_SESSION_LOG_DIR=~/sessions \
+SENTINEL_SESSION_LOG_DIR=~/sessions \
   python -u -m sentinel_voice.pipeline 2>&1 | tee ~/voice_test.log
 
 # ROS 2 노드 (실제 비전 트리거)
@@ -934,9 +933,9 @@ ros2 topic echo /mission/signal    std_msgs/msg/String
 
 | 변수 | 기본값 | 의미 |
 |---|---|---|
-| `SENTINEL_DEVICE` | 자동 감지 | 젯슨에서는 **`cpu` 필수** |
-| `SENTINEL_COMPUTE` | Jetson `int8` | 연산 정밀도 |
-| `SENTINEL_STT_MODEL` | `small` | faster-whisper 모델 |
+| `SENTINEL_ASR_BASE_URL` | `http://127.0.0.1:18100` | FastAPI ASR 주소 |
+| `SENTINEL_ASR_API_KEY` | — | **필수.** GPU 서버와 같은 키, 커밋 금지 |
+| `SENTINEL_ASR_ALLOW_INSECURE_HTTP` | `0` | 격리된 개발망의 평문 HTTP에서만 `1` |
 | `SENTINEL_LLM` | `gpt-5.4-mini` | GMS 모델명 |
 | `GMS_KEY` | — | **필수.** `ai/stt/.env`, 커밋 금지 |
 | `SENTINEL_GMS_BASE` | `https://gms.ssafy.io/gmsapi/api.openai.com/v1` | GMS 엔드포인트 |
@@ -1268,9 +1267,9 @@ TTS·STT·대화 주도권의 클라우드 전환을 실측했다. **개발 PC �
    살아남았다. 이 게이트는 마이크 단선처럼 레벨이 사실상 0인 경우의 조기 탈출로만
    취급한다. 상세: 실측 문서 §4-3.
 2. ~~**`STT_PROMPT`(도메인 프라이밍)가 환각을 만든다.**~~ → **제거됨**
-   (S15P11A301-251, 2026-08-04). 로컬 `small`이 `config.STT_PROMPT` 자체를 그대로
+   (S15P11A301-251, 2026-08-04). 당시 로컬 `small`이 프라이밍 문구 자체를 그대로
    반환하는 사례가 반복 확인됐고, 도메인 발화 16개 × 4조건에서 슬롯 이득이 0이었다.
-   `config.STT_PROMPT = None`. 근거: `measurements/STT-오류율-실측.md` §3-1.
+   출력해 프라이밍을 제거했다. 근거: `measurements/STT-오류율-실측.md` §3-1.
 
 > **§2-6과의 충돌** — 현행 "안전 필수 문구는 사전녹음 WAV만 사용한다. 자유 생성 문장을
 > 쓰지 않는다"는 LLM 주도 대화와 양립하지 않는다. 개편 착수 시 개정 대상이며,
@@ -1638,7 +1637,7 @@ CI 검증) 변경이므로 백엔드 파싱·DB·프론트 표시·명세 33-6�
    스트림 기준이다. Bluetooth A2DP는 그 뒤에 100~250ms 싱크 버퍼가 더 있어, 반환된
    뒤에도 스피커에서 안내 음성 꼬리가 재생된다. **녹음은 그 순간 시작된다.**
 3. **에코가 유효 발화로 통과한다.** `is_valid_stt()`의 "프롬프트 복사" 가드는
-   `config.STT_PROMPT`와만 대조하고 안내 문구 텍스트와는 대조하지 않았다.
+   당시 STT 프라이밍과만 대조하고 안내 문구 텍스트와는 대조하지 않았다.
 
 **영향** — `anyResponseDetected=true` 오탐. **의식 없는 요구조자를 "응답 있음"으로
 보고할 수 있다.**
@@ -1917,7 +1916,7 @@ GMS는 값을 확정하지 못했고, 시스템은 **다시 묻지 않고 다음
 | `pip install torch` → No matching distribution | 인덱스 URL에 **`/+simple/` 누락** → §7-2 |
 | torch import 시 `Failed to initialize NumPy` | numpy 2.x 충돌 → `pip install "numpy<2"` |
 | `requirements.txt` 설치 중 melotts 빌드 실패 | PyPI 패키징 버그 → melotts 제외 |
-| `[FAIL] STT 로드: CTranslate2 not compiled with CUDA` | ARM64에 CUDA 빌드 없음 → `SENTINEL_DEVICE=cpu` |
+| `[FAIL] STT 로드` | GPU ASR health·API 키·외부 포트 경로 확인 |
 | LLM 로드 시 `cudaMalloc failed: out of memory` | **page cache가 free를 잠식** → `sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'`. `available`이 커도 발생 (GMS 구성에서는 해당 없음) |
 | 안내 음성이 안 들림 (로그는 `[PLAY]`) | 스피커 출력 장치·볼륨 → §7-4 재실행 |
 | `[WARN] … ASSET_NOT_FOUND` | WAV 누락 → `python -m tools.validate_guide_assets` |
@@ -1944,7 +1943,7 @@ GMS는 값을 확정하지 못했고, 시스템은 **다시 묻지 않고 다음
 | **VISION 트리거** | 비전 모듈이 사람을 발견해 세션 시작을 요청하는 신호. 음성 모듈이 항상 듣고 있는 것은 아니다 |
 | **SED** | Sound Event Detection. 신음·충격음 같은 소리 사건 감지. **현재 범위에서 제외**(§1-4) |
 | **VAD** | Voice Activity Detection. 말소리 구간을 찾는다. 내용은 이해하지 않는다 |
-| **STT** | Speech-to-Text. 젯슨에서 `faster-whisper small`을 로컬 실행 |
+| **STT** | Speech-to-Text. Jetson 음성을 L40S의 Qwen3-ASR FastAPI로 전사 |
 | **LLM** | 발화에서 정해진 사실 3개를 추출하는 데만 사용. 의료 판단·구조 순위를 맡기지 않는다 |
 | **GMS** | SSAFY의 생성형 AI 호출 서비스. 젯슨에 LLM을 설치하는 대신 API로 `gpt-5.4-mini`를 호출 |
 | **TTS** | Text-to-Speech. **운영 경로에는 모델을 탑재하지 않고** 승인된 WAV를 재생 |
@@ -1987,7 +1986,7 @@ GMS는 값을 확정하지 못했고, 시스템은 **다시 묻지 않고 다음
 | **401/403 · 429 · 5xx** | 인증·권한 오류(재시도 무의미) · 요청 과다(제한 재시도) · 서버 오류(제한 재시도) |
 | **안전 기본값** | 정보 부족 시 낙관적 결론을 만들지 않고 `UNKNOWN`·재질문·관제 검토 필요로 처리하는 값 |
 | **에코 / 재유입** | 스피커의 로봇 안내가 마이크에 다시 들어가 요구조자 발화로 처리되는 현상(§11-3) |
-| **프라이밍 (도메인 프라이밍)** | STT에게 "이런 말이 나올 것"이라고 낱말 목록을 미리 알려주는 것(`initial_prompt`). 웅얼거려도 그 낱말로 알아듣게 하려는 장치다. **부작용** — 힌트가 세면 안 한 말을 들었다고 우긴다. `config.STT_PROMPT`는 이 때문에 **제거했다**(S15P11A301-251) |
+| **프라이밍 (도메인 프라이밍)** | STT에게 "이런 말이 나올 것"이라고 낱말 목록을 미리 알려주는 것(`initial_prompt`). 웅얼거려도 그 낱말로 알아듣게 하려는 장치다. **부작용** — 힌트가 세면 안 한 말을 들었다고 우긴다. 운영 프라이밍은 이 때문에 **제거했고 현재 원격 STT 설정에는 없다**(S15P11A301-251) |
 | **프롬프트 복사 / 반출** | 프라이밍으로 준 문장을 STT가 인식 결과로 그대로 되뱉는 환각. 소음뿐인 오디오에서도 나와 허위 긴급 보고가 된다 |
 | **되돌리기 (뭉개진 받아쓰기 복원)** | 받아쓰기가 한두 음절 어긋났을 때 LLM이 질문 맥락으로 원래 말을 되돌리는 것. `비가 계속 나요` → `피가 계속 나요`. **부정을 뒤집지 않고**, 통째로 다른 말은 손대지 않는다(S15P11A301-251) |
 | **무음 게이트 / VAD 게이트** | STT 앞에 놓인 두 관문. ① 원본 소리 크기(RMS)가 기준 미만이면 무음으로 판정 ② Silero VAD가 말소리를 못 찾으면 중단. 소음만 있는 오디오의 **30%가 이 둘을 통과한다** |
@@ -2028,13 +2027,13 @@ GMS는 값을 확정하지 못했고, 시스템은 **다시 묻지 않고 다음
 | 용어 | 의미 |
 |---|---|
 | **Jetson Orin Nano** | 파이프라인이 배포되는 NVIDIA 엣지 컴퓨터. 팀 장비는 RAM 8GB |
-| **엣지/온디바이스** | 로봇의 젯슨에서 직접 처리. 현재 VAD·STT는 온디바이스, LLM은 GMS 원격 |
+| **엣지/온디바이스** | 로봇의 젯슨에서 직접 처리. 현재 VAD·오디오 I/O만 온디바이스, STT·LLM은 원격 |
 | **통합 메모리** | 젯슨은 CPU와 GPU가 같은 RAM을 쓴다. PC 측정값으로 대체할 수 없는 이유 |
 | **피크 RAM** | 측정 구간 중 최댓값. 순간 OOM 위험 판단에 중요 |
 | **Swap / OOM** | RAM 부족 시 저장장치를 임시 메모리로 쓰는 영역(느리고 OOM을 없애지 않는다) / 메모리 할당 실패로 프로세스가 종료되는 상태 |
 | **page cache** | OS가 파일 읽기 속도를 위해 RAM에 두는 캐시. **젯슨 nvgpu 할당기는 이를 회수하지 못한다**(§9-1) |
 | **가중치 캐싱 vs 상주 로드** | 배포 전 저장장치에 미리 다운로드 / 실행 중 RAM에 계속 유지 |
-| **CUDA / CTranslate2** | NVIDIA GPU 연산 플랫폼 / `faster-whisper`의 실행 엔진. **ARM64 패키지에 CUDA 지원이 없어 STT를 `cpu/int8`로 실행한다** |
+| **CUDA / CTranslate2** | NVIDIA GPU 연산 플랫폼 / Whisper 비교 backend의 실행 엔진. Jetson 운영 requirements에는 CTranslate2를 설치하지 않는다 |
 | **int8 / float16** | 계산 정밀도. 보통 int8이 메모리를 덜 쓰지만 환경에 따라 속도·정확도 차이가 있다 |
 | **가상환경** | PC는 Miniforge `sentinel-audio`, 젯슨은 저장소 루트 `.venv` |
 

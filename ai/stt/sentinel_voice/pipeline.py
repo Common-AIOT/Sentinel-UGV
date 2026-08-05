@@ -62,8 +62,7 @@ def say(message: str) -> None:
         pass
 
 
-# 모델은 import 시점이 아니라 첫 사용 시 올린다. ROS 2 노드가 이 모듈을 import만
-# 해도 Whisper가 메모리에 올라가면 노드 기동 순서와 RAM 피크를 통제할 수 없다.
+# VAD와 원격 ASR 클라이언트는 첫 사용 시 만들고 세션 간 재사용한다.
 _models: tuple = ()
 
 
@@ -72,26 +71,15 @@ def load_models() -> tuple:
     global _models
     if not _models:
         say(f"모델 로딩... ({config.summary()})")
-        if config.STT_BACKEND == "remote":
-            stt = RemoteASRClient(
-                base_url=config.ASR_BASE_URL,
-                api_key=config.ASR_API_KEY,
-                timeout_seconds=config.ASR_TIMEOUT,
-                connect_timeout_seconds=config.ASR_CONNECT_TIMEOUT,
-                max_attempts=config.ASR_MAX_ATTEMPTS,
-                retry_delay_seconds=config.ASR_RETRY_DELAY,
-                allow_insecure_http=config.ASR_ALLOW_INSECURE_HTTP,
-            )
-        else:
-            # 원격 모드에서는 faster-whisper를 import조차 하지 않아 Jetson 메모리에
-            # 로컬 STT 런타임이 올라가지 않게 한다.
-            from faster_whisper import WhisperModel
-
-            stt = WhisperModel(
-                config.STT_MODEL,
-                device=config.DEVICE,
-                compute_type=config.COMPUTE,
-            )
+        stt = RemoteASRClient(
+            base_url=config.ASR_BASE_URL,
+            api_key=config.ASR_API_KEY,
+            timeout_seconds=config.ASR_TIMEOUT,
+            connect_timeout_seconds=config.ASR_CONNECT_TIMEOUT,
+            max_attempts=config.ASR_MAX_ATTEMPTS,
+            retry_delay_seconds=config.ASR_RETRY_DELAY,
+            allow_insecure_http=config.ASR_ALLOW_INSECURE_HTTP,
+        )
         _models = (
             load_silero_vad(),
             stt,
@@ -134,19 +122,7 @@ def has_speech(wav: np.ndarray) -> bool:
 
 def transcribe(wav: np.ndarray) -> tuple[str, float]:
     _, stt = load_models()
-    if config.STT_BACKEND == "remote":
-        return stt.transcribe(wav, sample_rate=FS, language="ko")
-    segments, _ = stt.transcribe(
-        wav, initial_prompt=config.STT_PROMPT, **config.STT_DECODE
-    )
-    segments = list(segments)
-    text = "".join(segment.text for segment in segments).strip()
-    no_speech_prob = (
-        float(np.mean([segment.no_speech_prob for segment in segments]))
-        if segments
-        else 1.0
-    )
-    return text, no_speech_prob
+    return stt.transcribe(wav, sample_rate=FS, language="ko")
 
 
 def build_dependencies() -> SessionDependencies:

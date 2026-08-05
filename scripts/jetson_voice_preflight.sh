@@ -33,8 +33,8 @@ cd "${STT_ROOT}"
 "${PYTHON}" - <<'PY'
 from sentinel_voice import config
 
-if config.STT_BACKEND != "remote":
-    raise SystemExit("[FAIL] SENTINEL_STT_BACKEND=remote가 아니다")
+if not config.ASR_API_KEY:
+    raise SystemExit("[FAIL] SENTINEL_ASR_API_KEY가 없다")
 print(f"[OK] 설정: {config.summary()}")
 PY
 

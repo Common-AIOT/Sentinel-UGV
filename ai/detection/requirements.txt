@@ -23,9 +23,13 @@ opencv-python
 # Installed version on the development PC: 0.5.13
 lap
 
-# ReID inference (configs/tracker_*.yaml with_reid: True).
+# ReID inference (configs/tracker_sentinel.yaml with_reid: True).
 # ONNX Runtime is used ONLY for the ReID model. Detect and Pose run on PyTorch,
 # so this is not needed when ReID is off.
+#
+# Only the development-PC profile turns ReID on. The Jetson profile
+# (configs/tracker_jetson.yaml) has with_reid: False, so the robot does not
+# need this package at all unless someone re-enables ReID there.
 #
 # CPU vs GPU matters a lot here. ReID runs once per person per frame, so a CPU
 # fallback costs a large share of the frame budget. Verify with:
@@ -35,9 +39,11 @@ lap
 # CUDAExecutionProvider or TensorrtExecutionProvider must appear.
 #
 # ⚠️ Jetson (aarch64) is intentionally excluded from the marker below.
-#    The PyPI `onnxruntime-gpu` wheel does not cover aarch64, and installing plain
-#    `onnxruntime` there would silently give a CPU-only build that looks fine but
-#    is slow. Install a JetPack-matched wheel from NVIDIA's Jetson index instead:
+#    Two reasons. First, the robot does not run ReID, so it does not need this.
+#    Second, the PyPI `onnxruntime-gpu` wheel does not cover aarch64, and installing
+#    plain `onnxruntime` there would silently give a CPU-only build that looks fine
+#    but is slow. If ReID is ever re-enabled on the Jetson, install a JetPack-matched
+#    wheel from NVIDIA's Jetson index instead:
 #        https://elinux.org/Jetson_Zoo#ONNX_Runtime
 #
 #    Note the marker is `!= "aarch64"`, not `== "x86_64"`. Windows reports

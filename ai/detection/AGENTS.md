@@ -16,10 +16,13 @@
 | 공통 JSON 봉투 / ENCOUNTER_CONFIRMED | 31-5, 31-6 | ✅ |
 | FALLEN을 의료 판정에 쓰지 않음 | 25.6 | ✅ |
 
-### ✅ 명세 이탈 3건 — 2026-08-05 팀 승인됨
+### ✅ 명세 이탈 2건 — 2026-08-05 팀 승인됨
 
-**세 건 모두 승인됐다.** 아래 내용은 사유·영향·되돌리는 법의 기록으로 남긴다.
+아래 내용은 사유·영향·되돌리는 법의 기록으로 남긴다.
 새로 합류하는 사람이 "명세와 코드가 왜 다른가"를 물을 때 이 절이 답이다.
+
+> **2026-08-06: 이탈 3건 중 ReID가 빠져 2건이 됐다.** 젯슨 미채택으로 최종 시연
+> 범위에서 제외되면서 개발 PC 프로파일까지 껐다. 아래 이탈 2 참고.
 
 **이탈 1. 추적기: ByteTrack → BoT-SORT**
 
@@ -30,47 +33,7 @@
 - 영향: 출력은 동일하게 `trackId`이며 백엔드·DB가 보는 값은 바뀌지 않는다. 경미.
 - 주의: 추적·그룹화는 명세 17.2에서 **AI B 담당**이다. 중복 구현 전 담당자와 확인한다.
 
-**이탈 2. ReID 활성화 — 명세가 명시적으로 제외한 항목**
-
-명세는 정밀 재식별을 **세 곳에서 제외**한다.
-- `docs/01-프로젝트-개요.md:85` "피해자 정밀 재식별" (제외 목록)
-- `docs/01-프로젝트-개요.md:95` "다수 사람의 정밀 재식별" (제외 목록)
-- `docs/07-AI-탐지.md` 25.1 "정밀 재식별은 범위에서 제외한다"
-
-**이탈은 개발 PC 프로파일에만 남아 있다.** 로봇에 실제로 올라가는 Jetson 프로파일은
-명세 준수 상태다.
-
-| 프로파일 | 트래커 설정 | `with_reid` | 명세 |
-|---|---|---|---|
-| 개발 PC | `configs/tracker_sentinel.yaml` | `True` + `yolo26n-reid.onnx` | ⚠️ 이탈 |
-| **Jetson** | `configs/tracker_jetson.yaml` | **`False`** | ✅ 준수 |
-
-- 사유: 시야를 벗어난 사람의 trackId 유지. IoU 기반으로는 원리적으로 불가능함을 실측 확인
-  (카메라 팬 2200px에서 GMC 보정 후에도 예측 오차 564px, 사람 폭 240px).
-- 개발 PC 실측 근거:
-
-  | 설정 | 발급 trackId (3,660프레임, 동시 최대 7명) |
-  |---|---|
-  | ReID 끔 | 33개 |
-  | ReID 켬 | **19개 (-42%)** |
-
-  끊긴 트랙 16건을 분석하니 **100%가 "사람은 화면에 있는데 트래커가 잇지 못한"** 경우였다.
-  임베딩 판별력도 71550 다중 카메라로 확인했다(같은 사람 0.572 / 타인 0.278, AUC 0.915).
-  `model: auto`로 두면 분류 모델로 대체되어 타인 간 0.835가 되므로 경로를 명시했다.
-
-- **2026-08-05: Jetson에서 켰다가 같은 날 되돌렸다.** 젯슨 담당자가 채택하지 않기로 했다.
-  로봇 쪽 전제 조건 두 가지(① `yolo26n-reid.onnx` 수동 배치 — `yolo export`가
-  ultralytics 8.4.104에서 실패한다, ② aarch64용 `onnxruntime-gpu` — PyPI 휠이 없어
-  JetPack 매칭 휠이 필요하다)가 얻는 것보다 부담이 컸다. **Jetson FPS는 끝내 재지
-  못했다.** 개발 PC에서 약 30% 하락했고 Jetson 9.45FPS 기준이면 6~7FPS 추정이었다.
-- 포기하는 것: 로봇에서는 시야 이탈 후 ID 유지를 포기한다. **팀 계약은 깨지지 않는다** —
-  명세의 중복 판정은 trackId가 아니라 지도 좌표 기반(1m/15초, 25.4)이고, 페이로드의
-  `trackIds`는 nullable 배열이며 중복 제거는 Mission Manager가 한다.
-- **다시 켜는 법**: `configs/tracker_jetson.yaml`에 `with_reid: True`,
-  `proximity_thresh: 0.0`, `model: models/yolo26n-reid.onnx`. 위 전제 조건 2개를 먼저
-  갖추고, 켠 뒤 `avg_fps`를 9.45FPS 기준과 비교한다.
-
-**이탈 3. Pose를 전체 화면이 아니라 person crop으로 실행한다 (2026-07-30)**
+**이탈 2. Pose를 전체 화면이 아니라 person crop으로 실행한다 (2026-07-30)**
 
 명세 `docs/07-AI-탐지.md` 25.2는 "YOLO26n Pose 조건부 실행 (약 2 FPS)"이다.
 현재 구현은 person bbox를 crop해서 사람별로 Pose를 돌린다.
@@ -89,8 +52,21 @@
 > 곱해진 결과였다. 전역 예산 적용 후 개발 PC 검증에서 동일 영상 기준
 > **Pose 30회 → 10회, detections는 571로 동일**(탐지력 손실 없음)을 확인했다.
 
-**2026-08-05 팀 승인 완료.** 세 건 모두 현재 구현대로 간다. 이 절은 기록으로 남기며,
+**2026-08-05 팀 승인 완료.** 두 건 모두 현재 구현대로 간다. 이 절은 기록으로 남기며,
 되돌려야 할 상황이 오면 각 항목의 "되돌리는 법"을 쓴다.
+
+**~~이탈 3. ReID 활성화~~ — 2026-08-06 해소.** 명세는 정밀 재식별을 세 곳에서 제외한다
+(`docs/01-프로젝트-개요.md:85`·`:95`, `docs/07-AI-탐지.md` 25.1). 2026-07-29에 실험으로
+켰고 8/5에 젯슨에도 넣었다가, **젯슨 담당자가 채택하지 않아 최종 시연 범위에서 빠졌다.**
+개발 PC 프로파일까지 끄면서 이탈이 사라졌다.
+
+프로파일을 둘 다 끈 이유는 **노트북에서 확인한 동작이 로봇에서 달라지면 확인의 의미가
+없기 때문**이다. 시연 전 점검용 프로파일이 시연 대상과 달라서는 안 된다.
+
+측정값과 다시 켜는 절차는 지우지 않고 `configs/tracker_sentinel.yaml` 주석 4번에 남겼다.
+요약하면 파편화 33→19개(-42%), 임베딩 AUC 0.915, 개발 PC FPS 약 -30%다.
+포기한 것은 시야 이탈 후 trackId 유지인데, **팀 계약은 깨지지 않는다** — 명세의 중복
+판정은 지도 좌표 기반(1m/15초)이고 `trackIds`는 nullable, 중복 제거는 Mission Manager가 한다.
 
 ### ✅ 명세 개정 1건 — 2026-08-05 팀 공지 완료 (개정일 2026-08-03)
 
@@ -604,13 +580,13 @@ conda activate sentinel-yolo && python --version   # 또는 §7의 절대경로 
 | `src/` | 존재, 모듈 12개 구현 완료(§10) |
 | `configs/` | 존재 — `pipeline.yaml`, `pipeline.jetson.yaml`, `tracker_sentinel.yaml`, `tracker_jetson.yaml`(§7.1) |
 | `tests/` | 존재 — `test_posture_persistence.py`(31건), `test_candidates.py`. `__init__.py` 없음 |
-| `models/` | 존재 — `yolo26n.pt`, `yolo26n-pose.pt`, `yolo26n-reid.onnx`. **Git 추적 안 됨**(§7.1) |
+| `models/` | 존재 — `yolo26n.pt`, `yolo26n-pose.pt`. **Git 추적 안 됨**(§7.1). `yolo26n-reid.onnx`는 ReID 미채택으로 불필요 |
 | `runs/` | 로컬 산출물. `.gitignore`에 `ai/detection/runs/` 등록됨 |
-| `scripts/` | **미존재** — 필요 시 새로 생성 |
+| `scripts/` | `bench_jetson.py` 하나. 나머지 10개는 2026-08-06 삭제(아래 §11.2) |
 | `docs/` | 로컬 placeholder만 유지. 탐지 문서의 단일 기준은 `../../docs/07-AI-탐지.md` |
 | `data/` | 존재 (`raw/`, `processed/`, `pose_test/`만 존재, 각 `.gitkeep.txt`). **`raw/`는 여전히 비어 있음** |
 | `notebooks/` | 존재(내용 없음) — 용도 확인 필요 |
-| `README.md`(detection 전용) | **미존재** (상위 `ai/README.md`, `../../docs/ai/README.md`만 존재) |
+| `README.md`(detection 전용) | 존재 (2026-08-05 신규). 외부 개발자 진입점. 상세는 이 문서로 넘긴다 |
 | `requirements.txt` | 존재. `lap`·`onnxruntime-gpu` 반영 완료(2026-08-05, §35 9번) |
 | `requirements-jetson.txt` | **미존재 — 의도적**(JetPack 버전 미확인, §7.1) |
 | `pyproject.toml` / `setup.cfg` | **미존재** |
@@ -652,9 +628,9 @@ ai/detection/
 ├── models/            # 모델 가중치 (Git 추가 금지, .gitignore가 *.pt/*.onnx 차단)
 ├── notebooks/          # 탐색용 노트북(용도 확인 필요)
 ├── runs/               # 추론 산출물 (Git 추가 금지, 실행별 타임스탬프 하위 폴더)
-├── scripts/            # CLI 스크립트 (미존재, 필요 시 생성)
+├── scripts/            # bench_jetson.py 하나 (§11.2)
 ├── configs/            # 실행 프로파일 4종 (§7.1)
-├── src/                # 파이프라인 모듈 10개 (§10)
+├── src/                # 파이프라인 모듈 13개 (§10)
 ├── tests/              # test_posture_persistence.py (31건)
 ├── requirements.txt
 └── AGENTS.md
@@ -824,7 +800,9 @@ Generic Pipeline Framework
 - Pose 테스트 영상은 `data/pose_test`(존재).
 - 원본 데이터와 모델 가중치는 Git에 추가하지 않는다.
 - 라벨 변환은 재현 가능해야 한다. seed를 고정한다(기본 42).
-- 클래스 이름과 class id는 중앙(`configs/dataset.yaml` 및 `CLASS_MAP`)에서 관리한다.
+- 클래스 이름과 class id는 중앙에서 관리한다. **학습을 접으면서 `configs/dataset.yaml`은
+  삭제됐고(§11.2), 현재 단일 출처는 `configs/pipeline*.yaml`의 `detector.target_classes`와
+  `obstacle.classes`다.** 둘 다 id가 아니라 **이름**으로 적는다.
 - 빈 라벨 이미지의 처리 정책을 명확히 문서화한다.
 - bbox를 이미지 범위로 clip한다.
 - 아주 작은 bbox 제외 기준을 문서화한다.
@@ -843,12 +821,12 @@ CLASS_MAP = {
 다음 스프린트에 장애물 등 클래스가 추가되는 것이 **확정**되어 있으므로(§6), 이번 주 구현은
 아래를 반드시 지켜 재작업이 발생하지 않게 한다. 지금 지키면 비용이 0이고, 나중에 고치면 전면 수정이다.
 
-- **class id를 코드에 하드코딩하지 않는다.** `if cls == 0:` 금지. `CLASS_MAP` 또는
-  `configs/dataset.yaml`의 `names`를 단일 출처로 삼아 조회한다.
+- **class id를 코드에 하드코딩하지 않는다.** `if cls == 0:` 금지. 모델이 들고 있는
+  `model.names`를 단일 출처로 삼아 이름으로 조회한다.
 - **person 필터링은 "class id가 0인가"가 아니라 "class name이 person인가"로 판정한다.**
   클래스가 늘면 id는 재배치될 수 있지만 이름은 안정적이다.
-- `configs/dataset.yaml`의 `names`와 `CLASS_MAP`이 **어긋날 수 없는 구조**로 만든다
-  (한쪽에서 읽어 다른 쪽을 생성하거나, 로드 시 일치를 검증).
+- 이 원칙이 실제로 값을 했다. 장애물 29종을 추가할 때 `object_detector.detect_classes()`가
+  이름 → id 조회만 하면 됐고, id 재배치를 걱정할 일이 없었다.
 - 변환/검증 스크립트는 **클래스 개수를 상수로 가정하지 않는다.** `nc`는 설정에서 읽는다.
 - 단, **지금 다중 클래스 처리 로직을 미리 구현하지는 않는다.** 확장 가능한 구조까지만 만들고
   실제 다중 클래스 분기는 데이터가 생겼을 때 추가한다(§10 과도한 추상화 금지).
@@ -905,6 +883,38 @@ download 모드에서 `datasetkey`를 지정하면 명령을 실행한 위치에
 **확인 필요:** `aihubshell`은 Linux 환경 안내가 중심이다. 현재 개발 PC가 Windows이므로
 Windows에서의 동작 여부(WSL 필요 여부 포함)는 실제 시도 전까지 미확인이다. 웹 브라우저 직접 다운로드가
 확실한 대안이다.
+
+---
+
+## 11.2 파인튜닝 경로 종료와 스크립트 삭제 (2026-08-06)
+
+**최종 시연은 사전학습 `yolo26n`으로 간다. 파인튜닝은 채택하지 않았다.**
+3개 데이터셋 × 4가지 방법을 시도했고 전부 사전학습이 이겼다. 근거는
+`../../docs/07-AI-탐지.md` 25.4에 표로 남아 있다.
+
+결정이 확정되면서 그 경로에만 쓰이던 스크립트 10개를 지웠다. **결과가 문서에
+남아 있으므로 스크립트를 보관해도 새로 알 수 있는 것이 없고**, 지우지 않으면
+다음 사람이 "이걸 돌려야 하나"를 매번 판단해야 한다.
+
+| 삭제 | 용도 |
+|---|---|
+| `convert_71550.py` `convert_efpds.py` `augment_labels.py` | 데이터 변환·보강 |
+| `validate_yolo_dataset.py` `visualize_labels.py` | 라벨 검증(형식/육안) |
+| `train_detect.py` `compare_models.py` `check_regression.py` | 학습·비교·회귀 검사 |
+| `calibrate_posture.py` | 임계값 보정. 결과는 25.2에 표로 남음 |
+| `measure_reid.py` | ReID 측정. ReID 미채택으로 불필요 |
+| `configs/dataset*.yaml` 3종 | 학습 데이터셋 정의. 읽는 코드가 함께 삭제됨 |
+
+`CREATE_AGENTS_MD_PROMPT.md`(1,271줄)도 지웠다. 이 문서를 만들 때 쓴 일회성
+프롬프트이며 참조하는 곳이 없었다.
+
+**남긴 것은 `bench_jetson.py` 하나다.** 학습과 무관하고, 시연 직전 FPS가 문제될 때
+"해상도를 낮출까 TensorRT를 구울까"를 정하는 도구다. FPS만 보면 사람을 놓치는 변경을
+통과시키게 되므로 탐지력을 같은 표에 함께 찍는다(§23).
+
+> **아래 §12~§14는 파인튜닝을 전제로 쓴 계획이다.** 실행되지 않았거나 위 표대로
+> 삭제됐으므로 **현재 코드의 설명이 아니라 기록으로 읽는다.** 다시 학습이 필요해지면
+> 이 절들이 출발점이 되고, 삭제된 스크립트는 Git 이력에서 꺼낸다.
 
 ---
 
@@ -1646,8 +1656,11 @@ keypoint confidence threshold, FPS 측정. **person false negative 최소화를 
 
 ### README 필수 내용
 프로젝트 목적, MVP 범위, 설치 환경, 실행 방법, 데이터 준비, Detect 학습, Pose 테스트, 통합 실행,
-출력 예시, JSONL schema, 알려진 한계, 다음 단계. (현재 `ai/detection`에는 전용 README.md가 없으므로
-금요일에 신규 생성한다.)
+출력 예시, JSONL schema, 알려진 한계, 다음 단계.
+
+**2026-08-05 생성 완료** — `README.md`. 다만 위 목록을 전부 담지는 않았다. **진입점은 짧아야
+읽히기 때문**이다. 데이터 준비·Detect 학습·임계값 근거는 `../../docs/07-AI-탐지.md` 25.2~25.5로,
+설계 결정과 미해결 이슈는 이 문서로 링크만 걸었다. README를 늘릴 때 이 분담을 깨지 않는다.
 
 ---
 
@@ -1871,16 +1884,16 @@ AI-Hub 데이터가 끝내 확보되지 않아도 아래는 반드시 충족한�
 | 4 | ~~가중치 미다운로드~~ → **해결: yolo26n.pt / yolo26n-pose.pt / yolo26n-reid.onnx 확보** | 해결됨 | — | §13, §14 |
 | 5 | `aihubshell`의 Windows 동작 여부 미확인 | 경미(대안 있음) | 사용자 | §11.1 |
 | 6 | `notebooks/` 디렉터리 용도 불명 | 경미 | 팀 | §8 |
-| 7 | ~~명세 이탈 미승인~~ → **2026-08-05 팀 승인.** BoT-SORT·Pose crop은 현재 구현대로 간다. **ReID는 같은 날 Jetson에서 되돌렸다**(담당자 미채택) — 로봇 프로파일은 명세 준수, 이탈은 개발 PC에만 남는다. 명세 개정(`pose_status` 2값) 공지도 완료 | 해결됨 | — | §0 |
+| 7 | ~~명세 이탈 미승인~~ → **2026-08-05 팀 승인.** BoT-SORT·Pose crop 2건은 현재 구현대로 간다. **ReID는 2026-08-06 두 프로파일 모두에서 꺼져 이탈이 해소됐다**(젯슨 미채택 → 최종 시연 범위 제외). 명세 개정(`poseStatus` 2값) 공지도 완료 | 해결됨 | — | §0 |
 | 8 | 클래스 4종 중 현재 `person`만 MVP에 포함 | 문서 정합 완료 | ISSUE-01 | §6·`docs/07-AI-탐지.md` 25.3 |
-| 9 | ~~`requirements.txt`에 `lap`·`onnxruntime` 미반영~~ → **2026-08-05 해결.** 단, **Jetson(aarch64)은 마커에서 제외**했다. PyPI `onnxruntime-gpu`가 aarch64를 지원하지 않아 그냥 넣으면 CPU 빌드가 조용히 깔린다. NVIDIA Jetson 인덱스에서 수동 설치해야 한다. **Jetson에서는 ReID가 꺼져 있어 `onnxruntime` 자체가 필요 없다**(§0 이탈 2) — 다시 켤 때만 문제가 된다 | 해결됨 | — | §7 |
+| 9 | ~~`requirements.txt`에 `lap`·`onnxruntime` 미반영~~ → **해결.** `lap`은 추가했다(없으면 추적이 ImportError). **`onnxruntime`은 넣지 않는다** — ReID 전용이었고 2026-08-06 두 프로파일 모두에서 꺼졌다. 다시 켤 때 필요한 마커·aarch64 주의사항은 `requirements.txt` 주석에 남겼다 | 해결됨 | — | §7 |
 | 10 | ~~자세 임계값이 실측 근거 없는 임의값~~ → **2026-08-05 부분 해결.** 자세·형상 임계값 5개 + 가중치 3개는 E-FPDS 정답 2,658건과 대조해 검증했다(쓰러짐 0.919 / 비쓰러짐 0.032로 분리). **변경 불필요** | 해결됨 | — | `docs/07-AI-탐지.md` 25.2 |
-| 10b | **부동(inactivity) 신호 3개는 미검증** — `inactivity_boost`, `motion.still_ratio`, `motion.full_still_seconds`. E-FPDS가 정지 이미지라 측정에서 빠졌다. "가구 위에 누워도 미동 없으면 쓰러짐" 판단을 담당하므로 재난 시나리오에서 중요하다 | 신뢰도 | **영상 데이터 필요** | §15, 위 문서 4절 |
+| 10b | **부동(inactivity) 신호 3개는 미검증** — `inactivity_boost`, `motion.still_ratio`, `motion.full_still_seconds`. E-FPDS가 정지 이미지라 측정에서 빠졌다. **검증하려면 영상 입력 도구를 새로 만들어야 한다**(삭제된 `calibrate_posture.py`는 `*.png`만 읽어 애초에 불가). 2026-08-06 팀 판단으로 **알려진 한계로 수용**했고 명세 25.2에 명시했다. 오탐·미탐이 보고되면 여기부터 본다 | 수용된 한계 | — | §15, `../../docs/07-AI-탐지.md` 25.2 |
 | 11 | **Detect 상시 15FPS 미달** — Jetson 실측 9.45FPS(사람 4명, 스트리밍 동시 구동). 계측·벤치 도구는 준비 완료, **Jetson 실측 대기** | **성능 미달 확정** | ISSUE-06 | §7.2 |
 | 12 | ~~Linux/aarch64 실행 이력 없음~~ → **2026-07-30 해결: Jetson 실기기 검증 완료** | 해결됨 | — | §7.1 |
 | 13 | ~~JetPack 버전 미확인~~ → **해결: JetPack 6.x / L4T R36.4.7, torch 2.8.0 확인** | 해결됨 | — | §7.1 |
 | 14 | ~~ROS2 노드 래핑 미착수~~ → **해결: `src/ros_main.py`(S15P11A301-153)** | 해결됨 | — | §10 |
-| 15 | `ai/detection/README.md` 부재 — 외부 개발자 진입점이 AGENTS.md뿐 | 인수인계 | 에이전트 | §8 |
+| 15 | ~~`ai/detection/README.md` 부재~~ → **2026-08-05 해결.** 진입점 신설. `ai/README.md`의 `detection/` 항목은 287 재편에서 팀이 이미 추가했다 | 해결됨 | — | §8, §29 |
 | 16 | 모델 가중치가 Git에 없어 clone만으로는 실행 불가 | 배포 | Runbook 3장으로 완화됨 | §7.1 |
 | 17 | ~~데이터셋 선정 기록 미작성~~ → **2026-07-31 해결**, 287에서 `../../docs/07-AI-탐지.md`로 통합 | 해결됨 | — | §11.1 |
 | 18 | `schemas.py`의 `build_encounter_data()`가 여전히 encounter를 만든다. **encounter 발급 권한은 Mission Manager 단독**(명세 26.1) | **중복 소지** | 에이전트 + Mission 담당 | §10, §17 |

@@ -22,6 +22,7 @@ EXTRACTION_FIELDS = (
     "reportedResponsiveCount",  # GMS/폴백이 발화에서 추출한 인원 수
     "mobilityStatus",  # GMS/폴백이 발화에서 추출한 이동 가능 여부
     "urgentConditionReported",  # GMS/폴백이 발화에서 추출한 긴급 언급 여부
+    "additionalPersonReports",  # COUNT 답변에 명시된 추가 요구조자 제보
 )
 
 ENUMS = {
@@ -241,10 +242,28 @@ def coerce_report(value: Any) -> dict[str, Any]:
     return report
 
 
-def coerce_extraction(value: Any) -> dict[str, Any]:
-    """GMS·폴백이 책임지는 세 가지 발화 추출 필드만 검증한다."""
+def coerce_extraction(value: Any, source_text: str = "") -> dict[str, Any]:
+    """GMS·폴백 발화 추출값을 허용 필드와 원문 근거로 검증한다."""
+    from .reported_person import coerce_additional_person_reports
+
     report = coerce_report(value)
-    return {key: report[key] for key in EXTRACTION_FIELDS}
+    extraction = {
+        key: report[key]
+        for key in EXTRACTION_FIELDS
+        if key != "additionalPersonReports"
+    }
+    source = value if isinstance(value, dict) else {}
+    extraction["additionalPersonReports"] = coerce_additional_person_reports(
+        source.get("additionalPersonReports"), source_text
+    )
+    if (
+        extraction["additionalPersonReports"]
+        and extraction.get("reportedResponsiveCount") is None
+    ):
+        # 이 제보를 발화한 현재 화자 한 명은 실제 응답자로 확인됐다. 제보된
+        # 추가 사람은 responseStatus가 확인되기 전까지 응답 인원에 합치지 않는다.
+        extraction["reportedResponsiveCount"] = 1
+    return extraction
 
 
 # 이전 호출부가 새 계약으로 점진적으로 이동할 수 있도록 이름만 호환한다.

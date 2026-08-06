@@ -62,6 +62,31 @@ class QuestionContextTest(unittest.TestCase):
         extract_with_status("일로 나려니까 너무 아파요", "움직일 수 있습니까?")
         self.assertEqual(llm.call_args.args[1], "움직일 수 있습니까?")
 
+    @patch("sentinel_voice.llm._gms")
+    def test_count_response_keeps_only_source_backed_location(self, gms):
+        payload = (
+            '{"reportedResponsiveCount":1,'
+            '"mobilityStatus":"UNKNOWN",'
+            '"urgentConditionReported":"UNKNOWN",'
+            '"additionalPersonReports":[{'
+            '"subjectText":"우리 아기","reportedCount":1,'
+            '"locationText":"2층","responseStatus":"UNKNOWN",'
+            '"certaintyStatus":"ASSERTED"}]}'
+        )
+        gms.return_value.chat.completions.create.return_value = _fake_response(payload)
+
+        result = llm_extract(
+            "2층에 우리 아기가 있어요",
+            "주변에 다른 인원이 있습니까?",
+        )
+
+        report = result["additionalPersonReports"][0]
+        self.assertEqual(report["reportedFloor"], 2)
+        self.assertEqual(report["countStatus"], "EXACT")
+        self.assertEqual(report["groundingStatus"], "UNGROUNDED")
+        self.assertEqual(report["rawUtterance"], "2층에 우리 아기가 있어요")
+        self.assertEqual(report["verificationStatus"], "UNVERIFIED")
+
 
 class PromptContractTest(unittest.TestCase):
     """되돌리기를 허용하되 넘지 않는 선이 프롬프트에 남아 있어야 한다."""
@@ -80,6 +105,10 @@ class PromptContractTest(unittest.TestCase):
     def test_whole_different_utterance_must_not_be_recovered(self):
         """한두 음절이 어긋난 경우만 되돌린다. 통째로 다른 말은 손대지 않는다."""
         self.assertIn("통째로 다른 말이면 되돌리지 않는다", self.prompt)
+
+    def test_reported_person_location_must_not_be_invented(self):
+        self.assertIn("지도 좌표, 방 번호, 랜드마크를 만들어내지 않는다", self.prompt)
+        self.assertIn("주행 명령과 다음 목표를 생성하지 않는다", self.prompt)
 
 
 class SttPrimingRemovedTest(unittest.TestCase):

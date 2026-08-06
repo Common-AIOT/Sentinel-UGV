@@ -16,6 +16,9 @@ import com.sentinel.backend.encounter.dto.EncounterDetailResponse;
 import com.sentinel.backend.encounter.dto.EncounterMediaResponse;
 import com.sentinel.backend.encounter.dto.EncounterSummaryResponse;
 
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.ObjectMapper;
+
 /**
  * 발견(encounter) 목록·상세 조회 (명세 27.4·31-7).
  *
@@ -37,7 +40,8 @@ public class EncounterQueryService {
     private static final String SELECT_DETAIL = """
             SELECT id, mission_id, status, map_x, map_y, map_yaw,
                    detected_person_count, responsive_person_count, unresponsive_person_count,
-                   interaction_summary, started_at, interaction_started_at,
+                   interaction_summary, voice_encounter_pose, additional_person_reports,
+                   started_at, interaction_started_at,
                    interaction_ended_at, ended_at, termination_reason
             FROM encounters
             WHERE id = ?
@@ -51,9 +55,11 @@ public class EncounterQueryService {
             """;
 
     private final JdbcTemplate jdbc;
+    private final ObjectMapper objectMapper;
 
-    public EncounterQueryService(JdbcTemplate jdbc) {
+    public EncounterQueryService(JdbcTemplate jdbc, ObjectMapper objectMapper) {
         this.jdbc = jdbc;
+        this.objectMapper = objectMapper;
     }
 
     /** 임무별 발견 목록 (최신순). 임무가 없으면 404, 발견이 없으면 빈 목록이다. */
@@ -104,12 +110,44 @@ public class EncounterQueryService {
                 rs.getObject("responsive_person_count", Integer.class),
                 rs.getObject("unresponsive_person_count", Integer.class),
                 rs.getString("interaction_summary"),
+                readPose(rs.getString("voice_encounter_pose")),
+                readAdditionalPersonReports(
+                        rs.getString("additional_person_reports")),
                 toInstant(rs.getTimestamp("started_at")),
                 toInstant(rs.getTimestamp("interaction_started_at")),
                 toInstant(rs.getTimestamp("interaction_ended_at")),
                 toInstant(rs.getTimestamp("ended_at")),
                 rs.getString("termination_reason"),
                 media);
+    }
+
+    private EncounterDetailResponse.EncounterPose readPose(String json)
+            throws SQLException {
+        if (json == null || json.isBlank()) {
+            return null;
+        }
+        try {
+            return objectMapper.readValue(
+                    json, EncounterDetailResponse.EncounterPose.class);
+        } catch (RuntimeException error) {
+            throw new SQLException("voice_encounter_pose JSON 해석 실패", error);
+        }
+    }
+
+    private List<EncounterDetailResponse.AdditionalPersonReport>
+            readAdditionalPersonReports(String json) throws SQLException {
+        if (json == null || json.isBlank()) {
+            return List.of();
+        }
+        try {
+            return objectMapper.readValue(
+                    json,
+                    new TypeReference<List<
+                            EncounterDetailResponse.AdditionalPersonReport>>() {});
+        } catch (RuntimeException error) {
+            throw new SQLException(
+                    "additional_person_reports JSON 해석 실패", error);
+        }
     }
 
     private Instant toInstant(Timestamp timestamp) {

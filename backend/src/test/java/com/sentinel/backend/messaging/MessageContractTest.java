@@ -176,6 +176,15 @@ class MessageContractTest {
         assertEquals(MessageEnvelope.TYPE_INTERACTION_REPORT, envelope.messageType());
         assertEquals(envelope.missionId(), data.missionId());
         assertEquals(3, data.visionPersonCount());
+        assertEquals("floor-1", data.encounterPose().mapId());
+        assertEquals(1, data.additionalPersonReports().size());
+        assertEquals("우리 아기", data.additionalPersonReports().getFirst().subjectText());
+        assertEquals("EXACT", data.additionalPersonReports().getFirst().countStatus());
+        assertEquals(2, data.additionalPersonReports().getFirst().reportedFloor());
+        assertEquals("UNGROUNDED",
+                data.additionalPersonReports().getFirst().groundingStatus());
+        assertEquals("UNVERIFIED",
+                data.additionalPersonReports().getFirst().verificationStatus());
         assertEquals(2, data.sessionReport().reportedResponsiveCount());
         assertEquals("IMMEDIATE", data.riskAssessment().riskLevel());
         assertTrue(data.sessionReport().operatorReviewRequired());

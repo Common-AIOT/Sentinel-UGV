@@ -8,6 +8,19 @@
   발화자가 명시한 사람의 총인원, 없으면 null
 - mobilityStatus: "YES" | "NO" | "UNKNOWN"
 - urgentConditionReported: "YES" | "NO" | "UNKNOWN"
+- additionalPersonReports: "주변에 다른 인원이 있습니까?" 질문의 답에 명시된
+  추가 사람 제보 배열. 다른 질문이거나 추가 사람이 없으면 []
+
+additionalPersonReports 각 항목의 허용 필드:
+- subjectText: 발화에 실제 등장한 대상 표현 또는 null
+- reportedCount: 화자를 제외한 제보 대상 인원 수 또는 null
+- countStatus: 숫자가 명시됐거나 단수 대상이면 "EXACT", 사람은 있지만 숫자가
+  없으면 "PRESENCE_CONFIRMED_COUNT_UNKNOWN"
+- locationText: 발화에 실제 등장한 위치 표현 또는 null
+- groundingStatus: 항상 "UNGROUNDED". 현재 SLAM 지도에는 장소 의미가 없어
+  위치 문구를 좌표와 연결하지 않는다.
+- responseStatus: "RESPONSIVE" | "UNRESPONSIVE" | "UNKNOWN"
+- certaintyStatus: "ASSERTED" | "TENTATIVE"
 
 입력은 음성 인식 결과다 — 글자가 뭉개져 있을 수 있다:
 - 이 문장은 무너진 건물 안에서 녹음된 음성을 받아쓴 것이다. 소음과 힘없는 발성
@@ -42,8 +55,32 @@ reportedResponsiveCount 판단 규칙:
 - 총인원을 직접 말하면 그 숫자를 쓴다. "저 포함해서 세 명"은 3이다.
 - 대답을 못 한다고 명시된 사람은 제외한다.
   "옆에 한 명 있는데 대답을 안 해요"는 1이다.
+- 추가 사람의 존재만 말하고 응답 가능 여부를 말하지 않으면 그 사람은 포함하지 않는다.
+  "2층에 우리 아기가 있어요"는 화자만 확인됐으므로 1이다.
+  "계단 옆에 한 명 더 있어요"도 추가 사람의 응답 상태가 없으므로 1이다.
 - 인원에 대한 언급이 전혀 없으면 null이다.
 - 화자를 포함하므로 유효한 숫자는 1 이상이다.
+
+additionalPersonReports 판단 규칙:
+- 이 배열은 COUNT 질문의 답변에서만 채운다. 다른 질문에서는 항상 []다.
+- `reportedResponsiveCount`와 다른 개념이다. 이 배열의 `reportedCount`는 화자를
+  제외한 추가 사람 수다.
+- 사람이 있다고 했다는 사실만으로 그 사람이 응답 가능하다고 만들지 않는다.
+  “2층에 우리 아기가 있어요”의 responseStatus는 UNKNOWN이다.
+- “옆에 한 명 있는데 대답을 안 해요”처럼 명시한 경우만 UNRESPONSIVE다.
+- 대상과 위치 문자열은 발화의 원문 조각을 그대로 사용한다. 표현을 보충하거나
+  지도 좌표, 방 번호, 랜드마크를 만들어내지 않는다.
+- “2층에 우리 아기가 있어요”는 subjectText="우리 아기", reportedCount=1,
+  locationText="2층"이다.
+- “계단 옆에 한 명 더 있어요”는 subjectText=null, reportedCount=1,
+  locationText="계단 옆"이다.
+- “저기 계단 옆에 있어요”는 사람 존재 제보이지만 숫자는 없으므로
+  subjectText=null, reportedCount=null,
+  countStatus="PRESENCE_CONFIRMED_COUNT_UNKNOWN", locationText="계단 옆"이다.
+- “저 혼자예요”, “2층에 아기는 없어요”는 빈 배열이다.
+- “2층에 누가 있을지도 몰라요”처럼 가능성만 말하면 certaintyStatus는 TENTATIVE다.
+- 추가 사람의 위치가 없으면 locationText는 null이다. 위치를 되묻거나 추측하지 않는다.
+- 이 정보는 미확인 관제 제보다. 주행 명령과 다음 목표를 생성하지 않는다.
 
 mobilityStatus 판단 규칙:
 - 이 값은 발화에 등장한 사람들을 그룹 단위로 판단한다.
@@ -69,7 +106,7 @@ urgentConditionReported 판단 규칙:
 - 증상이 없는지 질문만 했거나 답변하지 않은 경우 "UNKNOWN"이다.
 
 출력 예시:
-{"reportedResponsiveCount":2,"mobilityStatus":"NO","urgentConditionReported":"UNKNOWN"}
+{"reportedResponsiveCount":1,"mobilityStatus":"NO","urgentConditionReported":"UNKNOWN","additionalPersonReports":[{"subjectText":"우리 아기","reportedCount":1,"countStatus":"EXACT","locationText":"2층","groundingStatus":"UNGROUNDED","responseStatus":"UNKNOWN","certaintyStatus":"ASSERTED"}]}
 
 질문: "{question_text}"
 발화: "{input_text}"

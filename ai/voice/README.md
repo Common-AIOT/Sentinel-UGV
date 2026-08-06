@@ -405,6 +405,26 @@ cd /home/orin/projects/S15P11A301/ai/voice
 설계 근거, 모델 선정, 안전 계약, 정량 측정과 소음 시험 기준은
 [docs/08-AI-음성.md](../../docs/08-AI-음성.md)를 따른다.
 
+## 요구조자 위치와 추가 인원 제보
+
+ROS Encounter의 `pose`는 최종 보고의 `encounterPose`로 전달한다. 이는 요구조자의
+정밀 좌표가 아니라 로봇이 음성 상호작용을 수행한 위치다.
+
+COUNT 답변에 추가 사람과 위치가 이미 포함되어 있으면 `additionalPersonReports`로
+보존한다. 예를 들어 “2층에 우리 아기가 있어요”는 대상, 추가 인원 1명, 원문 위치
+`2층`과 정규화된 `reportedFloor=2`로 전달한다. 존재만 언급된 사람의 응답 상태는
+`UNKNOWN`이고 모든 제보는 `UNVERIFIED` 및 관제 확인 필요 상태다.
+
+“저기 계단 옆에 있어요”처럼 사람의 존재와 위치만 있고 숫자가 없으면 인원 수를
+추정하지 않는다. 이때 `reportedCount=null`,
+`countStatus=PRESENCE_CONFIRMED_COUNT_UNKNOWN`으로 보존한다. 현재 SLAM 지도에는
+“계단” 같은 장소 의미가 없으므로 모든 제보의 `groundingStatus`는 `UNGROUNDED`다.
+
+- 위치를 되묻는 추가 질문과 동적 TTS를 사용하지 않는다.
+- 원문에 없는 장소·좌표를 생성하지 않는다.
+- 추가 인원 수를 `reportedResponsiveCount`에 임의로 합치지 않는다.
+- 음성 제보로 로봇 목표지나 주행 경로를 자동 변경하지 않는다.
+
 ## 현재 제한
 
 - 동적 TTS를 사용하지 않는다.

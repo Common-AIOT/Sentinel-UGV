@@ -511,6 +511,41 @@ export default function MissionHistoryPage() {
                           </span></>
                         : "음성 보고 없음 — 대화 세션이 기록되지 않은 발견입니다"}
                     </p>
+                    {(detail.encounterPose || detail.additionalPersonReports.length > 0) && (
+                      <div className="space-y-1.5 rounded border border-accent/40 bg-accent/5 p-2">
+                        {detail.encounterPose && (
+                          <div className="flex items-start gap-1.5 font-mono text-[10px] text-muted-foreground">
+                            <MapPin size={11} className="mt-0.5 flex-shrink-0 text-accent" />
+                            <span>
+                              음성 상호작용 위치: ({detail.encounterPose.x.toFixed(1)}, {detail.encounterPose.y.toFixed(1)})
+                              {detail.encounterPose.mapId ? ` · ${detail.encounterPose.mapId}` : ""}
+                              <span className="ml-1 text-[9px]">(로봇 Encounter 기준)</span>
+                            </span>
+                          </div>
+                        )}
+                        {detail.additionalPersonReports.map((report, index) => (
+                          <div key={`${report.rawUtterance}-${index}`} className="border-t border-accent/20 pt-1.5 font-mono text-[10px]">
+                            <p className="text-accent">
+                              ⚠ 추가 요구조자 미확인 제보
+                              {report.certaintyStatus === "TENTATIVE" ? " · 불확실 표현" : ""}
+                            </p>
+                            <p className="text-foreground">
+                              대상: {report.subjectText ?? "미상"}
+                              {report.countStatus === "EXACT" && report.reportedCount !== null
+                                ? ` · ${report.reportedCount}명`
+                                : " · 인원 수 미확인"}
+                              {` · 위치: ${report.locationText ?? "미확인"}`}
+                            </p>
+                            <p className="text-muted-foreground break-words">
+                              원문: “{report.rawUtterance}”
+                            </p>
+                            <p className="text-[9px] text-muted-foreground">
+                              지도 연결 불가 · 음성 제보이며 좌표·자동 주행 목표로 사용하지 않습니다.
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

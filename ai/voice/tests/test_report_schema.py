@@ -123,13 +123,13 @@ class ReportSchemaTest(unittest.TestCase):
         ):
             self.assertEqual(keyword_extract(text)["mobilityStatus"], "NO")
 
-    def test_nearby_people_add_to_speaker(self):
-        """주변 인원을 덧붙여 말하면 화자를 더한다 (2026-08-04 팀 결정)."""
+    def test_unverified_nearby_people_do_not_inflate_responsive_count(self):
+        """추가 제보 인원은 응답 여부 확인 전까지 응답 인원에 더하지 않는다."""
         self.assertEqual(
-            keyword_extract("두 명 더 있어요")["reportedResponsiveCount"], 3
+            keyword_extract("두 명 더 있어요")["reportedResponsiveCount"], 1
         )
         self.assertEqual(
-            keyword_extract("옆에 한 명 있어요")["reportedResponsiveCount"], 2
+            keyword_extract("옆에 한 명 있어요")["reportedResponsiveCount"], 1
         )
         # 총인원을 말한 경우는 더하지 않는다.
         self.assertEqual(

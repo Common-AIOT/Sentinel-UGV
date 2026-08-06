@@ -116,6 +116,7 @@ class SessionResult:
     )
     operator_review_required: bool = False
     termination_reason: str | None = None
+    additional_person_reports: list[dict[str, Any]] = field(default_factory=list)
 
 
 def classify_response(

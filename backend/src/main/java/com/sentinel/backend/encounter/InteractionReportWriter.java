@@ -13,6 +13,8 @@ import com.sentinel.backend.messaging.dto.InteractionReportData;
 import com.sentinel.backend.messaging.dto.MessageEnvelope;
 import com.sentinel.backend.realtime.RealtimeBroadcaster;
 
+import tools.jackson.databind.ObjectMapper;
+
 /**
  * 음성 상호작용 보고를 이벤트 원문과 encounter 요약에 저장한다 (S15P11A301-159).
  *
@@ -35,19 +37,34 @@ public class InteractionReportWriter {
             UPDATE encounters
                SET responsive_person_count = ?,
                    interaction_summary = ?,
-                   termination_reason = ?
+                   termination_reason = ?,
+                   voice_encounter_pose = CAST(? AS jsonb),
+                   additional_person_reports = CAST(? AS jsonb)
              WHERE id = ?
             """;
 
     private final JdbcTemplate jdbc;
     private final RealtimeBroadcaster broadcaster;
+    private final ObjectMapper objectMapper;
 
-    public InteractionReportWriter(JdbcTemplate jdbc, RealtimeBroadcaster broadcaster) {
+    public InteractionReportWriter(
+            JdbcTemplate jdbc,
+            RealtimeBroadcaster broadcaster,
+            ObjectMapper objectMapper) {
         this.jdbc = jdbc;
         this.broadcaster = broadcaster;
+        this.objectMapper = objectMapper;
     }
 
     public void write(MessageEnvelope envelope, InteractionReportData data) {
+        // 직렬화 실패 뒤 event만 남는 부분 적재를 피하려고 DB 변경 전에 만든다.
+        String encounterPoseJson = data.encounterPose() == null
+                ? null : objectMapper.valueToTree(data.encounterPose()).toString();
+        String additionalPersonReportsJson = objectMapper.valueToTree(
+                data.additionalPersonReports() == null
+                        ? java.util.List.of()
+                        : data.additionalPersonReports()).toString();
+
         UUID missionId = envelope.missionId() != null
                 ? envelope.missionId() : data.missionId();
         if (missionId == null) {
@@ -83,6 +100,8 @@ public class InteractionReportWriter {
                 report.reportedResponsiveCount(),
                 summary(data),
                 report.terminationReason(),
+                encounterPoseJson,
+                additionalPersonReportsJson,
                 data.encounterId());
         if (updated == 0) {
             log.warn("encounter 없이 온 음성 보고 (encounterId={}, interactionId={})",

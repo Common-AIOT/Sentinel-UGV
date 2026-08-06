@@ -9,6 +9,8 @@
     "encounterId",
     "missionId",
     "visionPersonCount",
+    "encounterPose",
+    "additionalPersonReports",
     "startedAt",
     "endedAt",
     "sessionReport",
@@ -35,6 +37,67 @@
     "visionPersonCount": {
       "type": "integer",
       "minimum": 0
+    },
+    "encounterPose": {
+      "description": "음성 상호작용 당시 로봇 Encounter 위치. 요구조자의 정밀 좌표가 아니다.",
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["x", "y", "yaw", "mapId"],
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "yaw": { "type": "number" },
+        "mapId": { "type": ["string", "null"] }
+      }
+    },
+    "additionalPersonReports": {
+      "description": "COUNT 답변에 포함된 추가 요구조자 미확인 제보. 좌표나 주행 목표가 아니다.",
+      "type": "array",
+      "maxItems": 5,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "subjectText",
+          "reportedCount",
+          "countStatus",
+          "locationText",
+          "reportedFloor",
+          "groundingStatus",
+          "responseStatus",
+          "certaintyStatus",
+          "rawUtterance",
+          "verificationStatus",
+          "operatorReviewRequired"
+        ],
+        "properties": {
+          "subjectText": { "type": ["string", "null"], "minLength": 1 },
+          "reportedCount": { "type": ["integer", "null"], "minimum": 1 },
+          "countStatus": {
+            "enum": ["EXACT", "PRESENCE_CONFIRMED_COUNT_UNKNOWN"]
+          },
+          "locationText": { "type": ["string", "null"], "minLength": 1 },
+          "reportedFloor": { "type": ["integer", "null"] },
+          "groundingStatus": { "const": "UNGROUNDED" },
+          "responseStatus": {
+            "enum": ["RESPONSIVE", "UNRESPONSIVE", "UNKNOWN"]
+          },
+          "certaintyStatus": { "enum": ["ASSERTED", "TENTATIVE"] },
+          "rawUtterance": { "type": "string", "minLength": 1 },
+          "verificationStatus": { "const": "UNVERIFIED" },
+          "operatorReviewRequired": { "const": true }
+        },
+        "allOf": [
+          {
+            "if": { "properties": { "countStatus": { "const": "EXACT" } } },
+            "then": { "properties": { "reportedCount": { "type": "integer", "minimum": 1 } } }
+          },
+          {
+            "if": { "properties": { "countStatus": { "const": "PRESENCE_CONFIRMED_COUNT_UNKNOWN" } } },
+            "then": { "properties": { "reportedCount": { "type": "null" } } }
+          }
+        ]
+      }
     },
     "startedAt": {
       "type": "string",

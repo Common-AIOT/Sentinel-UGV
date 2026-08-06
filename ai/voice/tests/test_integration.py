@@ -23,6 +23,7 @@ def _context(mission_id=MISSION_ID):
         detected_at="2026-07-30T09:16:00.000Z",
         person_count=3,
         mission_id=mission_id,
+        pose={"x": 12.4, "y": 7.8, "yaw": 1.57, "mapId": "floor-1"},
     )
 
 
@@ -42,6 +43,21 @@ def test_interaction_report_passes_common_schema():
             "terminationReason": "NORMAL",
         },
         termination_reason="NORMAL",
+        additional_person_reports=[
+            {
+                "subjectText": "우리 아기",
+                "reportedCount": 1,
+                "countStatus": "EXACT",
+                "locationText": "2층",
+                "reportedFloor": 2,
+                "groundingStatus": "UNGROUNDED",
+                "responseStatus": "UNKNOWN",
+                "certaintyStatus": "ASSERTED",
+                "rawUtterance": "2층에 우리 아기가 있어요",
+                "verificationStatus": "UNVERIFIED",
+                "operatorReviewRequired": True,
+            }
+        ],
     )
     report = build_interaction_report(
         _context(),
@@ -62,6 +78,9 @@ def test_interaction_report_passes_common_schema():
     assert errors == []
     assert report["riskAssessment"]["riskLevel"] == "IMMEDIATE"
     assert report["visionPersonCount"] == 3
+    assert report["encounterPose"]["mapId"] == "floor-1"
+    assert report["additionalPersonReports"][0]["reportedFloor"] == 2
+    assert report["additionalPersonReports"][0]["responseStatus"] == "UNKNOWN"
 
 
 def test_report_requires_mission_id():

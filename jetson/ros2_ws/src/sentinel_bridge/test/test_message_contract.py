@@ -335,6 +335,27 @@ def test_interaction_report_passes_schema_and_keeps_mission_id():
         "encounterId": "32f6f147-dacc-4979-a9a2-7aab8fed689c",
         "missionId": "1cb5350f-187f-4478-b95e-bb513c47e706",
         "visionPersonCount": 3,
+        "encounterPose": {
+            "x": 12.4,
+            "y": 7.8,
+            "yaw": 1.57,
+            "mapId": "floor-1",
+        },
+        "additionalPersonReports": [
+            {
+                "subjectText": "우리 아기",
+                "reportedCount": 1,
+                "countStatus": "EXACT",
+                "locationText": "2층",
+                "reportedFloor": 2,
+                "groundingStatus": "UNGROUNDED",
+                "responseStatus": "UNKNOWN",
+                "certaintyStatus": "ASSERTED",
+                "rawUtterance": "2층에 우리 아기가 있어요",
+                "verificationStatus": "UNVERIFIED",
+                "operatorReviewRequired": True,
+            }
+        ],
         "startedAt": "2026-07-30T09:16:12.003Z",
         "endedAt": "2026-07-30T09:17:30.994Z",
         "sessionReport": {

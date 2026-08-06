@@ -11,11 +11,18 @@ import java.time.Instant;
  *
  * <p>데이터가 아예 없으면 필드가 null 이다 — 404 가 아니라 200 이다. 없음은 오류가
  * 아니라 정상 상태고, 신선도 판정은 프런트가 한다(정책 이원화 방지).
+ *
+ * <p>주행 지표(linearVelocity·angularVelocity)는 S15P11A301-300 에서 더했다. 다른
+ * 하이퍼테이블({@code robot_pose})에서 오므로 시각이 또 따로 간다. 원천은 후륜 엔코더를
+ * ESP32 가 계수하고 젯슨이 역산한 오도메트리라, 센서 보드가 빠지면 온습도와 함께 빈다.
  */
 public record TelemetryLatestResponse(
         Instant environmentTime,
         Double temperature,
         Double humidity,
         Instant mcuTime,
-        Boolean mcuConnected) {
+        Boolean mcuConnected,
+        Instant poseTime,
+        Double linearVelocity,
+        Double angularVelocity) {
 }

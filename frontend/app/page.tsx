@@ -8,6 +8,7 @@ import LiveMap from "@/features/mapping/LiveMap";
 import VideoPanel from "@/features/streaming/VideoPanel";
 import StatusPanel from "@/features/telemetry/StatusPanel";
 import SensorDashboard from "@/features/telemetry/SensorDashboard";
+import MotionPanel from "@/features/telemetry/MotionPanel";
 import ModeRow from "@/features/telemetry/ModeRow";
 import { useRobot } from "@/features/robot/RobotContext";
 
@@ -174,6 +175,9 @@ export default function GCSPage() {
             <ModeRow />
             <StatusPanel />
             <SensorDashboard />
+            {/* 센서(ESP32) 아래 — 엔코더도 같은 보드에서 오므로 결측 원인이 같다
+                (S15P11A301-300). */}
+            <MotionPanel />
           </div>
         </div>
 

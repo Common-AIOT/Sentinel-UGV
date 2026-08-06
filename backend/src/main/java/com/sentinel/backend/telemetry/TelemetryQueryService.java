@@ -45,13 +45,29 @@ public class TelemetryQueryService {
                 (rs, i) -> new Mcu(rs.getTimestamp("time").toInstant(),
                         rs.getObject("mcu_connected", Boolean.class)));
 
+        // 주행 지표 (S15P11A301-300). robot_pose 는 다른 하이퍼테이블이라 조회가 하나 는다.
+        // time 인덱스가 자동 생성되므로 LIMIT 1 은 싸다.
+        record Motion(Instant time, Double linear, Double angular) {
+        }
+        List<Motion> motion = jdbc.query("""
+                        SELECT time, linear_velocity, angular_velocity
+                        FROM robot_pose ORDER BY time DESC LIMIT 1
+                        """,
+                (rs, i) -> new Motion(rs.getTimestamp("time").toInstant(),
+                        rs.getObject("linear_velocity", Double.class),
+                        rs.getObject("angular_velocity", Double.class)));
+
         Env e = env.isEmpty() ? null : env.getFirst();
         Mcu m = mcu.isEmpty() ? null : mcu.getFirst();
+        Motion p = motion.isEmpty() ? null : motion.getFirst();
         return new TelemetryLatestResponse(
                 e == null ? null : e.time(),
                 e == null ? null : e.temperature(),
                 e == null ? null : e.humidity(),
                 m == null ? null : m.time(),
-                m == null ? null : m.connected());
+                m == null ? null : m.connected(),
+                p == null ? null : p.time(),
+                p == null ? null : p.linear(),
+                p == null ? null : p.angular());
     }
 }

@@ -3,13 +3,16 @@
 import React, { createContext, useContext, useEffect, useRef, useState, useCallback } from "react";
 import {
   INITIAL_SENSORS,
+  INITIAL_MOTION,
   type SensorReading,
+  type MotionReading,
   type DetectionEvent,
   type RobotStatus,
   type MissionState,
 } from "./mockData";
 
 import { api, ApiError, type CommandType } from "@/lib/api";
+import { motionFromLatest } from "@/features/telemetry/motionReading";
 import {
   createStompClient,
   missionEventsTopic,
@@ -54,6 +57,8 @@ interface RobotContextValue {
   status: RobotStatus;
   // Sensors
   sensors: SensorReading;
+  // 주행 지표 (#300). 엔코더(ESP32) 기반이라 보드가 빠지면 비는 것이 정상이다.
+  motion: MotionReading;
   // Detections — 실 encounter 폴링이 채운다. 상단 배지의 출처다.
   detections: DetectionEvent[];
   // Control
@@ -76,6 +81,7 @@ const RobotCtx = createContext<RobotContextValue | null>(null);
 
 export function RobotProvider({ children }: { children: React.ReactNode }) {
   const [sensors, setSensors] = useState<SensorReading>(INITIAL_SENSORS);
+  const [motion, setMotion] = useState<MotionReading>(INITIAL_MOTION);
   const [detections, setDetections] = useState<DetectionEvent[]>([]);
   const [videoConnected, setVideoConnected] = useState(false);
   const [videoQuality, setVideoQuality] = useState<"1080p" | "720p">("1080p");
@@ -218,6 +224,7 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
           if (cancelled) return;
           if (points.length === 0) {
             setSensors(INITIAL_SENSORS);
+            setMotion(INITIAL_MOTION);
             setStatus(s => ({ ...s, health: { ...s.health, mcuConnected: null } }));
             return;
           }
@@ -228,6 +235,12 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
             mcuConnected: last.mcuConnected,
             updatedAt: Date.parse(last.time),
           });
+          // 주행 지표는 임무 중에도 같은 응답에 이미 들어 있다(#205).
+          setMotion({
+            linearVelocity: last.linearVelocity,
+            angularVelocity: last.angularVelocity,
+            updatedAt: Date.parse(last.time),
+          });
           // MCU 연결은 상태판 건강 표시와도 같은 사실이어야 한다.
           setStatus(s => ({ ...s, health: { ...s.health, mcuConnected: last.mcuConnected } }));
           return;
@@ -236,20 +249,26 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
         const d = await api.telemetryLatest();
         if (cancelled) return;
         const envFresh = fresh(d.environmentTime);
-        const mcu = fresh(d.mcuTime) ? d.mcuConnected : null;
+        const mcuFresh = fresh(d.mcuTime);
+        const mcu = mcuFresh ? d.mcuConnected : null;
         setSensors({
           temperature: envFresh ? d.temperature : null,
           humidity: envFresh ? d.humidity : null,
           mcuConnected: mcu,
           updatedAt: envFresh && d.environmentTime !== null ? Date.parse(d.environmentTime) : null,
         });
+        // 신선도 판정과 결측 처리는 motionFromLatest 가 갖는다 — 시험이 지킨다(#300).
+        setMotion(motionFromLatest(d, Date.now()));
         setStatus(s => ({ ...s, health: { ...s.health, mcuConnected: mcu } }));
       } catch {
         // 일시적 오류는 다음 폴링에 맡긴다. 마지막 표시값은 유지된다.
       }
     };
-    void poll(); // 진입 즉시 한 번 — 첫 5초를 결측으로 비워두지 않는다.
-    const timer = setInterval(poll, 5000);
+    void poll(); // 진입 즉시 한 번 — 첫 주기를 결측으로 비워두지 않는다.
+    // 2초 (S15P11A301-300). 젯슨은 2Hz 로 보내므로 서버에는 0.5초마다 쌓인다 —
+    // 5초는 값이 멈춰 보였다. 1초로 더 줄이면 CPU 숫자가 튀어 읽기 어렵고,
+    // 0.5초 밑으로는 같은 값만 다시 받는다. 요청은 브라우저당 초당 0.5건이다.
+    const timer = setInterval(poll, 2000);
     return () => { cancelled = true; clearInterval(timer); };
   }, [missionId]);
 
@@ -522,7 +541,7 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <RobotCtx.Provider value={{
-      status, sensors,
+      status, sensors, motion,
       detections,
       sendControl, sendCommand,
       missionId,

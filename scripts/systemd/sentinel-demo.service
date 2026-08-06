@@ -5,6 +5,14 @@
 #   sudo systemctl daemon-reload
 #   sudo loginctl enable-linger orin     # 부팅 시 PulseAudio(오디오 브랜치)용
 #
+#   # 시각 동기 대기 (S15P11A301-306). 아래 [Unit] 의 time-sync.target 은 이것
+#   # 없이는 아무 보장을 하지 않는다 - 이유는 그 줄의 주석에 있다.
+#   sudo systemctl enable systemd-time-wait-sync.service
+#   sudo mkdir -p /etc/systemd/system/systemd-time-wait-sync.service.d
+#   sudo cp scripts/systemd/systemd-time-wait-sync-timeout.conf \
+#        /etc/systemd/system/systemd-time-wait-sync.service.d/timeout.conf
+#   sudo systemctl daemon-reload
+#
 # 기본은 비활성이다. 개발 중에 켜 두면 개발자가 올리는 launch 와 이중
 # 인스턴스가 되어 카메라 단일 오픈(32-3)이 깨진다. 데모 전에만 켠다:
 #   sudo systemctl enable --now sentinel-demo
@@ -14,8 +22,35 @@
 #   journalctl -u sentinel-demo -f
 [Unit]
 Description=Sentinel UGV demo stack (S15P11A301-156)
-After=network-online.target
-Wants=network-online.target
+# 시각 동기가 끝난 뒤에 뜬다 (S15P11A301-306).
+#
+# 이 기기는 RTC 백업 배터리가 없어 부팅할 때마다 시계가 **두 번** 점프한다.
+# 2026-08-06 실측:
+#
+#   1970-01-01 09:00:41  커널 부팅, 시계 = epoch
+#   1970-01-01 09:00:41  timesyncd: "System clock time unset or jumped backwards,
+#                        restoring from recorded timestamp: 2026-08-06 13:57:18"
+#   ── 1차 점프(56년). NTP 가 아니라 마지막 기록 시각 복원일 뿐이다 ──
+#   2026-08-06 13:57:24  이 유닛 기동
+#   2026-08-06 14:01:12  timesyncd: Initial synchronization to 192.168.0.1
+#   ── 2차 점프(+3분 22초). 스택이 이미 4분째 돌던 중이다 ──
+#
+# ROS 2 는 시스템 시계로 스탬프를 찍으므로 2차 점프가 그대로 파손이 된다.
+# slam_toolbox 의 TF 캐시가 미래 시각으로 채워져 라이다 스캔을 전량 버리고
+# (지도가 안 나온다), stream_pipeline 은 `now - 마지막프레임시각` 이 점프량만큼
+# 커져 입력 타임아웃으로 오판해 파이프라인을 재시작하며, esp32_sensor_bridge 는
+# 워치독이 즉시 만료 판정되어 핸드셰이크를 초당 6~7회 반복한다.
+#
+# **증상이 전부 다른 곳에서 나타나므로 시계를 의심하지 못한다.** 손으로
+# demo_down 뒤 demo_up 하면 멀쩡한 이유가 이것이다 - 그때는 NTP 가 이미 맞아
+# 있어 남은 점프가 없다. 스크립트 차이가 아니라 기동 시점 차이다.
+#
+# time-sync.target 만으로는 부족하다. systemd-time-wait-sync.service 가
+# disabled 면(Ubuntu 기본값) 이 target 은 즉시 도달하고, 저널의
+# "Reached target System Time Set" 은 "NTP 동기 완료"가 아니라 "시계에 값이
+# 들어갔다"는 뜻일 뿐이다. 위 설치 절차의 enable 이 반드시 함께 가야 한다.
+After=network-online.target time-sync.target
+Wants=network-online.target time-sync.target
 
 [Service]
 Type=simple

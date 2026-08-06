@@ -60,6 +60,7 @@ from .message_mapper import (
     environment_payload,
     MessageMapper,
     motion_payload,
+    recorder_health,
     utc_now_iso,
     yaw_from_quaternion,
 )
@@ -149,6 +150,11 @@ class CloudBridgeNode(Node):
         # 음성 세션이 구조화한 보고. encounter와 마찬가지로 중요한 이벤트라
         # MQTT가 끊기면 Outbox에 보관한다(S15P11A301-159).
         self.declare_parameter('interaction_report_topic', '/interaction/report')
+        # 녹화 마감 결과 (S15P11A301-309). 마감이 실패한 이벤트는 event.mp4가 없어
+        # 업로드 경로를 아예 타지 않으므로, 그 사유가 서버에 닿는 길이 여기뿐이다.
+        self.declare_parameter(
+            'recorder_status_topic', '/recording_manager/status'
+        )
         # 한 번에 재전송할 Outbox 항목 수. 재연결 직후 수백 건을 몰아 보내면
         # Wi-Fi를 점유해 관제 영상이 밀린다(32장 우선순위).
         self.declare_parameter('outbox_batch_size', 20)
@@ -293,6 +299,17 @@ class CloudBridgeNode(Node):
                 history=QoSHistoryPolicy.KEEP_LAST,
                 depth=1,
             ),
+        )
+
+        # 녹화 마감 결과 (S15P11A301-309). recorder가 없는 구성에서는 한 번도 오지
+        # 않고, 그때 두 값은 None으로 남는다 — 「실패한 적 없음」이 아니라
+        # 「판정할 근거가 없음」이며 관제가 그 둘을 구별해야 한다.
+        self._recorder_health = recorder_health(None)
+        self.create_subscription(
+            String,
+            self._param('recorder_status_topic'),
+            self._on_recorder_status,
+            10,
         )
 
         # TF는 map → base_footprint 조회에만 쓴다. SLAM(S15P11A301-137)이 없으면
@@ -653,7 +670,19 @@ class CloudBridgeNode(Node):
             return None
         return (self._now() - last_seen) <= stale_after
 
-    def _health(self) -> dict[str, bool | None]:
+    def _on_recorder_status(self, message: String) -> None:
+        """recording_manager의 마감 결과를 받아 둔다 (S15P11A301-309).
+
+        형식이 깨진 메시지는 버린다. 텔레메트리는 2Hz로 계속 나가야 하므로 여기서
+        예외가 나면 안 된다. 판정은 `recorder_health`가 하고 여기는 보관만 한다.
+        """
+        try:
+            body = json.loads(message.data)
+        except (ValueError, TypeError):
+            return
+        self._recorder_health = recorder_health(body)
+
+    def _health(self) -> dict[str, bool | str | None]:
         return {
             # 엔코더 토픽 신선도로 판단한다 (S15P11A301-213). 시리얼이 끊기면
             # esp32_sensor_bridge가 발행을 멈추므로 이것이 USB 연결 상태다.
@@ -662,6 +691,10 @@ class CloudBridgeNode(Node):
             'mcuConnected': self._fresh(self._odometry_last_seen),
             'lidarOk': self._fresh(self._scan_last_seen),
             'cameraOk': self._fresh(self._camera_last_seen),
+            # 위 셋과 달리 토픽 신선도가 아니라 마감 결과다 (S15P11A301-309).
+            # recorder는 이벤트가 끝날 때만 발행하므로 신선도로 판단하면 조용한
+            # 정상 상태가 장애로 보인다.
+            **self._recorder_health,
         }
 
     def _environment(self) -> dict[str, float] | None:

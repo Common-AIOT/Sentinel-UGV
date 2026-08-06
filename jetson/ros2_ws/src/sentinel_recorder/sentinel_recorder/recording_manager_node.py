@@ -47,7 +47,12 @@ from .event_finalizer import (
     read_report,
     write_report,
 )
-from .pending_store import PendingStore, UPLOAD_STATE_PENDING
+from .pending_store import (
+    MEDIA_STATE_DISK_FULL,
+    PendingStore,
+    UPLOAD_STATE_PENDING,
+)
+from .recording_health import FinalizeHealth
 from .segment_store import Segment, SegmentStore, format_utc, parse_utc
 from .state_machine import Phase, RecordingStateMachine
 
@@ -123,6 +128,16 @@ class RecordingManagerNode(Node):
         self.work_directory: Path | None = None
         self.collected: dict[int, Segment] = {}
         self.media_id: str | None = None
+
+        # 마감 결과를 `~/status`로 내보내기 위한 상태 (S15P11A301-309).
+        #
+        # 지금까지 마감 실패는 `report.json`의 mediaState에만 남았고 그 문자열은
+        # 백엔드·프런트 어디에도 없었다. 즉 사유가 젯슨 디스크 밖으로 나간 적이
+        # 없어서, 관제 화면에는 「영상 없는 발견」으로만 보였다. S15P11A301-304의
+        # PTS 동률 결함이 19건 쌓이는 동안 아무도 알아채지 못한 이유다.
+        #
+        # 판정 규칙과 그 근거는 `recording_health` 모듈 주석에 있다.
+        self.health = FinalizeHealth()
 
         self.status_pub = self.create_publisher(String, '~/status', 10)
         # mission_manager가 RELIABLE로 구독한다. 잃으면 REPORTING에서 못 나오고
@@ -347,6 +362,7 @@ class RecordingManagerNode(Node):
         )
         report['recoveredAt'] = format_utc(self._now())
         write_report(report_path, report)
+        self.health.note_failure('CORRUPT', finalized_now=False)
 
     # ------------------------------------------------------------------
     # 트리거
@@ -639,6 +655,9 @@ class RecordingManagerNode(Node):
             self.pending.mark_disk_full(
                 self.work_directory, '미업로드분만으로 상한을 넘었다'
             )
+            # `_write_minimal_report`는 failure 없이 불렀다. mediaState를 붙이는
+            # 쪽이 pending_store라 그쪽 값을 그대로 쓴다.
+            self.health.note_failure(MEDIA_STATE_DISK_FULL)
             self.pending.cleanup_segments(self.work_directory)
             self._publish_status(self.machine.finish(False))
             self._reset_event(event.encounter_id)
@@ -706,6 +725,7 @@ class RecordingManagerNode(Node):
         report['mediaState'] = 'LOCAL'
         report['finalizedAt'] = format_utc(self._now())
         write_report(report_path, report)
+        self.health.note_success()
 
     def _thumbnail_from_segments(self, segments: list[Segment]) -> Path | None:
         """MP4 없이 조각에서 썸네일을 뽑는다 (32-5).
@@ -769,6 +789,7 @@ class RecordingManagerNode(Node):
         }
         if failure:
             report['mediaState'] = f'RECORDING_FAILED_{failure}'
+            self.health.note_failure(report['mediaState'])
         write_report(report_path, report)
 
     def _reset_event(self, encounter_id: str | None = None) -> None:
@@ -826,6 +847,9 @@ class RecordingManagerNode(Node):
                     self.machine.event.encounter_id if self.machine.event else None
                 ),
                 'collectedSegments': len(self.collected),
+                # 관제까지 나가는 값이다 (S15P11A301-309). cloud_bridge가 이 둘을
+                # 텔레메트리 health.recorderOk·recorderLastFailure로 옮긴다.
+                **self.health.as_status(),
                 'at': format_utc(self._now()),
             },
             ensure_ascii=False,

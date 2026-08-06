@@ -144,6 +144,29 @@ def active_mission_id(status: dict | None) -> str | None:
     return str(mission_id) if mission_id else None
 
 
+def recorder_health(status: dict | None) -> dict[str, Any]:
+    """`recording_manager`의 `~/status`를 telemetry `health` 조각으로 옮긴다.
+
+    S15P11A301-309. 마감이 실패한 이벤트는 `event.mp4`가 없어 업로드 경로를 아예
+    타지 않으므로(`pending_store.ready_for_upload`), 사유가 서버에 닿는 길이 이
+    경로뿐이다.
+
+    타입이 어긋난 값은 버리고 None으로 둔다. 텔레메트리는 2Hz로 계속 나가야
+    하므로, 상태 하나가 이상하다고 봉투 전체를 깨뜨리면 임무 궤적에 구멍이 생긴다
+    (S15P11A301-213의 NaN 처리와 같은 이유다).
+    """
+    ok: Any = None
+    failure: Any = None
+    if isinstance(status, dict):
+        candidate_ok = status.get("lastFinalizeOk")
+        if isinstance(candidate_ok, bool):
+            ok = candidate_ok
+        candidate_failure = status.get("lastFailure")
+        if isinstance(candidate_failure, str) and candidate_failure:
+            failure = candidate_failure
+    return {"recorderOk": ok, "recorderLastFailure": failure}
+
+
 def finite_or_none(value: Any) -> float | None:
     """NaN·무한대·비수치를 None으로 바꾼다 (S15P11A301-213).
 

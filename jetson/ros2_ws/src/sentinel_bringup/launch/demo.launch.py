@@ -216,6 +216,16 @@ def generate_launch_description():
                 LaunchConfiguration('enable_esp32'),
             ),
         ),
+        # 관제용 /pose/fused 는 map→odom(SLAM)과 odom→base_footprint(EKF)가 모두
+        # 있을 때만 의미가 있다. 보드/EKF 없이 띄우면 이름은 fused인데 실제로는
+        # static 또는 휠 odom을 보여 주므로 조건을 구조로 고정한다.
+        SetLaunchConfiguration(
+            '_effective_fused_pose',
+            AndSubstitution(
+                LaunchConfiguration('_effective_ekf'),
+                LaunchConfiguration('enable_slam'),
+            ),
+        ),
         # 데모 기본은 TLS다. 관제 웹(HTTPS)이 평문 WHEP를 혼합 콘텐츠로
         # 차단한다(32-4, S15P11A301-145). 인증서가 없는 개발 기기에서만 끈다.
         DeclareLaunchArgument('webrtc_encryption', default_value='true'),
@@ -268,6 +278,12 @@ def generate_launch_description():
                          LaunchConfiguration('enable_esp32')
                      ),
                  }),
+        # /pose는 scan 처리 주기(약 4~5Hz)에 묶인다. 이 노드는 같은
+        # map→base_footprint를 20Hz로 다시 내서 그 사이 EKF(IMU) yaw 변화도 관제
+        # 화살표에 보이게 한다. TF가 아니라 pose 토픽만 추가하므로 발행자 배타에는
+        # 영향을 주지 않는다.
+        _include('sentinel_bridge', 'fused_pose.launch.py',
+                 '_effective_fused_pose', 4.0),
         # SLAM(4초) 뒤에 띄운다. global costmap 의 static layer 가 /map 을
         # 기다리는데, 먼저 뜨면 lifecycle activate 가 지도 없이 완료돼 빈
         # costmap 으로 시작한다 — latched 구독이라 회복은 되지만 로그가 어지럽다.

@@ -40,7 +40,11 @@ const MESSAGE_HEADER_BYTES = 13;
 const SUBSCRIPTIONS = [
   { id: 1, topic: "/map" },
   { id: 2, topic: "/pose" },
+  { id: 3, topic: "/pose/fused" },
 ] as const;
+
+/** fused pose가 끊긴 뒤 기존 SLAM /pose로 돌아가기까지 기다리는 시간. */
+const FUSED_POSE_STALE_MS = 1_000;
 
 export type MapClientState =
   | "connecting"
@@ -72,6 +76,7 @@ export function startMapClient(
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
   let attempt = 0;
   let stopped = false;
+  let lastFusedPoseAt = Number.NEGATIVE_INFINITY;
 
   const connect = () => {
     if (stopped) return;
@@ -90,6 +95,9 @@ export function startMapClient(
 
     ws.onopen = () => {
       attempt = 0;
+      // 재연결한 서버에는 /pose/fused가 없을 수 있다. 이전 연결에서 받은 시각으로
+      // 새 서버의 /pose를 막지 않는다.
+      lastFusedPoseAt = Number.NEGATIVE_INFINITY;
       handlers.onState("waiting");
     };
 
@@ -160,7 +168,16 @@ export function startMapClient(
         // 지도가 왔을 때만 streaming 이다. /pose 만 오는 상태는 지도가 없는
         // 것이므로 화면에 그렇게 보여야 한다.
         handlers.onState("streaming");
-      } else if (subscriptionId === 2) {
+      } else if (subscriptionId === 3) {
+        // map→odom(SLAM)과 odom→base(EKF/IMU)를 합친 고주기 pose가 우선이다.
+        const pose = decodeRobotPose(payload);
+        handlers.onPose(pose);
+        lastFusedPoseAt = Date.now();
+      } else if (
+        subscriptionId === 2 &&
+        Date.now() - lastFusedPoseAt >= FUSED_POSE_STALE_MS
+      ) {
+        // EKF가 꺼졌거나 fused publisher가 멈추면 기존 SLAM pose로 자동 복귀한다.
         handlers.onPose(decodeRobotPose(payload));
       }
     } catch (error) {

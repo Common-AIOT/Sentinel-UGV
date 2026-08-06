@@ -10,7 +10,10 @@ setup(
         ('share/ament_index/resource_index/packages',
          ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
-        ('share/' + package_name + '/launch', ['launch/cloud_bridge.launch.py']),
+        ('share/' + package_name + '/launch', [
+            'launch/cloud_bridge.launch.py',
+            'launch/fused_pose.launch.py',
+        ]),
         ('share/' + package_name + '/config', [
             'config/communication.yaml',
             # Mosquitto 참고 설정. EC2 적용은 S15P11A301-103이지만, 젯슨에서
@@ -29,6 +32,7 @@ setup(
     entry_points={
         'console_scripts': [
             'cloud_bridge = sentinel_bridge.cloud_bridge_node:main',
+            'fused_pose_publisher = sentinel_bridge.fused_pose_publisher_node:main',
         ],
     },
 )

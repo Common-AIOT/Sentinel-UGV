@@ -148,7 +148,7 @@ describe("startMapClient — 연결", () => {
 });
 
 describe("startMapClient — 구독", () => {
-  it("advertise 에서 /map 과 /pose 를 찾아 subscribe 를 보낸다", () => {
+  it("advertise 에서 /map, /pose, /pose/fused 를 찾아 subscribe 를 보낸다", () => {
     const { stop } = collect();
     const ws = sockets[0];
     ws.onopen?.();
@@ -159,6 +159,7 @@ describe("startMapClient — 구독", () => {
           { id: 3, topic: "/scan", encoding: "cdr" },
           { id: 6, topic: "/map", encoding: "cdr" },
           { id: 5, topic: "/pose", encoding: "cdr" },
+          { id: 8, topic: "/pose/fused", encoding: "cdr" },
         ],
       }),
     });
@@ -170,6 +171,7 @@ describe("startMapClient — 구독", () => {
       subscriptions: [
         { id: 1, channelId: 6 },
         { id: 2, channelId: 5 },
+        { id: 3, channelId: 8 },
       ],
     });
     stop();
@@ -234,6 +236,25 @@ describe("startMapClient — 메시지", () => {
     sockets[0].onmessage?.({ data: messageFrame(2, hexToBytes(POSE_HEX)) });
     expect(poses).toHaveLength(1);
     expect(poses[0].x).toBeCloseTo(-0.168333, 5);
+    stop();
+  });
+
+  it("/pose/fused 가 오면 기존 /pose보다 우선한다", () => {
+    const { poses, stop } = collect();
+    const ws = sockets[0];
+    ws.onmessage?.({ data: messageFrame(3, hexToBytes(POSE_HEX)) });
+    ws.onmessage?.({ data: messageFrame(2, hexToBytes(POSE_HEX)) });
+    expect(poses).toHaveLength(1);
+    stop();
+  });
+
+  it("/pose/fused 가 끊기면 기존 /pose로 돌아간다", () => {
+    const { poses, stop } = collect();
+    const ws = sockets[0];
+    ws.onmessage?.({ data: messageFrame(3, hexToBytes(POSE_HEX)) });
+    vi.advanceTimersByTime(1_000);
+    ws.onmessage?.({ data: messageFrame(2, hexToBytes(POSE_HEX)) });
+    expect(poses).toHaveLength(2);
     stop();
   });
 

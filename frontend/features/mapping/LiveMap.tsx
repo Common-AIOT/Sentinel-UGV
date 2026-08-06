@@ -14,8 +14,10 @@ import { COLOR_FREE, COLOR_OCCUPIED, COLOR_UNKNOWN } from "./palette";
 /**
  * 실시간 SLAM 지도 (S15P11A301-227).
  *
- * 젯슨의 `foxglove_bridge`에 직접 붙어 `/map`과 `/pose`를 받는다. Foxglove Studio가
- * 보는 것과 같은 데이터·같은 주기(지도 2초, 위치 4~5Hz)다. 백엔드를 거치지 않는다 —
+ * 젯슨의 `foxglove_bridge`에 직접 붙어 `/map`, `/pose`, `/pose/fused`를 받는다.
+ * 지도는 약 2초, 위치는 fused pose 기준 20Hz다. `/pose/fused`는 SLAM의 map→odom과
+ * EKF(IMU)의 odom→base를 합친 값이며, 없거나 끊기면 기존 `/pose`로 돌아간다.
+ * 백엔드를 거치지 않는다 —
  * telemetry 스키마에 격자 필드가 없고 지도 조회 API는 임무 종료 후 PGM뿐이라, 그
  * 둘로는 실시간이 안 된다.
  *

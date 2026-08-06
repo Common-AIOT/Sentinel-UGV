@@ -432,3 +432,53 @@ COUNT 답변에 추가 사람과 위치가 이미 포함되어 있으면 `additi
 - DeepFilterNet 결과를 STT 입력으로 사용하지 않는다.
 - 사투리와 다국어는 현재 검증 범위가 아니다.
 - 전체 로봇 스택과 소음 환경 성능은 실제 Jetson에서 계속 측정한다.
+
+## 소음 강건성 회귀 측정
+
+원본 음성과 소음은 수정하지 않고 저장소 밖의 출력 폴더에 파생본만 만든다. 다음 예시는
+직접 녹음한 도메인 발화 16개와 수집한 소음 WAV 6종을 SNR 10/5/0dB로 합성한다.
+
+```powershell
+cd ai/voice
+python -m evaluation.noise_corpus `
+  --manifest C:\Users\SSAFY\audio-test\corpus\manifest.jsonl `
+  --noise-dir C:\Users\SSAFY\audio-test\data\noise `
+  --output-dir C:\Users\SSAFY\audio-test\domain-noise-bench-303
+
+python -m evaluation.pipeline_audio_corpus `
+  --manifest C:\Users\SSAFY\audio-test\domain-noise-bench-303\manifest.jsonl `
+  --output-dir C:\Users\SSAFY\audio-test\domain-noise-bench-303\pipeline-16k
+
+python -m evaluation.vad_noise_bench `
+  --manifest C:\Users\SSAFY\audio-test\domain-noise-bench-303\pipeline-16k\manifest.jsonl `
+  --output C:\Users\SSAFY\audio-test\domain-noise-bench-303\pipeline-16k\vad-summary.json
+```
+
+생성 결과는 clean 16건, `16발화 × 6소음 × 3 SNR` 288건, 소음 전용 6건으로 총
+310건이다. `pipeline_audio_corpus`는 실제 Voice 입력과 같은 16kHz mono/RMS 정규화를
+적용한다. `noise-components`와 `speech-components`에는 각 혼합본에 사용된 정확한 성분을
+따로 저장하므로 사람이 원음·소음·혼합본을 대조 청취할 수 있다. 오디오와 전체 전사 결과는
+개인 음성 데이터이므로 저장소에 커밋하지 않는다.
+
+S15P11A301-303에서 기존 실제 세션을 재분석해 RMS 0.002998의 `네`, 0.004041의
+`없습니다`가 과거 0.005 선게이트에 막힌 것을 확인했다. 기본
+`SENTINEL_SILENCE_RMS=0.001`은 이 약한 발화를 Silero VAD까지 보내기 위한 값이다.
+디지털 무음과 VAD 판정은 별도 단계로 계속 적용한다.
+
+운영 형식의 실제 육성 기준 Qwen은 310/310 요청에 성공했고 P95는 408.31ms였다. 반면
+clean CER도 17.74%였고 SNR 10/5/0dB CER는 30.11%/36.69%/45.03%로, 현재 수치만으로
+재난 현장 강건성을 주장할 수 없다. 특히 `realmotor`와 `moto`가 취약했다. 위험 발화를
+안전으로 뒤집은 사례와 소음 전용 6건의 ASR 환각은 없었다. Silero는 음성 304/304를
+감지했지만 소음 전용 3/6을 음성으로 오탐했으므로 유지하되 후속 BRIO 실측에서 재검증한다.
+
+과거 5개 합성 발화 기반 CER 0.89% 결과는 평가 도구의 예비 회귀 시험일 뿐이며 주 성능
+근거로 사용하지 않는다. 원격 Qwen은 지연과 안전 극성 보존을 근거로 잠정 유지하지만,
+화자 3명 이상과 BRIO 동시 녹음으로 최종 승인해야 한다. DeepFilterNet은 기존 108조건
+A/B에서 정확도를 낮췄으므로 STT 전처리로 추가하지 않는다.
+
+질문 문맥 기반 GMS의 보완 효과는 토큰을 제한해 대표 24건만 측정했다. 운영
+`gpt-5.4-mini` 프롬프트의 최종 슬롯 정확도는 11/24(45.83%)로 키워드 폴백
+7/24(29.17%)보다 4건 높았다. 그러나 `moto@5dB` 이동 불가 발화를 이동 가능으로 확정한
+위험→안전 반전이 1건 있었다. 따라서 LLM은 제한적 오류 복원 계층으로만 사용하며 소음
+대책으로 표현하지 않는다. 재현 도구는 `evaluation.llm_noise_recovery_bench`이고 상세
+결과 원문은 개인 평가 폴더에 보존한다.

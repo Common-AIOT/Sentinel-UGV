@@ -1,0 +1,113 @@
+{
+  "generatedAt": "2026-08-06",
+  "jira": "S15P11A301-303",
+  "primaryMeasurement": {
+    "corpus": {
+      "source": "C:/Users/SSAFY/audio-test/corpus/manifest.jsonl",
+      "speech": "one human speaker, 16 Korean domain utterances",
+      "noise": ["fireburn", "moto", "motor", "realmotor", "realsounds", "siren"],
+      "snrDb": [10, 5, 0],
+      "speechConditions": 304,
+      "nonSpeechConditions": 6,
+      "audioSentToAsr": "16 kHz mono, production RMS normalization",
+      "fieldApproval": false
+    },
+    "vad": {
+      "model": "Silero VAD",
+      "threshold": 0.5,
+      "speechDetected": 304,
+      "speechTotal": 304,
+      "vadMisses": 0,
+      "falsePositives": 3,
+      "nonSpeechTotal": 6,
+      "falsePositiveProfiles": ["motor", "realmotor", "realsounds"]
+    },
+    "qwen3Asr": {
+      "runtime": "L40S Device3 bfloat16",
+      "model": "Qwen/Qwen3-ASR-1.7B",
+      "requestsSucceeded": 310,
+      "requestsTotal": 310,
+      "cerMicro": 0.3625,
+      "werMicro": 0.5347,
+      "criticalTermsPreserved": 341,
+      "criticalTermsTotal": 570,
+      "criticalTermRecall": 0.5982,
+      "riskToSafe": 0,
+      "nonSpeechHallucinations": 0,
+      "nonSpeechRequests": 6,
+      "latencyP50Ms": 259.574,
+      "latencyP95Ms": 408.309,
+      "inferenceP50Ms": 170.416,
+      "inferenceP95Ms": 319.164,
+      "rtfMean": 0.0342,
+      "bySnr": {
+        "clean": {"cases": 16, "cerMicro": 0.1774, "werMicro": 0.32, "criticalTermRecall": 0.6667},
+        "10db": {"cases": 96, "cerMicro": 0.3011, "werMicro": 0.4733, "criticalTermRecall": 0.6389},
+        "5db": {"cases": 96, "cerMicro": 0.3669, "werMicro": 0.54, "criticalTermRecall": 0.6},
+        "0db": {"cases": 96, "cerMicro": 0.4503, "werMicro": 0.6267, "criticalTermRecall": 0.5444}
+      },
+      "worstConditions": [
+        {"condition": "realmotor@0db", "cerMicro": 1.0565, "criticalTermRecall": 0.5},
+        {"condition": "realmotor@5db", "cerMicro": 0.9435, "criticalTermRecall": 0.5667},
+        {"condition": "moto@0db", "cerMicro": 0.75, "criticalTermRecall": 0.2}
+      ]
+    },
+    "gmsRecovery24": {
+      "model": "gpt-5.4-mini",
+      "prompt": "production question-aware triage extraction prompt",
+      "selection": {
+        "conditions": ["clean", "siren@0db", "moto@5db", "moto@0db", "realmotor@5db", "realmotor@0db"],
+        "sourceCases": ["URGENT_NO", "URGENT_YES", "MOBILITY_NO", "COUNT_3"]
+      },
+      "requestsSucceeded": 24,
+      "requestsTotal": 24,
+      "slotCorrect": 11,
+      "slotAccuracy": 0.4583,
+      "keywordFallbackCorrect": 7,
+      "keywordFallbackAccuracy": 0.2917,
+      "improvedOverFallback": 4,
+      "regressedFromCorrectFallback": 0,
+      "criticalAsrFailures": 19,
+      "criticalFailuresRecovered": 7,
+      "riskToSafe": 1,
+      "unsupportedWrongAssertions": 1,
+      "latencyP50Ms": 1384.409,
+      "latencyP95Ms": 1772.419,
+      "byCondition": {
+        "clean": {"correct": 3, "cases": 4},
+        "siren@0db": {"correct": 3, "cases": 4},
+        "moto@5db": {"correct": 0, "cases": 4},
+        "moto@0db": {"correct": 0, "cases": 4},
+        "realmotor@5db": {"correct": 2, "cases": 4},
+        "realmotor@0db": {"correct": 3, "cases": 4}
+      },
+      "conclusion": "question context improves some damaged transcripts but is not a sufficient noise countermeasure; one moto@5db mobility NO response was incorrectly asserted as YES"
+    }
+  },
+  "weakSpeechGate": {
+    "previousRms": 0.005,
+    "selectedRms": 0.001,
+    "reason": "two real session utterances at RMS 0.002998 and 0.004041 were speech but were rejected before VAD"
+  },
+  "preliminarySyntheticRegression": {
+    "corpus": "five synthetic Korean fixtures plus three generated noise profiles",
+    "requestsSucceeded": 156,
+    "requestsTotal": 156,
+    "cerMicro": 0.0089,
+    "criticalTermRecall": 1.0,
+    "latencyP95Ms": 422.926,
+    "status": "superseded as the primary noise-performance evidence"
+  },
+  "decision": {
+    "remoteQwen": "keep provisionally; ASR latency is acceptable, but domain CER targets are not met",
+    "questionAwareGms": "keep as a conservative structured extractor, not as a noise solution; 11/24 slots were correct and one risk-to-safe assertion occurred",
+    "deepFilterNetBeforeStt": "do not adopt; prior 108-condition A/B reduced recognition accuracy",
+    "sileroVad": "keep; noise-only false positives require follow-up, although Qwen returned empty text for all six samples",
+    "next": "repeat with BRIO simultaneous recordings and at least three speakers"
+  },
+  "limitations": [
+    "The speech and noise are real recordings but were digitally mixed at controlled SNR; this is not a simultaneous acoustic field recording.",
+    "The domain corpus has one speaker and sixteen utterances, so it is a diagnostic baseline rather than final field approval.",
+    "Room reverberation, microphone directionality, robot vibration and weak injured speech still require Jetson/BRIO measurement."
+  ]
+}

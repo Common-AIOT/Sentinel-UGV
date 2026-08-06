@@ -14,6 +14,7 @@ from evaluation.asr_shadow_bench import (
     predict_polarity,
     score,
     summarize,
+    summarize_by_condition,
     write_results,
 )
 
@@ -167,6 +168,9 @@ class ASRShadowBenchTest(unittest.TestCase):
         self.assertIsNotNone(summary["werMicro"])
         self.assertIsNotNone(summary["latencyP95Ms"])
 
+        conditions = summarize_by_condition(observations)
+        self.assertEqual({"clean", "silence"}, {row["condition"] for row in conditions})
+
     def test_write_results_creates_json_and_csv(self):
         case = self.case()
 
@@ -188,6 +192,7 @@ class ASRShadowBenchTest(unittest.TestCase):
             self.assertTrue((output / "asr-shadow-raw.json").is_file())
             self.assertTrue((output / "asr-shadow-summary.json").is_file())
             self.assertTrue((output / "asr-shadow-summary.csv").is_file())
+            self.assertTrue((output / "asr-shadow-conditions.csv").is_file())
 
 
 if __name__ == "__main__":

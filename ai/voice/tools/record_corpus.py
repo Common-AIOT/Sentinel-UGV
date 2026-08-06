@@ -62,7 +62,7 @@ DEFAULT_ROOT = Path("~/audio-test/corpus").expanduser()
 
 # 운영 임계값과 같은 기준으로 판정한다. 여기서 통과한 녹음은 파이프라인에서도
 # 무음으로 버려지지 않는다.
-SILENCE_RMS = 0.005
+SILENCE_RMS = 0.001
 CLIPPING_PEAK = 0.99
 
 
@@ -102,10 +102,10 @@ LINES: list[Line] = [
 
     Line("COUNT", "저 혼자예요", "reportedResponsiveCount", 1),
     Line("COUNT", "저 포함해서 세 명이요", "reportedResponsiveCount", 3),
-    Line("COUNT", "두 명 더 있어요", "reportedResponsiveCount", 3,
-         "화자를 포함하는지가 모호하다 — LLM 추출이 어떻게 세는지 보는 사례"),
-    Line("COUNT", "옆에 한 명 있는데 대답을 안 해요", "unresponsivePersonReported", True,
-         "응답 불가 동반자 — 현행 스키마에 담을 곳이 없다 (§11-1)"),
+    Line("COUNT", "두 명 더 있어요", "reportedResponsiveCount", 1,
+         "추가 두 명의 응답 여부는 미확인 — 현재 발화자 한 명만 응답 인원"),
+    Line("COUNT", "옆에 한 명 있는데 대답을 안 해요", "reportedResponsiveCount", 1,
+         "추가 제보는 additionalPersonReports.responseStatus=UNRESPONSIVE로 별도 보존"),
 
     Line("OTHER", "가스 냄새가 나요", "hazardReported", ["GAS"],
          "환경 위험. 현행은 urgentConditionReported에 뭉쳐 있다 (147)"),

@@ -52,9 +52,13 @@ def speech(level=0.2, seconds=1.0):
 
 
 # 조용한 방 — **정확히 0이 아니다.** 살아 있는 마이크는 조용해도 작은 신호를 낸다.
-# 0.0038은 2026-08-04 실기에서 조용하다고 판정된 구간의 실측 rms다. SILENCE_RMS
-# (0.005) 아래이므로 무음으로 분류되지만 캡처 경로는 살아 있다.
+# 0.0038은 2026-08-04 실기에서 조용하다고 판정된 구간의 실측 rms다. 새 선게이트는
+# 통과하지만 실제 VAD가 음성이 아니라고 판단해야 하는 살아 있는 캡처 경로다.
 QUIET_ROOM = np.full(config.FS, 0.0038, dtype=np.float32)
+
+# 2026-08-05 실제 세션의 "네"는 rms 0.002998이었다. 기존 0.005에서는 VAD에
+# 도달하지 못했지만 새 0.001에서는 Silero 판정을 받을 수 있다.
+WEAK_SPEECH = np.full(config.FS, 0.0030, dtype=np.float32)
 
 # 캡처 경로 사망 — 전 구간이 정확히 0. 마이크가 아니라 빈 입력을 읽고 있는 상태다
 # (S15P11A301-257). 무음과 구분해야 한다.
@@ -196,7 +200,7 @@ class SessionRunnerTest(unittest.TestCase):
 
     def test_silence_is_no_voice_detected(self):
         """무음이면 재질문 후 무응답으로 기록한다."""
-        runner, player = build_runner(audio=QUIET_ROOM)
+        runner, player = build_runner(audio=QUIET_ROOM, has_speech=False)
         result = runner.run()
 
         intro_turns = [
@@ -231,7 +235,7 @@ class SessionRunnerTest(unittest.TestCase):
         조용한 방(실측 rms 0.0038)은 여전히 무응답이다. 이 값과 디지털 무음
         임계값(1e-6) 사이는 세 자리 이상 벌어져 있다.
         """
-        runner, _ = build_runner(audio=QUIET_ROOM)
+        runner, _ = build_runner(audio=QUIET_ROOM, has_speech=False)
         result = runner.run()
 
         self.assertEqual(result.state, SessionState.COMPLETED)
@@ -241,6 +245,16 @@ class SessionRunnerTest(unittest.TestCase):
         ]
         self.assertEqual(
             intro_turns[0].response_class, ResponseClass.NO_VOICE_DETECTED
+        )
+
+    def test_measured_weak_speech_reaches_vad_and_stt(self):
+        """0.003 수준의 약한 실측 발화를 RMS 선게이트에서 버리지 않는다."""
+        runner, _ = build_runner(audio=WEAK_SPEECH, has_speech=True, text="네")
+        result = runner.run()
+
+        self.assertTrue(result.fields["anyResponseDetected"])
+        self.assertEqual(
+            result.turns[0].response_class, ResponseClass.ANSWER_STRUCTURED
         )
 
     def test_audio_device_error_ends_session(self):

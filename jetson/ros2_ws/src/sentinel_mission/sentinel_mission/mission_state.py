@@ -569,9 +569,11 @@ class MissionStateMachine:
         if signal is Signal.ESTOP:
             if self.state is MissionState.ESTOP:
                 return self._ignore('이미 ESTOP latch 상태다')
-            return self._estop(detail)
+            return self._expire_completed_mission(self._estop(detail))
         if signal is Signal.SENSOR_FAULT:
-            return self._sensor_fault(now, detail)
+            return self._expire_completed_mission(
+                self._sensor_fault(now, detail)
+            )
 
         if self.state in {MissionState.ESTOP, MissionState.ERROR}:
             return self._ignore(
@@ -599,8 +601,39 @@ class MissionStateMachine:
             Signal.MISSION_COMPLETED: self._mission_completed,
         }[signal]
         if signal is Signal.MISSION_START:
+            # 새 임무는 여기서 missionId 를 받으므로 만료 대상이 아니다.
             return self._mission_start(now, detail, mission_id)
-        return handler(now, detail)
+        return self._expire_completed_mission(handler(now, detail))
+
+    def _expire_completed_mission(self, transition: Transition) -> Transition:
+        """COMPLETED 를 떠나는 전이에서 `mission_id` 를 만료시킨다 (S15P11A301-307).
+
+        `_mission_completed` 가 값을 남기는 것은 의도다 — COMPLETED 상태 메시지가
+        「어느 임무가 끝났는가」를 실어야 지도 저장이 임무별 디렉터리와 `maps` 행을
+        만든다(S15P11A301-171). **그러나 그 값의 수명은 그 상태까지다.**
+
+        살아 있으면 telemetry 귀속이 되살아난다. `MISSION_ACTIVE_BY_STATE` 는 상태
+        이름만 보므로 PAUSED·ESTOP·EXPLORING 은 활성이고, `_pause_requested`·
+        `_estop`·`_sensor_fault` 는 상태 제약이 없어 COMPLETED 에서도 받는다. 즉
+        **PAUSE 한 번이면 끝난 임무의 missionId 가 봉투에 다시 실린다.**
+
+        실측(2026-08-05): STOP 5초 뒤 관제가 새 임무 START 를 네 번 시도했다가
+        거부되자 PAUSE→RESUME 을 눌렀고, 그 뒤 **101분치 telemetry 9,574건이
+        6초짜리 임무 b251f573 에 붙었다.** 그중 78분은 다음 임무(93d6f70b)의 실제
+        주행이라 그 임무의 궤적은 비어 있다. 화면에는 그럴싸한 궤적으로 보이므로
+        임무 목록의 소요 시간과 대조하기 전에는 드러나지 않는다.
+
+        -171 이 값을 남겨도 안전하다고 본 근거는 `observe_candidates` 가 COMPLETED
+        에서 새 encounter 를 만들지 않는다는 것이었다. 그 근거는 **encounter 에만
+        해당하고 telemetry 귀속에는 해당하지 않았다.**
+
+        전이 결과로 판정하는 이유는 만료 지점이 하나여야 하기 때문이다. 호출부마다
+        「지금 COMPLETED 인가」를 따로 보면 나중에 추가되는 신호에서 빠진다 —
+        `_sensor_fault` 가 실제로 그렇게 빠졌었다(S15P11A301-276).
+        """
+        if transition.changed and transition.previous is MissionState.COMPLETED:
+            self.mission_id = None
+        return transition
 
     def _estop(self, detail: str) -> Transition:
         # encounter를 버리지 않는다. 이미 모은 조각으로 녹화 노드가 이벤트를
@@ -637,9 +670,32 @@ class MissionStateMachine:
         발행한 encounter는 서버에 기록되지 않으므로 호출자가 경고를 남긴다.
         """
         if self.state is MissionState.EXPLORING:
-            # 이미 탐사 중이다. 관제 버튼을 두 번 눌렀거나, 서로 다른 commandId로
-            # 두 번 온 경우다(멱등 가드는 같은 commandId만 막는다). 원하는 상태에
-            # 이미 있으므로 거부로 보지 않는다 — 조작자에게는 성공이 맞다.
+            # **다른 임무의 START 는 거부한다** (S15P11A301-307).
+            #
+            # 진행 중인 임무가 있는데 새 임무를 시작할 수는 없다. 종전에는 이것도
+            # 아래의 멱등 처리로 흘러가 `reason_code` 없이 EXECUTED 로 회신됐고,
+            # 백엔드는 그것을 보고 **새 임무의 started_at 을 채웠다** — 로봇은 옛
+            # missionId 로 계속 발행하는데 관제에는 새 임무가 시작된 것으로 보인다.
+            # 실측(2026-08-05 12:40:12): 그렇게 시작된 93d6f70b 의 앞 78분이 비었고
+            # 그 구간은 종료된 6초짜리 임무에 쌓였다.
+            #
+            # 여기서 missionId 를 갈아 끼우지 않는 이유는 그러면 진행 중 임무의
+            # 기록이 두 임무로 쪼개지기 때문이다. 다른 상태(PERSON_APPROACHING 등)와
+            # 같이 거부하고, 조작자는 STOP 뒤에 시작한다.
+            if (
+                mission_id
+                and self.mission_id
+                and mission_id != self.mission_id
+            ):
+                return self._ignore(
+                    '진행 중인 임무가 있다. 먼저 종료해야 한다'
+                    f'(진행 중 {self.mission_id[:8]}, 요청 {mission_id[:8]})',
+                    REASON_INVALID_STATE,
+                )
+            # 같은 임무의 재요청이다. 관제 버튼을 두 번 눌렀거나, 서로 다른
+            # commandId로 두 번 온 경우다(멱등 가드는 같은 commandId만 막는다).
+            # 원하는 상태에 이미 있으므로 거부로 보지 않는다 — 조작자에게는 성공이
+            # 맞다.
             return self._ignore('이미 EXPLORING 상태다')
         # COMPLETED 에서도 시작을 허용한다 (S15P11A301-274).
         #

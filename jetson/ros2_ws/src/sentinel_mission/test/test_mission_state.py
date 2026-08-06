@@ -1024,6 +1024,147 @@ def test_completed_does_not_accept_new_encounters():
 
 
 # ----------------------------------------------------------------------
+# 종료된 임무로의 귀속 (S15P11A301-307)
+#
+# COMPLETED 가 들고 있는 missionId 는 종료 보고용이며 그 상태를 떠나면 만료된다.
+# 만료되지 않으면 telemetry 봉투가 끝난 임무로 다시 나간다 — 실측에서 6초짜리
+# 임무에 101분치 9,574건이 붙었고 그중 78분은 다음 임무의 실제 주행이었다.
+# ----------------------------------------------------------------------
+
+
+MISSION_A = 'b251f573-d781-46a9-a923-58389756937a'
+MISSION_B = '93d6f70b-42af-4bc1-a18c-708776e5b946'
+
+
+def _completed() -> MissionStateMachine:
+    machine = MissionStateMachine()
+    machine.handle_signal(Signal.MISSION_START, now=T0, mission_id=MISSION_A)
+    machine.handle_signal(Signal.MISSION_COMPLETED, now=at(6))
+    assert machine.state is MissionState.COMPLETED
+    assert machine.mission_id == MISSION_A, 'COMPLETED 메시지가 실을 값이다'
+    return machine
+
+
+def test_pause_after_stop_does_not_revive_the_ended_mission():
+    """종료 후 PAUSE 는 끝난 임무의 귀속을 되살리지 않는다.
+
+    실기기에서 일어난 순서 그대로다: STOP 5초 뒤 새 임무 START 가 거부되자
+    조작자가 PAUSE 를 눌렀고, PAUSED 는 `MISSION_ACTIVE_BY_STATE` 에서 활성이라
+    옛 missionId 가 telemetry 봉투에 다시 실렸다.
+    """
+    machine = _completed()
+
+    result = machine.handle_signal(Signal.PAUSE_REQUESTED, now=at(90))
+
+    assert result.changed
+    assert machine.state is MissionState.PAUSED
+    assert machine.mission_id is None, (
+        '끝난 임무의 missionId 로 telemetry 가 다시 나간다'
+    )
+
+
+def test_resume_after_stop_keeps_the_mission_id_expired():
+    """PAUSE→RESUME 으로 EXPLORING 에 돌아와도 임무 없는 주행이다.
+
+    여기가 실제 피해가 난 지점이다. EXPLORING 은 활성 상태이므로 만료되지 않았다면
+    다음 임무가 시작될 때까지의 모든 궤적이 끝난 임무에 쌓인다.
+    """
+    machine = _completed()
+    machine.handle_signal(Signal.PAUSE_REQUESTED, now=at(90))
+
+    machine.handle_signal(Signal.RESUME_APPROVED, now=at(165))
+
+    assert machine.state is MissionState.EXPLORING
+    assert machine.mission_id is None
+
+
+def test_estop_after_stop_does_not_revive_the_ended_mission():
+    """ESTOP 도 같다. 임무 밖의 비상정지는 어느 임무에도 속하지 않는다.
+
+    `MISSION_ACTIVE_BY_STATE` 가 ESTOP 을 활성으로 둔 근거는 "임무 밖에서 났다면
+    missionId 가 애초에 null" 이었다. COMPLETED 가 값을 들고 있는 한 그 전제가
+    성립하지 않으므로 여기서 만료시킨다.
+    """
+    machine = _completed()
+
+    machine.handle_signal(Signal.ESTOP, now=at(90))
+
+    assert machine.state is MissionState.ESTOP
+    assert machine.mission_id is None
+
+
+def test_sensor_fault_after_stop_does_not_revive_the_ended_mission():
+    """센서 결함으로 PAUSED 에 가는 경로도 만료 대상이다.
+
+    ESTOP·SENSOR_FAULT 는 26.5 우선순위 때문에 다른 신호보다 먼저 처리되어
+    핸들러 표를 타지 않는다. 만료를 전이 결과에 걸어 두지 않으면 이 두 경로에서만
+    조용히 빠진다 — `_sensor_fault` 는 S15P11A301-276 에서 실제로 그렇게 빠졌다.
+    """
+    machine = _completed()
+
+    machine.handle_signal(Signal.SENSOR_FAULT, now=at(90), detail='lidar')
+
+    assert machine.state is MissionState.PAUSED
+    assert machine.mission_id is None
+
+
+def test_new_mission_start_from_completed_takes_the_new_id():
+    """만료가 새 임무 시작을 방해하지 않는다.
+
+    MISSION_START 는 자기가 missionId 를 들고 오므로 만료 대상이 아니다. 이것이
+    깨지면 -274(종료 후 재시작)가 되돌아가 시연이 막힌다.
+    """
+    machine = _completed()
+
+    machine.handle_signal(Signal.MISSION_START, now=at(90), mission_id=MISSION_B)
+
+    assert machine.state is MissionState.EXPLORING
+    assert machine.mission_id == MISSION_B
+
+
+def test_start_of_another_mission_while_exploring_is_rejected():
+    """진행 중 임무가 있으면 새 임무 START 를 거부한다.
+
+    종전에는 `이미 EXPLORING 상태다`로 무시하면서 `reason_code` 가 없어 관제에는
+    **EXECUTED** 로 회신됐다. 백엔드는 그것으로 새 임무의 `started_at` 을 채우는데
+    로봇은 옛 missionId 로 계속 발행한다 — 관제와 로봇이 서로 다른 임무를 진행
+    중이라고 믿는다. 실측 2026-08-05 12:40:12.
+    """
+    from sentinel_mission.mission_state import REASON_INVALID_STATE
+
+    machine = MissionStateMachine()
+    machine.handle_signal(Signal.MISSION_START, now=T0, mission_id=MISSION_A)
+
+    result = machine.handle_signal(
+        Signal.MISSION_START, now=at(10), mission_id=MISSION_B, command_id=CID
+    )
+
+    assert not result.changed
+    assert result.reason_code == REASON_INVALID_STATE, (
+        'reason_code 가 없으면 노드가 EXECUTED 로 회신한다'
+    )
+    assert machine.mission_id == MISSION_A, '진행 중 임무를 갈아 끼우지 않는다'
+
+
+def test_repeated_start_of_the_same_mission_is_still_a_success():
+    """같은 임무의 재요청(버튼 두 번)은 지금처럼 성공으로 본다.
+
+    원하는 상태에 이미 있으므로 거부하면 조작자가 무엇이 잘못됐는지 찾게 된다.
+    거부와 멱등을 가르는 것은 missionId 이지 상태가 아니다.
+    """
+    machine = MissionStateMachine()
+    machine.handle_signal(Signal.MISSION_START, now=T0, mission_id=MISSION_A)
+
+    result = machine.handle_signal(
+        Signal.MISSION_START, now=at(10), mission_id=MISSION_A, command_id=CID
+    )
+
+    assert not result.changed
+    assert result.reason_code is None
+    assert machine.mission_id == MISSION_A
+
+
+# ----------------------------------------------------------------------
 # controlMode (S15P11A301-278)
 #
 # command_mux 가 이 값으로 자율/수동을 고른다. 없으면 mux 가 모든 명령을 0으로

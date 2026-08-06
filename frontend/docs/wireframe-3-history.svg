@@ -1,0 +1,126 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 619" width="1100" height="619" font-family="'Malgun Gothic','Apple SD Gothic Neo','Noto Sans KR',sans-serif">
+  <style>
+    .bg{fill:#ffffff}
+    .panel{fill:#eef1f4}
+    .box{fill:#e4e9ed;stroke:#c6ced5;stroke-width:1.2}
+    .card{fill:#ffffff;stroke:#c6ced5;stroke-width:1.1}
+    .cardOn{fill:#fbeee6;stroke:#b0450d;stroke-width:1.3}
+    .rule{stroke:#c6ced5;stroke-width:1}
+    .edge{fill:none;stroke:#9fabb6;stroke-width:1.5}
+    .t{fill:#5b6874;font-size:12px}
+    .ts{fill:#8a95a0;font-size:10.5px}
+    .tb{fill:#171d24;font-size:12px}
+    .lbl{fill:#8a95a0;font-size:9.5px;letter-spacing:1.2px}
+    .head{fill:#171d24;font-size:13.5px;font-weight:600}
+    .chip{fill:#ffffff;stroke:#9fabb6;stroke-width:1.2}
+    .pin{fill:#b0450d}
+    .pinT{fill:#ffffff;font-size:11px;font-weight:700;text-anchor:middle}
+    .spark{fill:none;stroke:#8a95a0;stroke-width:1.4}
+  </style>
+  <pattern id="dots3" width="11" height="11" patternUnits="userSpaceOnUse">
+    <circle cx="2" cy="2" r="1.1" fill="#c6ced5"/>
+  </pattern>
+
+  <rect class="bg" x="0" y="0" width="1100" height="619"/>
+
+  <!-- 상단 바 -->
+  <rect class="panel" x="0" y="0" width="1100" height="34"/>
+  <line class="rule" x1="0" y1="34" x2="1100" y2="34"/>
+  <text class="t" x="14" y="21">‹ SENTINEL-UGV</text>
+  <line class="rule" x1="118" y1="10" x2="118" y2="24"/>
+  <rect x="130" y="11" width="11" height="11" fill="none" stroke="#b0450d" stroke-width="1.4" rx="2"/>
+  <text x="149" y="21" fill="#b0450d" font-size="12">임무 이력</text>
+  <text class="ts" x="1086" y="21" text-anchor="end">12개 임무</text>
+
+  <!-- 왼쪽: 임무 목록 -->
+  <rect class="panel" x="0" y="34" width="198" height="585"/>
+  <line class="rule" x1="198" y1="34" x2="198" y2="619"/>
+  <text class="head" x="14" y="60">임무 목록</text>
+  <line class="rule" x1="0" y1="74" x2="198" y2="74"/>
+
+  <rect class="cardOn" x="10" y="84" width="178" height="30" rx="2"/>
+  <text class="tb" x="20" y="103">08-06 14:12</text>
+  <text x="178" y="103" fill="#b0450d" font-size="11" text-anchor="end">3명</text>
+
+  <rect class="card" x="10" y="120" width="178" height="30" rx="2"/>
+  <text class="t" x="20" y="139">08-06 11:40</text>
+  <text class="ts" x="178" y="139" text-anchor="end">1명</text>
+
+  <rect class="card" x="10" y="156" width="178" height="30" rx="2"/>
+  <text class="t" x="20" y="175">08-05 17:05</text>
+  <text class="ts" x="178" y="175" text-anchor="end">—</text>
+
+  <rect class="card" x="10" y="192" width="178" height="30" rx="2"/>
+  <text class="t" x="20" y="211">08-05 09:22</text>
+  <text class="ts" x="178" y="211" text-anchor="end">2명</text>
+
+  <!-- 가운데: 요약 + 지도 -->
+  <rect class="card" x="210" y="48" width="152" height="30" rx="2"/>
+  <text class="ts" x="220" y="67">걸린 시간</text>
+  <text class="tb" x="352" y="67" text-anchor="end">12분 04초</text>
+
+  <rect class="card" x="372" y="48" width="152" height="30" rx="2"/>
+  <text class="ts" x="382" y="67">이동 거리</text>
+  <text class="tb" x="514" y="67" text-anchor="end">84.2 m</text>
+
+  <rect class="card" x="534" y="48" width="152" height="30" rx="2"/>
+  <text class="ts" x="544" y="67">발견 인원</text>
+  <text class="tb" x="676" y="67" text-anchor="end">3</text>
+
+  <rect class="card" x="696" y="48" width="150" height="30" rx="2"/>
+  <text class="ts" x="706" y="67">종료 사유</text>
+  <text class="tb" x="836" y="67" text-anchor="end">운영자 종료</text>
+
+  <rect class="box" x="210" y="90" width="636" height="517"/>
+  <rect x="211" y="91" width="634" height="515" fill="url(#dots3)"/>
+  <path d="M 300 520 L 380 430 L 470 400 L 560 300 L 640 250 L 720 180" fill="none" stroke="#8a95a0" stroke-width="2" stroke-dasharray="6 4"/>
+  <circle cx="470" cy="400" r="8" fill="#fbeee6" stroke="#b0450d" stroke-width="1.6"/>
+  <circle cx="640" cy="250" r="8" fill="#fbeee6" stroke="#b0450d" stroke-width="1.6"/>
+  <rect class="chip" x="378" y="336" width="300" height="26" rx="3"/>
+  <text class="t" x="528" y="353" text-anchor="middle">임무 지도 · 이동 경로 + 발견 지점 마커</text>
+
+  <!-- 오른쪽: 차트 + 발견 목록 -->
+  <rect class="panel" x="858" y="34" width="242" height="585"/>
+  <line class="rule" x1="858" y1="34" x2="858" y2="619"/>
+
+  <text class="lbl" x="870" y="54">임무 중 온도</text>
+  <polyline class="spark" points="870,86 906,79 942,83 978,66 1014,71 1050,56 1086,60"/>
+  <line class="rule" x1="858" y1="100" x2="1100" y2="100"/>
+
+  <text class="lbl" x="870" y="120">임무 중 습도</text>
+  <polyline class="spark" points="870,132 906,140 942,135 978,150 1014,145 1050,157 1086,152"/>
+  <line class="rule" x1="858" y1="166" x2="1100" y2="166"/>
+
+  <text class="lbl" x="870" y="186">발견 이벤트 (3)</text>
+  <line class="rule" x1="858" y1="196" x2="1100" y2="196"/>
+
+  <rect class="cardOn" x="868" y="206" width="222" height="56" rx="3"/>
+  <circle cx="890" cy="228" r="12" fill="#fbeee6" stroke="#b0450d" stroke-width="1.3"/>
+  <text class="tb" x="910" y="226">대화 완료 · 2명</text>
+  <text class="ts" x="910" y="244">(4.2, 7.8) · 14:31</text>
+  <circle cx="1070" cy="234" r="11" fill="#fbeee6" stroke="#b0450d" stroke-width="1.3"/>
+  <path d="M 1067 230 L 1075 234 L 1067 238 Z" fill="#b0450d"/>
+
+  <rect class="card" x="868" y="272" width="222" height="56" rx="3"/>
+  <circle cx="890" cy="294" r="12" fill="#eef1f4" stroke="#c6ced5" stroke-width="1.3"/>
+  <text class="t" x="910" y="292">무응답 · 1명</text>
+  <text class="ts" x="910" y="310">(9.1, 3.4) · 14:38</text>
+  <circle cx="1070" cy="300" r="11" fill="#eef1f4" stroke="#c6ced5" stroke-width="1.3"/>
+  <path d="M 1067 296 L 1075 300 L 1067 304 Z" fill="#8a95a0"/>
+
+  <rect class="card" x="868" y="338" width="222" height="56" rx="3"/>
+  <circle cx="890" cy="360" r="12" fill="#eef1f4" stroke="#c6ced5" stroke-width="1.3"/>
+  <text class="t" x="910" y="358">대화 완료 · 1명</text>
+  <text class="ts" x="910" y="376">위치 미기록 · 14:44</text>
+  <circle cx="1070" cy="366" r="11" fill="#eef1f4" stroke="#c6ced5" stroke-width="1.3"/>
+  <path d="M 1067 362 L 1075 366 L 1067 370 Z" fill="#8a95a0"/>
+
+  <rect class="edge" x="0.75" y="0.75" width="1098.5" height="617.5"/>
+
+  <!-- 핀 -->
+  <g><circle class="pin" cx="200" cy="99" r="11"/><text class="pinT" x="200" y="103">1</text></g>
+  <g><circle class="pin" cx="200" cy="63" r="11"/><text class="pinT" x="200" y="67">2</text></g>
+  <g><circle class="pin" cx="510" cy="432" r="11"/><text class="pinT" x="510" y="436">3</text></g>
+  <g><circle class="pin" cx="847" cy="110" r="11"/><text class="pinT" x="847" y="114">4</text></g>
+  <g><circle class="pin" cx="847" cy="234" r="11"/><text class="pinT" x="847" y="238">5</text></g>
+</svg>

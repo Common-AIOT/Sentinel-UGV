@@ -19,7 +19,7 @@ Next.js **App Router** 기반 통합 관제 웹(GCS)입니다. 실시간 영상,
   - `robot/`: `RobotContext`(중앙 상태), `mockData`(목 데이터)
   - `telemetry/`(상태·센서·모드 전환·임무 명령), `streaming/`(영상), `mapping/`(LiDAR)
 - `tests/`: 단위·컴포넌트·E2E 테스트
-- `docs/`: 화면 설계 산출물. [`wireframe.html`](docs/wireframe.html)은 화면 4종의 배치와 각 요소의 역할을 담은 와이어프레임이며 브라우저로 바로 연다
+- `docs/`: 화면 설계 산출물. [`wireframe.md`](docs/wireframe.md)는 화면 4종의 배치와 각 요소의 역할을 담은 와이어프레임이며 GitLab에서 바로 렌더링된다
 
 > 관제 웹에는 조종 입력이 없다. 운행 모드 전환은 `features/telemetry/ModeRow.tsx`,
 > 임무 명령은 `features/telemetry/CommandBar.tsx`에 있고 실제 조종은 모바일 앱이

@@ -14,6 +14,55 @@ set -Eeuo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export SENTINEL_REPO_ROOT="${REPO_ROOT}"
 
+SERVICE_NAME=sentinel-demo.service
+
+# ----------------------------------------------------------------------
+# 이중 기동 거부 (S15P11A301-294)
+#
+# 서비스가 이미 스택을 돌리고 있는데 손으로 이것을 부르면 두 벌이 뜬다. 카메라
+# 단일 오픈(32-3)이 깨지고 MediaMTX 가 같은 경로에 두 번 바인딩한다. 그때 증상은
+# "안 뜬다"가 아니라 **영상이 간헐적으로 끊기는 것**이라 원인을 찾기 어렵다
+# (S15P11A301-125 가 stream_pipeline 중복으로 그것을 겪었다).
+#
+# 서비스가 부르는 경우는 제외해야 한다. 그때 이 스크립트의 부모가 systemd 이고,
+# ExecStart 시점에는 유닛이 이미 activating 이므로 아래 검사에 걸린다.
+# INVOCATION_ID 는 systemd 가 자기 자식에게만 주는 환경변수다.
+# ----------------------------------------------------------------------
+if [[ -z "${INVOCATION_ID:-}" ]] \
+   && systemctl is-active --quiet "${SERVICE_NAME}" 2>/dev/null; then
+  echo "거부: ${SERVICE_NAME} 가 이미 스택을 돌리고 있습니다." >&2
+  echo "  두 벌이 뜨면 카메라 단일 오픈(32-3)이 깨지고 영상이 간헐적으로 끊깁니다." >&2
+  echo "  로그를 보려면 : journalctl -u sentinel-demo -f" >&2
+  echo "  다시 올리려면 : sudo systemctl restart sentinel-demo" >&2
+  echo "  손으로 올리려면: sudo systemctl stop sentinel-demo 뒤에 이것을 부릅니다." >&2
+  exit 1
+fi
+
+# ----------------------------------------------------------------------
+# 어느 코드로 뜨는지 남긴다 (S15P11A301-294)
+#
+# 이 워크스페이스는 symlink(egg-link) 설치라 `install/` 이 소스를 직접 가리킨다.
+# 즉 **체크아웃돼 있는 브랜치가 곧 로봇이 실행하는 코드다.** 서비스가 enabled 인
+# 동안에는 부팅만으로 스택이 뜨므로, 기능 브랜치를 체크아웃한 채 재부팅하면
+# 로봇이 경고 없이 그 코드로 뜬다. 2026-08-05 저녁에 실제로 그 상태였다.
+#
+# 막지는 않는다 — 브랜치에서 실기동 검증을 하는 것은 정당한 사용이다. 대신
+# journalctl 에 남겨 사후에 "그날 무슨 코드였나"를 답할 수 있게 한다.
+# ----------------------------------------------------------------------
+if git -C "${REPO_ROOT}" rev-parse --git-dir >/dev/null 2>&1; then
+  branch="$(git -C "${REPO_ROOT}" branch --show-current 2>/dev/null || true)"
+  commit="$(git -C "${REPO_ROOT}" rev-parse --short HEAD 2>/dev/null || true)"
+  dirty=""
+  if [[ -n "$(git -C "${REPO_ROOT}" status --porcelain 2>/dev/null)" ]]; then
+    dirty=" +미커밋변경"
+  fi
+  echo "코드: ${branch:-<detached>} @ ${commit:-?}${dirty}"
+  if [[ "${branch}" != "develop" || -n "${dirty}" ]]; then
+    echo "  경고: develop 의 깨끗한 상태가 아닙니다. 이 스택은 위 코드로 돕니다." >&2
+    echo "        시연·검증 결과를 이 커밋과 함께 기록하십시오." >&2
+  fi
+fi
+
 # ROS 소싱과 DDS 격리 설정(S15P11A301-218). 값은 그 파일에만 있다 — 여기에
 # 복사하면 두 곳이 어긋나고, 어긋나면 노드들이 서로를 못 본 채 조용히 돈다.
 # ShellCheck 는 -x 없이는 source 를 따라가지 못한다(SC1091). CI 는 기본

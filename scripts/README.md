@@ -50,28 +50,45 @@ ESP32 두 보드는 같은 CH340(1a86:7523)이고 **이 칩은 시리얼 번호�
 
 ## 젯슨 ROS 스택 실행
 
+**진입점은 둘이다 — `demo_up.sh`와 `demo_down.sh`.** 나머지는 그 둘이 쓰는
+밑단이거나 특정 상황 전용이다.
+
 | 스크립트 | 하는 일 |
 |---|---|
 | `demo_up.sh` | 센서·SLAM·스트리밍·녹화·임무·브리지·탐지를 순차 기동 |
 | `demo_down.sh` | 그 스택을 전부 내리고 **남은 프로세스를 확인한다** |
-| `start_sentinel.sh` | 중복 검사 → 센서 → 토픽 확인 → 스트리밍·MediaMTX |
-| `stop_sentinel.sh` | 센서·스트리밍만 정리 (`start_sentinel.sh`의 짝) |
 | `viz_up.sh` | 돌고 있는 스택에 Foxglove Bridge를 붙인다 |
-| `viz_down.sh` | Bridge만 떼고 스택은 그대로 둔다 |
+| `viz_down.sh` | Bridge만 떼고 스택은 그대로 둔다 (8765 노출 완화, 아래 참고) |
 | `ros_env.sh` | **source 전용.** ROS 소싱과 DDS 격리 설정이 있는 유일한 곳 |
 | `jetson_voice_preflight.sh` | 원격 ASR·VAD·GMS·사전녹음·마이크·rclpy를 실제 호출해 음성 기동 전 점검 |
 
-**`stop_sentinel.sh`로 데모 스택을 내릴 수 없다.** 이름 때문에 그렇게 보이지만
-그것은 `start_sentinel.sh`의 짝이고 센서·스트리밍만 덮는다. 데모 스택은
-`demo_down.sh`를 쓴다. 자세한 경계는 아래 「내릴 때 무엇이 남는가」에 있다.
+### 먼저 알아야 하는 것 — systemd 서비스가 규칙을 바꾼다
 
-이름이 `start_streaming`이 아닌 이유는 켜는 대상이 스트리밍만이 아니기
-때문이다. 지금은 센서와 스트리밍이고 여기에 녹화(S15P11A301-123)와 AI·임무
-노드가 붙는다. 명세 37-3의 systemd 유닛도 `sentinel-*` 접두어이므로 나중에
-서비스화할 때 이름이 그대로 이어진다.
+`sentinel-demo.service`가 켜져 있는지에 따라 **같은 명령의 의미가 달라진다.**
+이것을 모르고 "내렸는데 계속 돈다"를 겪었다(S15P11A301-294).
+
+| 서비스 상태 | 내리기 | 올리기 |
+|---|---|---|
+| active (시연 구성) | `demo_down.sh` — 안에서 `systemctl stop`을 탄다 | `sudo systemctl start sentinel-demo` |
+| 꺼짐 (개발 구성) | `demo_down.sh` — 프로세스를 정리한다 | `./scripts/demo_up.sh` |
+
+서비스가 active 인 동안 **프로세스만 죽이는 경로는 무효다.** launch 는 SIGINT 로
+exit 1 로 끝나고, `Restart=on-failure`가 그것을 고장으로 읽어 5초 뒤 스택 전체를
+되살린다. `demo_down.sh`가 이제 그것을 감지해 `systemctl stop`으로 내리므로 어느
+구성에서든 같은 명령을 쓰면 된다.
+
+`demo_up.sh`는 서비스가 이미 돌고 있으면 **거부한다.** 두 벌이 뜨면 카메라 단일
+오픈(32-3)이 깨지고 MediaMTX가 같은 경로에 두 번 바인딩하는데, 증상이 "안 뜬다"가
+아니라 영상이 간헐적으로 끊기는 것이라 원인을 찾기 어렵다(S15P11A301-125).
+
+또한 `demo_up.sh`는 기동 시 **어느 브랜치·커밋으로 뜨는지 출력한다.** 이
+워크스페이스는 symlink 설치라 체크아웃된 코드가 곧 실행 코드이고, 서비스가
+enabled 인 동안에는 부팅만으로 스택이 뜨므로 기능 브랜치를 체크아웃한 채
+재부팅하면 로봇이 그 코드로 뜬다. 막지는 않되(브랜치 실기동 검증은 정당하다)
+`journalctl -u sentinel-demo`에 남겨 사후에 확인할 수 있게 한다.
 
 설치(`setup_jetson.sh`)는 이 기계를 개발 가능 상태로 만드는 1회 작업이고,
-실행(`start_sentinel.sh`)은 매번 하는 작업이다. 두 축을 섞지 않는다.
+실행(`demo_up.sh`)은 매번 하는 작업이다. 두 축을 섞지 않는다.
 
 ```bash
 # 데모 전체 스택. 개별 기능은 launch 인자로 끌 수 있다.
@@ -81,17 +98,13 @@ ESP32 두 보드는 같은 CH340(1a86:7523)이고 **이 칩은 시리얼 번호�
 ./scripts/demo_down.sh                       # 전부 내린다
 ./scripts/demo_down.sh --dry-run             # 무엇을 정리할지만 본다
 ./scripts/jetson_voice_preflight.sh           # 음성 노드 기동 전 실장비 점검
-
-# 센서·스트리밍만 (개발용)
-./scripts/start_sentinel.sh                  # HTTPS (기본)
-./scripts/start_sentinel.sh --no-tls         # 평문 HTTP
-./scripts/start_sentinel.sh --sensors-only   # 센서만, 스트리밍 없이
-./scripts/stop_sentinel.sh
 ```
 
-`start_sentinel.sh`는 센서·스트리밍 경로를 빠르게 확인하는 개발용 진입점이고,
-`demo_up.sh`는 실제 데모 구성을 한 번에 올리는 진입점이다. 둘을 동시에 실행하면
-카메라와 MediaMTX 발행자가 중복되므로 먼저 실행한 쪽을 종료하고 전환한다.
+부분 기동 스크립트(`start_sentinel.sh`·`stop_sentinel.sh`)는 **제거했다**
+(S15P11A301-294). 센서·스트리밍만 덮어 스택의 3분의 1만 내렸고, 그것이
+S15P11A301-192의 메모리 오진을 두 번 낸 경로다 — 탐지 노드 1601MB가 CUDA
+컨텍스트를 쥔 채 남았다. 일부만 필요하면 `demo_up.sh`에 `enable_*:=false`를
+준다. 그러면 내리는 명령이 하나로 유지된다.
 
 ### 부팅 자동 시작
 
@@ -401,32 +414,45 @@ DDS는 IP가 아니라 **LAN 멀티캐스트로** 상대를 찾는다. 같은 �
 
 ### 내릴 때 무엇이 남는가
 
-`demo_up.sh`가 띄우는 것을 실측으로 열거했다. `demo.launch.py` 아래 15개다.
+`demo_up.sh`가 띄우는 것을 실측으로 열거했다. `demo.launch.py` 아래 **17개**다.
 
-| 프로세스 | 메모리 | `stop_sentinel.sh` | `demo_down.sh` |
-|---|---|---|---|
-| `ros2 launch ... demo.launch.py` | 66MB | | O |
-| `usb_cam_node_exe` | 68MB | O | O |
-| `ydlidar_ros2_driver_node` | 25MB | O | O |
-| `robot_state_publisher` | 26MB | O | O |
-| `static_transform_publisher` | 26MB | | O |
-| `async_slam_toolbox_node` | **551MB** | | O |
-| `mediamtx` | 49MB | O | O |
-| `stream_pipeline` | **456MB** | O | O |
-| `recording_manager` | 46MB | | O |
-| `map_saver` | 50MB | | O |
-| `map_uploader` | 50MB | | O |
-| `media_uploader` | 51MB | | O |
-| `mission_manager` | 60MB | | O |
-| `sentinel_voice.ros_node` | 42MB | | O |
-| `src.ros_main` (탐지) | **1601MB** | | O |
+측정 조건: 2026-08-06, 기본 인자로 기동해 약 40분 경과한 스택(탐지·SLAM 은 사용
+시간에 따라 늘어난다). RSS 는 고정값이 아니라 자릿수만 의미가 있다.
 
-`stop_sentinel.sh`로 내리면 **9개가 남고 그중 탐지 1601MB와 SLAM 551MB가 있다.**
-8GB 장비에서 2.1GB가 물린 채로 다음 실행을 시도하게 된다.
+| 프로세스 | 메모리 |
+|---|---|
+| `ros2 launch ... demo.launch.py` | 43MB |
+| `usb_cam_node_exe` | 66MB |
+| `ydlidar_ros2_driver_node` | 17MB |
+| `robot_state_publisher` | 17MB |
+| `static_transform_publisher` | 16MB |
+| `async_slam_toolbox_node` | **268MB** (지도가 커지면 늘어난다, 실측 551MB 도 봤다) |
+| `mediamtx` | 55MB |
+| `stream_pipeline` | **456MB** |
+| `recording_manager` | 40MB |
+| `map_saver` | 39MB |
+| `map_uploader` | 40MB |
+| `media_uploader` | 50MB |
+| `mission_manager` | 40MB |
+| `cloud_bridge` | 66MB |
+| `sentinel_voice.ros_node` | 51MB |
+| `src.ros_main` (탐지) | **1795MB** |
+| `foxglove_bridge` | 40MB |
+
+S15P11A301-217 이 열거했을 때는 15개였다. `cloud_bridge`와 `foxglove_bridge`가
+그때는 떠 있지 않았고 지금은 기본으로 뜬다 — `demo_down.sh`의 `node_patterns`는
+그때 이미 둘을 포함해 뒀으므로(조건부로 뜨는 노드를 목록에서 빼면 그 조건이 켜진
+날에만 남는다) 정리에는 구멍이 없었다.
+
+**부분 teardown 이 왜 위험한가.** 제거된 `stop_sentinel.sh`는 위 15개 중 5개만
+덮었다. 나머지 9~10개가 남고 그중 탐지 1601MB와 SLAM 551MB가 있어, 8GB 장비에
+2.1GB가 물린 채로 다음 실행을 시도하게 된다.
 
 이 사고가 두 번 났다. S15P11A301-192에서 "메모리 부족"의 원인을 VSCode로 잘못
 짚었는데, 실제 원인은 teardown이 `src.ros_main`을 빼먹어 CUDA 컨텍스트가 계속
-잡혀 있던 것이었다. 그 앞에는 `usb_cam`을 빼먹은 같은 사고가 있었다.
+잡혀 있던 것이었다. 그 앞에는 `usb_cam`을 빼먹은 같은 사고가 있었다. 그래서
+S15P11A301-294가 부분 teardown 경로를 아예 제거했다 — 목록이 둘이면 한쪽은
+반드시 낡는다.
 
 그래서 `demo_down.sh`는 **정리한 뒤 다시 훑어 확인하고 남아 있으면 실패로 끝낸다.**
 "끄는 명령을 실행했다"와 "실제로 다 내려갔다"는 다르다.
@@ -458,15 +484,19 @@ include하므로 **한 번에 셋이 뜬다.**
 `/scan`이 안 올라오면 스크립트가 경고하지만 실패로 다루지는 않는다. 라이다가
 없어도 스트리밍은 되기 때문이다.
 
-### 중복 검사가 핵심이다
+### 중복 기동을 막는 것이 핵심이다
 
-`start_sentinel.sh`는 **이미 실행 중이면 거부한다.** MediaMTX는 한 경로에
-발행자 하나만 허용하므로 `stream_pipeline`이 두 개 뜨면 서로 경로를 빼앗으며
-재구성을 반복하고, 증상이 네트워크 문제처럼 보인다.
+`demo_up.sh`는 `sentinel-demo.service`가 이미 스택을 돌리고 있으면 **거부한다.**
+MediaMTX는 한 경로에 발행자 하나만 허용하므로 `stream_pipeline`이 두 개 뜨면
+서로 경로를 빼앗으며 재구성을 반복하고, 증상이 네트워크 문제처럼 보인다.
 
-`robot_state_publisher`도 함께 검사한다. 정리 목록에서 빠져 있던 동안
-start/stop을 돌 때마다 고아가 하나씩 쌓여 3개까지 누적됐다. 그것들이 같은 TF를
-중복 발행하므로 하위 노드가 흔들린다.
+`robot_state_publisher`가 누적되는 것도 같은 뿌리다. 정리 목록에서 빠져 있던
+동안 기동·정지를 돌 때마다 고아가 하나씩 쌓여 3개까지 갔고, 그것들이 같은 TF를
+중복 발행하므로 하위 노드가 흔들렸다. 그래서 `demo_down.sh`가 정리 후 잔여를
+다시 훑는다.
+
+서비스를 끈 개발 구성에서 손으로 두 번 띄우는 것은 막지 않는다 — 그 경우
+`demo_down.sh`로 먼저 내리고 다시 올린다.
 
 ### 프로세스를 셀 때 pgrep을 쓰지 않는다
 
@@ -492,10 +522,26 @@ cd frontend && npm run dev
 `-H 0.0.0.0` 같은 인자가 필요 없고, 감싸는 스크립트를 두면 표준 명령을 한 겹
 가리기만 한다.
 
-대신 `start_sentinel.sh`가 `frontend/.env.local`의
-`NEXT_PUBLIC_LOCAL_STREAM_URL`을 현재 IP와 **대조해 경고한다.** 그 값은 IP가
-박혀 있어서 DHCP가 주소를 바꾸면 화면이 "연결 중"에서 멈추고 서버 로그에는
-아무것도 남지 않는다. 원인을 찾기 어려운 종류라 미리 잡는다.
+**`.env.local` IP 대조 검사는 없어졌다 (S15P11A301-294).** `start_sentinel.sh`가
+`frontend/.env.local`의 `NEXT_PUBLIC_LOCAL_STREAM_URL`을 현재 IP와 대조해
+경고했는데, 그 스크립트를 제거하면서 함께 사라졌다. `demo_up.sh`로 옮기지 않은
+이유는 그것이 로봇 스택 진입점이고 부팅 시 systemd 로 돌아 프런트 경고를 낼
+자리가 아니기 때문이다.
+
+**남은 위험은 그대로다.** 그 값에 IP가 박혀 있어서(현재
+`https://70.12.247.77:8889/sentinel/whep`) DHCP가 주소를 바꾸면 화면이 "연결
+중"에서 멈추고 서버 로그에는 아무것도 남지 않는다. 로컬 dev 서버를 쓸 때는 손으로
+대조한다.
+
+```bash
+hostname -I | awk '{print $1}'          # 젯슨 현재 IP
+grep NEXT_PUBLIC_LOCAL_STREAM_URL frontend/.env.local
+```
+
+배포된 관제 웹(Vercel)은 `.env.local`을 읽지 않으므로 이 위험은 **로컬 dev
+서버에만** 해당한다. 근본적으로는 이 값을 `jetson.sentinel-ugv.xyz`(공인 인증서가
+발급된 도메인, S15P11A301-145)로 바꾸면 IP 변경과 무관해진다 — 시연 전에 스트림
+설정을 건드리지 않기 위해 지금은 그대로 둔다.
 
 값을 고친 뒤에는 dev 서버를 다시 시작해야 한다. Next.js는 `NEXT_PUBLIC_` 값을
 빌드 시점에 코드에 넣기 때문이다.

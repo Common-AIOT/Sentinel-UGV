@@ -26,6 +26,24 @@ export interface SensorReading {
   updatedAt: number | null;
 }
 
+/**
+ * 주행 지표 (S15P11A301-300). 후륜 MT6701 엔코더 2개를 ESP32 가 계수하고 젯슨이
+ * 역산한 오도메트리다 — 라이다가 아니다(`message_mapper.py`, nav_msgs/Odometry 의 twist).
+ *
+ * 그래서 센서 보드가 빠지면 온습도와 함께 빈다. 라이다 SLAM 이 추정하는 위치(x·y·yaw)는
+ * 그때도 오므로, "지도에서는 움직이는데 속도는 —" 이 정상 조합이다.
+ */
+export interface MotionReading {
+  linearVelocity: number | null;
+  angularVelocity: number | null;
+  /** 마지막 수신 시각(ms). null 이면 아직 받은 값이 없다. */
+  updatedAt: number | null;
+}
+
+export const INITIAL_MOTION: MotionReading = {
+  linearVelocity: null, angularVelocity: null, updatedAt: null,
+};
+
 export interface DetectionEvent {
   id: string;
   timestamp: number;

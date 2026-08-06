@@ -160,6 +160,10 @@ export interface TelemetryLatest {
   humidity: number | null;
   mcuTime: string | null;
   mcuConnected: boolean | null;
+  /** 주행 지표 (#300). robot_pose 에서 오므로 시각이 또 따로다 — 신선도는 poseTime 으로 본다. */
+  poseTime: string | null;
+  linearVelocity: number | null;
+  angularVelocity: number | null;
 }
 
 export interface MapView {

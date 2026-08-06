@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   Maximize2,
@@ -9,7 +8,6 @@ import {
   Signal,
 } from "lucide-react";
 
-import { useRobot } from "@/features/robot/RobotContext";
 import { OverlayLine, OverlayStack } from "@/features/telemetry/PanelOverlay";
 import { useStreaming } from "./StreamingContext";
 import type { StreamState, WhepStatus } from "./useWhepStream";
@@ -82,48 +80,10 @@ function statsTooltip(status: WhepStatus): string {
   return lines.join("\n");
 }
 
-/**
- * 탐지 수 오버레이 줄 (S15P11A301-200).
- *
- * 상단 바 배지에서 옮겼다. 그쪽에는 "임무 이력" 링크와 같은 모양의 배지가
- * 나란히 있어서 서로 다른 내용이라는 것이 읽히지 않았다. 관측값이므로 영상
- * 위, 스트림 통계 바로 아래가 제자리다.
- *
- * 새 발견이 오면 2.5초 강조한다. 팝업(제거됨, S15P11A301-196)처럼 영상을
- * 가리지 않으면서, 조용히 숫자만 바뀌어 발표 중 아무도 못 보는 것도 막는다.
- * 첫 렌더의 0에서 N으로 뛰는 것(새로고침 복구)은 강조하지 않는다.
- *
- * 값의 출처는 실 임무의 encounter 폴링뿐이다 — 목업 탐지는 없앴다.
- */
-function DetectionLine() {
-  const { detections } = useRobot();
-  const [flash, setFlash] = useState(false);
-  const prev = useRef(0);
-
-  useEffect(() => {
-    if (detections.length > prev.current && prev.current > 0) {
-      setFlash(true);
-      const timer = setTimeout(() => setFlash(false), 2500);
-      prev.current = detections.length;
-      return () => clearTimeout(timer);
-    }
-    prev.current = detections.length;
-  }, [detections.length]);
-
-  const latest = detections[0];
-  return (
-    <OverlayLine
-      kind="탐지"
-      tone={detections.length > 0 ? "warn" : "idle"}
-      flash={flash}
-      title="임무 중 확정된 발견 수. 상세는 임무 이력에서 본다."
-    >
-      {detections.length === 0
-        ? "없음"
-        : `${detections.length}명 · 최근 ${new Date(latest.timestamp).toLocaleTimeString("ko-KR", { hour12: false })}`}
-    </OverlayLine>
-  );
-}
+// 탐지 수 오버레이 줄(S15P11A301-200)은 뺐다 (S15P11A301-300, 팀 의견).
+// 영상 위에 얹은 관측값이 영상 자체를 보는 것을 방해했다. 발견 정보는 임무 이력의
+// 발견 목록과 지도 마커에 있고, 그쪽이 시각·위치·영상까지 함께 보여준다.
+// 스트림 통계 줄(STREAM)은 남긴다 — 영상이 왜 안 나오는지 판단하는 근거다.
 
 interface VideoPanelProps {
   isMain?: boolean;
@@ -217,10 +177,7 @@ export default function VideoPanel({ isMain = false, onSwap }: VideoPanelProps) 
           없애는 것을 혼동한 것이다.
 
           재생 중이 아니면 사이드바에서도 상태를 붙인다. `연결 중 · LOCAL`은
-          짧아서 접히지 않고, 검은 화면의 이유를 알려준다.
-
-          탐지 줄은 메인에만 둔다. 발견 시각이 붙어 길고, 사이드바는 참조
-          화면이다. 툴팁은 양쪽 모두 유지해 상세 지표를 볼 경로를 남긴다. */}
+          짧아서 접히지 않고, 검은 화면의 이유를 알려준다. */}
       <OverlayStack>
         <OverlayLine
           kind="STREAM"
@@ -245,7 +202,6 @@ export default function VideoPanel({ isMain = false, onSwap }: VideoPanelProps) 
             path
           )}
         </OverlayLine>
-        {isMain && <DetectionLine />}
       </OverlayStack>
 
       {/* 버튼은 항상 보이되 hover에서 선명해진다. hover에만 나타나면

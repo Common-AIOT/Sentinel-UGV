@@ -42,7 +42,7 @@
 - **Jetson**: 센서 수집, SLAM, 자율 탐사, 주행 및 안전 제어, 이벤트 녹화·스트리밍
 - **AI**: YOLO 사람 탐지·추적(`ai/detection`), 음성 상호작용·원격 ASR·잡음 제거(`ai/voice`)
 - **Backend**: 임무·텔레메트리·이벤트 API, MQTT 구독, WebSocket, S3 호환 스토리지 연계
-- **Frontend**: 실시간 영상·지도·상태 관제, 게임패드 수동 조작, 임무 이력
+- **Frontend**: 실시간 영상·지도·상태 관제, 운행 모드 전환과 임무 명령, 임무 이력
 - **Infrastructure**: PostgreSQL/TimescaleDB, MinIO, Mosquitto, MediaMTX, Docker Compose
 - **Common**: 외부 프로토콜, 스키마, 샘플 메시지의 단일 기준점
 

@@ -110,6 +110,17 @@ class SegmentIndex:
         `muxed_pts_ns`는 mpegtsmux를 지난 값이며 1시간 오프셋이 붙어 있다. 둘을
         같이 남기는 이유는 재생 문제를 조사할 때 TS 타임스탬프가 필요하기
         때문이다.
+
+        **`first_pts_ns`로 조각 순서를 판정하면 안 된다** (S15P11A301-304). 이 값은
+        호출부가 조각 경계에서 읽는 「그 순간 마지막으로 밀어 넣은 입력 PTS」이고,
+        `_on_format_location`은 GStreamer 스트리밍 스레드에서 불리는데 프레임을
+        미는 것은 ROS 콜백 스레드다. 두 스레드 사이에 appsrc·큐 깊이만큼의 시차가
+        있어 **이웃 조각이 같은 값을 기록할 수 있다.** 그것을 역행으로 판정해
+        이벤트 MP4 17건을 버린 적이 있다. 순서 판정은 `muxed_pts_ns`로 한다
+        (`segment_store.continuity_report`).
+
+        그래도 `first_pts_ns`를 남기는 이유는 3초 사전 영상을 찾는 데는 입력 기준이
+        맞기 때문이다. 32-5가 이 필드를 입력 기준으로 둔 이유가 그것이다.
         """
         now = time.time()
         self._close_open(now)

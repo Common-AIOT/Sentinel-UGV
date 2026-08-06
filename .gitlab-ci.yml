@@ -253,7 +253,10 @@ test:backend:
     - cd backend
     - chmod +x gradlew
     - ./gradlew --no-daemon bootJar -x test
-    - ./gradlew --no-daemon test --tests '*MessageContractTest'
+    # 계약 시험 전부를 돌린다. 패턴이 '*MessageContractTest' 였을 때는 새로 추가한
+    # ServerPublishContractTest(S15P11A301-288)가 이름이 달라 CI 에서 빠졌다 —
+    # 시험을 만들어 놓고 돌지 않는 것이 없는 것보다 나쁘다(검사한다고 믿게 된다).
+    - ./gradlew --no-daemon test --tests '*ContractTest'
 
 # Dockerfile 자체의 오류를 MR 단계에서 잡습니다 (S15P11A301-130).
 #

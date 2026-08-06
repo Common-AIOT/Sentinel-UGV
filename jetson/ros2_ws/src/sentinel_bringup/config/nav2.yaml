@@ -74,7 +74,19 @@ controller_server:
       plugin: "nav2_controller::SimpleGoalChecker"
       stateful: true
       xy_goal_tolerance: 0.15
-      yaw_goal_tolerance: 0.30
+      # 도착 자세(yaw)를 사실상 보지 않는다 (S15P11A301-172).
+      #
+      # 조향 차량은 제자리 회전을 못 하므로 **도착 헤딩을 고를 수 없다** —
+      # 접근 경로가 정하는 대로 끝난다. 0.30rad(17°) 를 요구하면 위치는 맞는데
+      # 자세가 안 맞아 목표가 영원히 「도달」이 되지 않고, 로봇이 그 자리에서
+      # 멈춘 채 progress checker 의 15초를 채운 뒤 ABORTED 로 끝난다. 그러면
+      # 도달 실패로 적립돼 세 번이면 그 자리가 후보에서 빠진다 — 실제로는
+      # **도착했는데** 못 갔다고 기록되는 것이다.
+      #
+      # 탐사가 목표 yaw 를 미관측 방향으로 잡는 것은 「도착 즉시 정면이 유효
+      # 관측」을 노린 것이고, 그 헤딩은 goal checker 가 아니라 **스윕 실행부**가
+      # 주행으로 맞춘다(아직 미구현 — S15P11A301-172 남은 항목).
+      yaw_goal_tolerance: 3.15
 
     FollowPath:
       # shim 을 벗겼다 (S15P11A301-172). 조향 차량은 제자리 회전을 못 한다 —

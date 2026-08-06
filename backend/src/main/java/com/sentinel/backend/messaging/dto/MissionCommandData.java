@@ -17,4 +17,11 @@ public record MissionCommandData(
     public static final String TYPE_RESUME = "RESUME";
     public static final String TYPE_RETURN = "RETURN";
     public static final String TYPE_STOP = "STOP";
+    /** 수동 전환. 젯슨이 모터 보드에 SET_MODE(MANUAL) 을 보낸다 (S15P11A301-298). */
+    public static final String TYPE_MANUAL = "MANUAL";
+    /**
+     * 자율 복귀. 모터 보드가 **거부할 수 있는 유일한 명령**이다 — 최근 500ms 안에
+     * 모바일 조종 입력이 있었으면 {@code REJECTED/MANUAL_INPUT_ACTIVE} 로 회신한다.
+     */
+    public static final String TYPE_AUTO = "AUTO";
 }

@@ -47,11 +47,21 @@ MESSAGE_TYPE_MISSION_COMMAND = "MISSION_COMMAND"
 # RESUME_REQUESTED 는 음성 쪽이 보고를 마치고 탐사를 이어가겠다는 요청이며
 # REPORTING 에서만 유효하다. PAUSED 를 푸는 것은 30.5 가 자동 재개를 금지했으므로
 # 운영자의 명시적 재개, 즉 RESUME_APPROVED 뿐이다.
+#
+# MANUAL·AUTO 가 RESUME 과 별개인 것도 같은 종류의 구분이다(S15P11A301-298).
+# AUTO 는 수동 권한을 회수해 PAUSED 로 되돌릴 뿐이고 주행을 재개하지 않는다 —
+# 다시 움직이려면 운영자가 이어서 RESUME 을 눌러야 한다(14.2, SR-008).
+#
+# 두 신호는 `*_REQUESTED` 다. `*_ENGAGED`(사실)로 바로 보내지 않는 이유는 모터
+# ESP32 가 거부할 수 있기 때문이다. 그 왕복은 mission_manager 의 mode_gateway 가
+# 맡고, 여기는 번역만 한다.
 COMMAND_TO_SIGNAL: dict[str, str] = {
     "START": "MISSION_START",
     "PAUSE": "PAUSE_REQUESTED",
     "RESUME": "RESUME_APPROVED",
     "STOP": "MISSION_COMPLETED",
+    "MANUAL": "MANUAL_REQUESTED",
+    "AUTO": "AUTO_REQUESTED",
 }
 
 # 26.2의 임무 상태를 31-5 state 채널의 `safetyState` enum으로 옮긴다.
@@ -75,8 +85,9 @@ SAFETY_STATE_BY_MISSION_STATE = {
     "POST_RECORDING": "STOPPED",
     "REPORTING": "STOPPED",
     "PAUSED": "STOPPED",
-    # deadman이 눌린 동안만 움직인다. 그 판단은 조종 노드가 하며 여기서는
-    # 모드가 수동이라는 사실만 전한다.
+    # 사람이 폰으로 굴리고 있을 수 있으므로 정지로 보고하지 않는다. 젯슨 자신은
+    # 어떤 속도도 내지 않지만(`MOVEMENT[MANUAL]=false`) 바퀴를 소유한 것은 모터
+    # ESP32 이고, 관제 화면의 "안전하게 멈춰 있는가"에 대한 답은 「아니오」다.
     "MANUAL": "RUNNING",
     "RETURNING": "RUNNING",
     # 임무가 끝나 다음 임무를 받을 수 있는 상태다.

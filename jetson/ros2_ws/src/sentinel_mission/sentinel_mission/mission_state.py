@@ -31,13 +31,25 @@
 26.2의 12개 상태 중 encounter 경로와 안전 전이를 구현한다.
 
     구현      SAFE_IDLE, EXPLORING, PERSON_APPROACHING, INTERACTING,
-              POST_RECORDING, REPORTING, PAUSED, ESTOP, ERROR
-    자리만    MANUAL, RETURNING, COMPLETED
+              POST_RECORDING, REPORTING, PAUSED, MANUAL, COMPLETED, ESTOP, ERROR
+    자리만    RETURNING
 
-`MANUAL`은 control session과 gamepad deadman이 필요하고(36장), `RETURNING`은
-home pose와 Nav2 목표 전송이 필요하다(23.5). 둘 다 이 티켓 범위 밖이므로 상태
-값만 두고 전이 트리거를 받지 않는다. 받지 않는 것을 조용히 무시하지 않고
+`RETURNING`은 home pose와 Nav2 목표 전송이 필요하다(23.5). 범위 밖이므로 상태 값만
+두고 전이 트리거를 받지 않는다. 받지 않는 것을 조용히 무시하지 않고
 `ignored_reason`으로 남긴다.
+
+## MANUAL은 이 머신이 판단하지 않고 **따라간다** (S15P11A301-298)
+
+액추에이션 중재자는 모터 ESP32다. 폰이 자기 핫스팟 위에서 모터 보드에 직결하므로
+젯슨은 그 조종 패킷을 볼 수도, 막을 수도 없다. 그래서 이 머신에 오는 것은
+`MANUAL_ENGAGED`/`AUTO_ENGAGED` — **보드가 이미 그렇게 됐다는 사실**이다. 운영자
+의도(`MANUAL_REQUESTED`/`AUTO_REQUESTED`)는 `mode_gateway`가 상태기계 앞에서
+가로채 보드에 물어보고, 답이 온 뒤에야 `*_ENGAGED`로 바꿔 넣는다.
+
+수동 진입은 26.3·14.2가 정한 대로 `PAUSED`를 경유한다. 탐사 중이었다면 한 틱 안에
+`EXPLORING → PAUSED → MANUAL` 두 전이가 순서대로 발행된다(`_pending_manual`).
+수동을 벗어나는 길은 관제 「자율」 하나뿐이고 착지점은 `PAUSED`다 — 주행 재개는
+별도 `RESUME_APPROVED`이며 자동 재개는 어떤 경로로도 없다(SR-008, 30.5).
 """
 
 from __future__ import annotations
@@ -84,6 +96,20 @@ class Signal(str, Enum):
     # UNIMPLEMENTED 로 남아 있고, 신호만 만들면 갈 수 없는 상태로 보내게 된다.
     MISSION_COMPLETED = 'MISSION_COMPLETED'
 
+    # ---- 모드 전환 (S15P11A301-298) ----
+    #
+    # `*_ENGAGED` 는 **사실**이다. 모터 ESP32 가 수동 래치를 잡았거나 풀었고,
+    # 젯슨은 그것을 따라간다. `mode_gateway` 가 `DRIVE_STATE.state` 상승 엣지나
+    # `SET_MODE` ACK 에서 만든다.
+    #
+    # `*_REQUESTED` 는 **의도**다. 관제 버튼이 만든 것이며 보드 확인 전이다.
+    # `mode_gateway` 가 상태기계 앞에서 가로채므로 아래 핸들러에 닿으면 안 된다 —
+    # 닿았다면 가로채기가 깨진 것이므로 조용히 무시하지 않고 시끄럽게 거부한다.
+    MANUAL_ENGAGED = 'MANUAL_ENGAGED'
+    AUTO_ENGAGED = 'AUTO_ENGAGED'
+    MANUAL_REQUESTED = 'MANUAL_REQUESTED'
+    AUTO_REQUESTED = 'AUTO_REQUESTED'
+
 
 class Phase(str, Enum):
     """`/perception/encounter`로 나갈 phase. encounter.schema.json과 같아야 한다."""
@@ -106,8 +132,13 @@ MOVEMENT: dict[MissionState, tuple[bool, float | None]] = {
     MissionState.POST_RECORDING: (False, None),
     MissionState.REPORTING: (False, None),
     MissionState.PAUSED: (False, None),
-    # deadman이 눌린 동안만 허용한다(26.2). 그 판단은 조종 노드가 하며 여기서는
-    # 상태만으로 허용하지 않는다.
+    # **젯슨은 MANUAL 에서 어떤 움직임도 내지 않는다.** 자리표시자가 아니라 정확한
+    # 값이다 (S15P11A301-298).
+    #
+    # 26.2 는 "deadman 이 눌린 동안만 허용" 이라고 적었지만 그 deadman 은 폰에 있고
+    # 조종 패킷은 모터 ESP32 로 직접 간다. 젯슨에는 수동 속도 소스 자체가 없다 —
+    # `/cmd_vel_manual` 은 발행자가 영구히 없다(`sentinel_safety/mux.py`). 즉 젯슨이
+    # 낼 수 있는 것은 0 뿐이고, 사람이 조종하는 동안 바퀴를 굴리는 것은 보드다.
     MissionState.MANUAL: (False, None),
     MissionState.RETURNING: (True, None),
     MissionState.COMPLETED: (False, None),
@@ -115,8 +146,23 @@ MOVEMENT: dict[MissionState, tuple[bool, float | None]] = {
     MissionState.ERROR: (False, None),
 }
 
-# 이 티켓에서 전이 트리거를 받지 않는 상태. 36장·23.5가 필요하다.
-UNIMPLEMENTED = frozenset({MissionState.MANUAL, MissionState.RETURNING})
+# 전이 트리거를 받지 않는 상태. 23.5(home pose 복귀 주행)가 필요하다.
+#
+# `MANUAL` 은 S15P11A301-298 에서 빠졌다 — `MANUAL_ENGAGED`/`AUTO_ENGAGED` 가 실제
+# 트리거이고, 도달 경로와 이탈 경로가 둘 다 있다.
+UNIMPLEMENTED = frozenset({MissionState.RETURNING})
+
+# `MANUAL_ENGAGED` 를 받았을 때 `PAUSED` 를 경유하지 않고 바로 갈 수 있는 상태.
+#
+# 26.3·14.2 가 "수동 진입은 SAFE_IDLE/PAUSED 에서만" 이라고 정했다. 그 밖의 상태
+# (탐사 중·상호작용 중)에서 들어오면 `PAUSED` 를 한 번 거쳐 두 전이를 낸다. 이미
+# 이 집합 안이면 경유할 것이 없으므로 한 전이로 끝난다.
+#
+# `COMPLETED` 를 넣은 이유는 `_mission_start` 와 같다 — 종료된 임무 뒤에도 로봇을
+# 손으로 옮겨야 할 일이 있고, 그때 PAUSED 를 억지로 경유시킬 이유가 없다.
+MANUAL_ENTRY_DIRECT = frozenset(
+    {MissionState.SAFE_IDLE, MissionState.PAUSED, MissionState.COMPLETED}
+)
 
 # 종료 절차에 들어간 상태. 사람이 안 보이는 것이 정상이므로 상실로 다시 끝내지
 # 않는다.
@@ -135,6 +181,18 @@ REASON_ERROR_LATCHED = 'ERROR_LATCHED'
 REASON_INVALID_STATE = 'INVALID_STATE'
 REASON_DUPLICATE_COMMAND = 'DUPLICATE_COMMAND'
 REASON_NOT_IMPLEMENTED = 'NOT_IMPLEMENTED'
+
+# ---- 모드 전환 거부 사유 (S15P11A301-298) ----
+#
+# 셋 다 `mode_gateway` 가 만든다. 모터 ESP32 는 새 ack-result 코드 없이
+# `COMMAND_ACK.boardState` 로 사유를 구분한다 — `REJECTED_STATE` +
+# `boardState=MANUAL_ACTIVE` 는 500ms 신선도 가드에 걸렸다는 뜻이다.
+#
+# 「자율」 버튼이 거부되는 것은 정상 동작이므로 운영자에게 무엇을 하면 되는지가
+# 전달돼야 한다. 관제의 문구는 frontend `REASON_LABEL` 에 있다.
+REASON_MANUAL_INPUT_ACTIVE = 'MANUAL_INPUT_ACTIVE'
+REASON_MOTOR_BOARD_REJECTED = 'MOTOR_BOARD_REJECTED'
+REASON_MOTOR_BOARD_NO_ACK = 'MOTOR_BOARD_NO_ACK'
 
 # COMMAND_ACK 의 status (31-6). command-ack.schema.json 의 enum 과 같아야 한다.
 #
@@ -251,6 +309,16 @@ class MissionStateMachine:
         # recorder가 먼저 끝나는 경합이 있고, 그 신호는 일회성이라 버리면
         # 다시 오지 않는다 — REPORTING에 영구 고착된다. 실기기에서 관측했다.
         self._early_report_committed: set[str] = set()
+        # 수동 진입 2단 전이의 남은 한 단 (S15P11A301-298).
+        #
+        # 26.3·14.2 가 수동 진입을 PAUSED 경유로 정했으므로 탐사 중 진입은 전이가
+        # 둘이다. 하나로 합치면 `previous` 가 EXPLORING 인 MANUAL 하나만 나가고
+        # 관제·녹화기가 PAUSED 를 못 본다 — `Phase.ENDED` 가 붙는 것도 1단이다.
+        #
+        # 노드가 아니라 여기 두는 이유: `_publish_status` 가 `machine.state` 를
+        # 읽으므로 두 status 는 순차 `_apply` 여야 하고, 그 순서를 노드가 재구성하면
+        # 규칙이 두 곳으로 갈라진다.
+        self._pending_manual = False
 
     # ------------------------------------------------------------------
     # 조회
@@ -273,14 +341,30 @@ class MissionStateMachine:
         return self.encounter.person_count if self.encounter else 0
 
     @property
+    def pending_step(self) -> bool:
+        """다음 `tick()` 이 곧바로 낼 전이가 남아 있는가 (S15P11A301-298).
+
+        호출부(`mission_manager_node._apply`)가 이것을 보고 `tick()` 을 한 번 밀어
+        두 status 가 같은 콜백에서 순서대로 발행되게 한다. 주기 타이머를 기다리면
+        관제가 수백 ms 동안 「일시정지」로 보인다.
+        """
+        return self._pending_manual
+
+    @property
     def control_mode(self) -> str:
         """자율/수동. `command_mux` 가 이 값으로 명령 소스를 고른다.
 
         **상태에서 파생되며 독립 필드가 아니다.** 26.3 이 수동 전환을 `PAUSED`
         경유로 정했고 `MANUAL` 이 그 상태이므로, "수동인데 임무가 진행 중" 이라는
-        조합은 존재하지 않는다. 그 덕에 수동 주행 중에는 후보를 봐도 encounter 가
+        조합은 존재하지 않는다. 그 덕에 수동 주행 중에는 후보를 봐도 새 encounter 가
         생기지 않는다(`observe_candidates` 가 `EXPLORING` 만 받는다) — 정지·STT·
         녹화가 수동 조종과 뒤엉키는 일이 구조적으로 막힌다.
+
+        **다만 이미 열려 있던 encounter 는 별도로 버려야 한다.** `PAUSED` 는 진행
+        중 encounter 를 끊되(`_cut_encounter`) 버리지는 않으므로, 거기서 MANUAL 로
+        들어가면 스테일 encounter 를 끌고 가고 `_merge_into_encounter` 가 수동 중에도
+        `CONFIRMED` 를 계속 낸다. 그래서 `_manual_engaged` 가 `_clear_encounter()`
+        를 부른다 (S15P11A301-298).
 
         어휘는 `state.schema.json` 을 따른다(`MANUAL` 또는 `AUTO`). `cloud_bridge`
         가 관제로 보낼 때 같은 규칙으로 파생하고 있었는데, 규칙이 두 곳에 있으면
@@ -599,6 +683,12 @@ class MissionStateMachine:
             Signal.PAUSE_REQUESTED: self._pause_requested,
             Signal.RESUME_APPROVED: self._resume_approved,
             Signal.MISSION_COMPLETED: self._mission_completed,
+            Signal.MANUAL_ENGAGED: self._manual_engaged,
+            Signal.AUTO_ENGAGED: self._auto_engaged,
+            # 여기 닿으면 안 되는 둘. 그래도 dict 에 넣는 이유는 KeyError 로 콜백이
+            # 죽으면 그 뒤의 신호까지 처리되지 않기 때문이다.
+            Signal.MANUAL_REQUESTED: self._manual_requested,
+            Signal.AUTO_REQUESTED: self._auto_requested,
         }[signal]
         if signal is Signal.MISSION_START:
             # 새 임무는 여기서 missionId 를 받으므로 만료 대상이 아니다.
@@ -870,6 +960,85 @@ class MissionStateMachine:
         return self._to(MissionState.EXPLORING, 'RESUME_APPROVED')
 
     # ------------------------------------------------------------------
+    # 모드 전환 (S15P11A301-298)
+    # ------------------------------------------------------------------
+
+    def _manual_engaged(self, now: datetime, detail: str) -> Transition:
+        """모터 보드가 수동 권한을 래치했다. 젯슨은 그 사실을 따라간다.
+
+        진입 경로가 둘이다 — 모바일 조작으로 보드가 스스로 래치한 암시적 승격과,
+        관제 「수동」 버튼이 보낸 `SET_MODE(MANUAL)` 이 수락된 명시적 전환. 둘 다
+        여기 도착할 때는 **이미 보드가 바퀴를 넘겨받은 뒤**이므로 거부할 수 없다.
+        거부해 봐야 젯슨만 사실과 다른 상태를 들고 있게 된다.
+
+        26.3·14.2 가 수동 진입을 `PAUSED` 경유로 정했으므로 탐사·상호작용 중이었다면
+        전이가 둘이다. 1단이 `PAUSED`(진행 중 encounter 를 `Phase.ENDED` 로 마감),
+        2단이 `MANUAL` 이며 `tick()` 이 낸다.
+        """
+        if self.state is MissionState.MANUAL:
+            # 원하는 상태에 이미 있다. `_mission_start` 의 EXPLORING 재진입과 같은
+            # 취급이며 조작자에게는 성공이므로 reason_code 를 붙이지 않는다.
+            return self._ignore('이미 MANUAL 상태다')
+
+        if self.state in MANUAL_ENTRY_DIRECT:
+            # 경유할 것이 없다. encounter 도 이 상태들에서는 없거나(SAFE_IDLE·
+            # COMPLETED) 이미 끊긴 것(PAUSED)이지만, PAUSED 는 **버리지는** 않았으므로
+            # 여기서 버린다 — 안 버리면 수동 중에 CONFIRMED 가 계속 나간다.
+            self._clear_encounter()
+            return self._to(MissionState.MANUAL, f'MANUAL_ENGAGED {detail}'.strip())
+
+        phase = self._cut_encounter(now)
+        self._pending_manual = True
+        return self._to(
+            MissionState.PAUSED,
+            f'MANUAL_ENGAGED {detail} (수동 진입 자동 경유)'.strip(),
+            phase=phase,
+        )
+
+    def _auto_engaged(self, now: datetime, detail: str) -> Transition:
+        """모터 보드가 수동 래치를 풀었다.
+
+        **목적지는 `PAUSED` 이며 절대 `EXPLORING` 이 아니다.** SR-008·30.5 가 자동
+        재개를 금지했고 14.2 가 수동 종료를 `PAUSED` 복귀로 정했다. 「자율」 버튼은
+        권한을 되찾는 것이고 다시 움직이는 것은 운영자의 별도 `RESUME_APPROVED` 다.
+        여기서 `EXPLORING` 으로 보내면 사람이 로봇 옆에 서 있는 채로 탐사가 재개된다.
+
+        `AUTO_ENGAGED` 는 보드가 수락한 뒤에만 온다. 500ms 안에 수동 입력이 있었다면
+        보드가 거부했고 `mode_gateway` 가 그것을 `MANUAL_INPUT_ACTIVE` ACK 로 바꿔
+        관제에 돌려주므로, 이 핸들러는 호출되지 않는다.
+        """
+        # **상태 검사보다 먼저다.** 1단(`PAUSED`)만 끝난 사이에 「자율」이 도착하면
+        # 상태는 이미 `PAUSED` 라 아래에서 무시로 빠지는데, pending 을 놔두면 다음
+        # tick 이 `MANUAL` 로 되돌려 「자율」을 눌렀는데 수동이 되는 결과가 된다.
+        dropped_pending = self._pending_manual
+        self._pending_manual = False
+
+        if self.state is not MissionState.MANUAL:
+            # 원하는 상태(자율)에 이미 있다. 성공이므로 reason_code 없이 무시한다.
+            note = ' 남은 수동 전환 단을 취소했다' if dropped_pending else ''
+            return self._ignore(
+                f'AUTO_ENGAGED 는 MANUAL 에서만 의미가 있다'
+                f'(현재 {self.state.value}).{note}'
+            )
+        return self._to(MissionState.PAUSED, f'AUTO_ENGAGED {detail}'.strip())
+
+    def _manual_requested(self, now: datetime, detail: str) -> Transition:
+        return self._ignore(
+            'MANUAL_REQUESTED 는 상태기계가 처리하지 않는다. mode_gateway 가 모터 '
+            '보드 확인을 거쳐 MANUAL_ENGAGED 로 바꿔 넣는다. 이 신호가 여기 닿았다면 '
+            '가로채기가 깨진 것이다',
+            REASON_INVALID_STATE,
+        )
+
+    def _auto_requested(self, now: datetime, detail: str) -> Transition:
+        return self._ignore(
+            'AUTO_REQUESTED 는 상태기계가 처리하지 않는다. mode_gateway 가 모터 '
+            '보드 확인을 거쳐 AUTO_ENGAGED 로 바꿔 넣는다. 이 신호가 여기 닿았다면 '
+            '가로채기가 깨진 것이다',
+            REASON_INVALID_STATE,
+        )
+
+    # ------------------------------------------------------------------
     # 시간 경과
     # ------------------------------------------------------------------
 
@@ -878,7 +1047,26 @@ class MissionStateMachine:
 
         `POST_RECORDING` 3초 경과와 최대 상호작용 시간이다. 주기적으로 불러야
         하며, 부르지 않으면 이벤트가 끝나지 않는다.
+
+        수동 진입 2단 전이도 여기서 마무리한다(S15P11A301-298). 시간이 아니라 남은
+        단계지만 같은 자리를 쓰는 이유는 호출부가 하나여야 하기 때문이다 — 노드가
+        `_apply` 끝에서 `pending_step` 을 보고 `tick()` 을 한 번 더 밀면 두 status 가
+        같은 콜백에서 순서대로 나간다.
         """
+        # **맨 앞이어야 한다.** POST_RECORDING 분기 뒤에 두면, 상호작용 중에 수동으로
+        # 들어간 경우 1단에서 PAUSED 가 됐어도 encounter 가 살아 있어 위쪽 분기가
+        # 먼저 걸린다. 그러면 2단이 밀리고 MANUAL 이 늦게 나간다.
+        if self._pending_manual:
+            self._pending_manual = False
+            if self.state is not MissionState.PAUSED:
+                # 1단과 2단 사이에 ESTOP 같은 더 급한 것이 끼어들었다. 수동으로
+                # 끌고 가지 않는다 — 그 상태들은 사람이 풀어야 한다(26.5).
+                return self._ignore(
+                    f'{self.state.value} 에서 남은 수동 전환 단을 버렸다'
+                )
+            self._clear_encounter()
+            return self._to(MissionState.MANUAL, 'MANUAL_ENGAGED (PAUSED 경유 2단)')
+
         encounter = self.encounter
 
         if self.state is MissionState.POST_RECORDING and encounter is not None:

@@ -6,6 +6,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
@@ -63,11 +65,48 @@ class ServerPublishContractTest {
 
     @Test
     void allMissionCommandTypesSatisfyContract() throws Exception {
-        // 명령 종류마다 발행 경로가 같지만, 어휘가 스키마 enum 을 벗어나면 여기서 걸린다.
-        for (String type : new String[] {"START", "PAUSE", "RESUME", "RETURN", "STOP"}) {
+        // 목록을 하드코딩하지 않고 **스키마에서 읽는다** (S15P11A301-298). 배열을
+        // 손으로 관리하면 계약에 명령이 추가될 때마다 여기를 함께 고쳐야 하고,
+        // 안 고치면 새 명령은 검사되지 않은 채로 통과한다.
+        List<String> types = commandTypeEnum();
+
+        // 빈 읽기도 실패해야 한다. 경로가 틀리거나 스키마 모양이 바뀌면 위 리스트가
+        // 조용히 비고, 그러면 반복문이 0회 돌아 "전부 통과"로 보인다.
+        assertTrue(types.contains("START"), "스키마에서 명령 enum 을 읽지 못했다: " + types);
+        assertTrue(types.contains("AUTO"), "MANUAL/AUTO 가 계약에 없다: " + types);
+
+        for (String type : types) {
             assertValid("envelope.schema.json",
                     publisher.writeValueAsString(missionCommandEnvelope(type)));
+            assertValid("mission-command.schema.json",
+                    publisher.writeValueAsString(new MissionCommandData(UUID.randomUUID(), type)));
         }
+    }
+
+    @Test
+    void serverCommandVocabularyMatchesTheContract() throws Exception {
+        // 서버가 아는 어휘와 계약의 어휘가 정확히 같아야 한다. 한쪽만 늘면
+        // 관제 버튼이 400 을 받거나(서버가 모름), 젯슨이 봉투를 버린다(계약 위반).
+        Set<String> contract = Set.copyOf(commandTypeEnum());
+        Set<String> server = Set.of(
+                MissionCommandData.TYPE_START,
+                MissionCommandData.TYPE_PAUSE,
+                MissionCommandData.TYPE_RESUME,
+                MissionCommandData.TYPE_RETURN,
+                MissionCommandData.TYPE_STOP,
+                MissionCommandData.TYPE_MANUAL,
+                MissionCommandData.TYPE_AUTO);
+        assertEquals(contract, server);
+    }
+
+    private List<String> commandTypeEnum() throws Exception {
+        Path path = SCHEMAS.resolve("mission-command.schema.json");
+        assertTrue(Files.exists(path), "mission-command.schema.json 스키마가 없다");
+        List<String> types = new ArrayList<>();
+        validatorMapper.readTree(Files.readString(path))
+                .path("properties").path("type").path("enum")
+                .forEach(node -> types.add(node.asText()));
+        return types;
     }
 
     @Test

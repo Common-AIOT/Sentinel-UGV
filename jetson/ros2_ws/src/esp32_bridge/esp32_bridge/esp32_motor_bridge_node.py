@@ -27,6 +27,12 @@ control_task), 이 노드가 죽거나 재시작해도 모터 ESP32는 독립적
 원칙의 예외이며, 그 근거는 `protective_relay` 모듈 docstring 에 있다 - 요지는
 지연(홉을 늘리지 않는다)과 독립성(`safety_gate` 가 죽어도 보호정지는 전달돼야
 한다)이다.
+
+**예외는 그 하나뿐이다.** `~/set_mode`(S15P11A301-298)는 예외가 아니라
+`~/drive_command` 와 같은 모양의 순수 중계다 - 판정은 `mission_manager` 의
+`mode_gateway` 가 하고 여기서는 이름을 바이트로 옮기기만 한다. 모드 전환에는
+protective_stop 을 예외로 만든 두 근거가 둘 다 없다: 100ms 디바운스와 500ms ACK
+예산이 있으므로 홉 하나가 문제되지 않고, `safety_gate` 와 독립일 필요도 없다.
 """
 
 from __future__ import annotations
@@ -49,10 +55,12 @@ from .packet_codec import (
     CrcError,
     DriveCommand,
     LengthError,
+    SetMode,
     UnknownMessageTypeError,
     VersionError,
     build_frame,
     pack_drive_command,
+    pack_set_mode,
     parse_frame,
     unpack_command_ack,
     unpack_diagnostic,
@@ -60,6 +68,8 @@ from .packet_codec import (
     unpack_hello_ack,
 )
 from .protocol_constants import (
+    ACK_RESULT_ACCEPTED,
+    BOARD_MODE_VALUES,
     BOARD_ROLE_MOTOR,
     MSG_COMMAND_ACK,
     MSG_DIAGNOSTIC,
@@ -68,8 +78,11 @@ from .protocol_constants import (
     MSG_ESTOP_COMMAND,
     MSG_HELLO,
     MSG_HELLO_ACK,
+    MSG_SET_MODE,
     MSG_STOP_COMMAND,
     PROTOCOL_VERSION,
+    ack_result_name,
+    message_type_name,
 )
 from .serial_transport import SerialTransport
 
@@ -129,6 +142,21 @@ class Esp32MotorBridgeNode(Node):
         self._diagnostics_pub = self.create_publisher(DiagnosticArray, "/diagnostics", 10)
 
         self.create_subscription(String, "~/drive_command", self._on_drive_command, 10)
+        # 모드 전환 중계 (S15P11A301-298). `~/drive_command` 와 같은 모양의 **순수
+        # 중계**이며 판단이 아니다 - 이름→바이트 변환은 `_MOTOR_STATE_NAMES` 와 같은
+        # 종류의 번역이다. RELIABLE 이어야 한다: 잃으면 mission_manager 가 500ms 뒤
+        # MOTOR_BOARD_NO_ACK 를 내고 운영자는 「보드가 죽었다」로 읽는데, 실제로는
+        # 프레임이 나가지도 않은 것이다.
+        self.create_subscription(
+            String,
+            "~/set_mode",
+            self._on_set_mode,
+            QoSProfile(
+                reliability=ReliabilityPolicy.RELIABLE,
+                history=HistoryPolicy.KEEP_LAST,
+                depth=10,
+            ),
+        )
         self.create_service(Trigger, "~/stop", self._on_stop_service)
         self.create_service(Trigger, "~/estop", self._on_estop_service)
 
@@ -218,6 +246,22 @@ class Esp32MotorBridgeNode(Node):
         self._last_steering_mdeg = cmd.target_steering_mdeg
         self._last_steering_rate_mdps = cmd.max_steering_rate_mdps
         self._send_frame(MSG_DRIVE_COMMAND, pack_drive_command(cmd))
+
+    def _on_set_mode(self, msg: String) -> None:
+        """`{"mode": "MANUAL"|"AUTO"}` → `SET_MODE` 프레임. 판단하지 않는다.
+
+        **재전송하지 않는다.** 누름당 프레임 하나다. `STOP_COMMAND` 를 3회 보내는
+        것은 멱등이기 때문이고 `SET_MODE` 는 아니다 - 3프레임이면 3ACK 이고 관제
+        쪽에서는 3전이가 된다. 손실은 mission_manager 의 500ms 타임아웃과 운영자
+        재시도가 덮는다.
+        """
+        try:
+            data = json.loads(msg.data)
+            requested = BOARD_MODE_VALUES[str(data["mode"])]
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+            self.get_logger().warn(f"set_mode 파싱 실패, 무시함: {exc}")
+            return
+        self._send_frame(MSG_SET_MODE, pack_set_mode(SetMode(requested, 0)))
 
     def _on_protective_stop(self, msg: Bool) -> None:
         now_s = self.get_clock().now().nanoseconds / 1e9
@@ -320,12 +364,25 @@ class Esp32MotorBridgeNode(Node):
         msg.data = json.dumps(
             {
                 "acked_message_type": ack.acked_message_type,
+                # 이름을 함께 싣는다 (S15P11A301-298). 구독자가 숫자 표를 각자
+                # 들고 있으면 프로토콜이 늘 때마다 조용히 어긋난다.
+                "acked_message_type_name": message_type_name(ack.acked_message_type),
                 "acked_sequence": ack.acked_sequence,
                 "result": ack.result,
+                "result_name": ack_result_name(ack.result),
                 "board_state": _state_name(ack.board_state),
             }
         )
         self._command_ack_pub.publish(msg)
+
+        if ack.result != ACK_RESULT_ACCEPTED:
+            # 오늘까지는 거부된 STOP_COMMAND 조차 완전 무음이었다. 50Hz 홍수를
+            # 막되(펌웨어가 엣지 게이팅한다) 사람이 볼 수 있는 창구는 있어야 한다.
+            self.get_logger().warn(
+                f"모터 보드가 {message_type_name(ack.acked_message_type)} 를 거부했다: "
+                f"{ack_result_name(ack.result)} (boardState={_state_name(ack.board_state)})",
+                throttle_duration_sec=5.0,
+            )
 
     def _handle_diagnostic(self, payload: bytes) -> None:
         diag = unpack_diagnostic(payload)

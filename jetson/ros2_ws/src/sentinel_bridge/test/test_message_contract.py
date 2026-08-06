@@ -811,6 +811,23 @@ def test_stop_maps_to_mission_completed_and_resume_to_approved():
     assert COMMAND_TO_SIGNAL["PAUSE"] == "PAUSE_REQUESTED"
 
 
+def test_mode_commands_map_to_requests_not_facts():
+    """`*_ENGAGED`(사실)가 아니라 `*_REQUESTED`(의도)여야 한다 (S15P11A301-298).
+
+    모터 ESP32 가 「자율」을 거부할 수 있다 - 최근 500ms 안에 모바일 조종 입력이
+    있었으면 거부한다. 관제 버튼을 바로 사실로 바꾸면 젯슨은 자율이라고 믿는데
+    보드는 여전히 사람에게 바퀴를 주고 있는 상태가 된다.
+
+    그 왕복은 `mission_manager` 의 `mode_gateway` 가 맡고 이 표는 번역만 한다.
+    """
+    from sentinel_bridge.message_mapper import COMMAND_TO_SIGNAL
+
+    assert COMMAND_TO_SIGNAL["MANUAL"] == "MANUAL_REQUESTED"
+    assert COMMAND_TO_SIGNAL["AUTO"] == "AUTO_REQUESTED"
+    assert "MANUAL_ENGAGED" not in COMMAND_TO_SIGNAL.values()
+    assert "AUTO_ENGAGED" not in COMMAND_TO_SIGNAL.values()
+
+
 def test_command_ack_envelope_and_body_satisfy_the_contract():
     """ACK 봉투와 본문이 계약을 만족하는지.
 

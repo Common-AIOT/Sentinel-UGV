@@ -193,7 +193,21 @@ export interface Trajectory {
   points: TrajectoryPoint[];
 }
 
-export type CommandType = "START" | "PAUSE" | "RESUME" | "RETURN" | "STOP";
+/**
+ * `common/schemas/mission-command.schema.json` 의 type enum 과 같아야 한다.
+ *
+ * `MANUAL`/`AUTO` 는 모드 전환이며 `RESUME` 과 별개다(S15P11A301-298). `AUTO` 는
+ * 수동 권한을 회수해 PAUSED 로 되돌릴 뿐 주행을 재개하지 않는다 — 다시 움직이려면
+ * 이어서 `RESUME` 을 보낸다.
+ */
+export type CommandType =
+  | "START"
+  | "PAUSE"
+  | "RESUME"
+  | "RETURN"
+  | "STOP"
+  | "MANUAL"
+  | "AUTO";
 
 export interface CommandResponse {
   commandId: string;

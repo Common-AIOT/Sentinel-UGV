@@ -7,6 +7,7 @@
 #include <protocol.h>
 #include <fault_codes.h>
 #include "board_state.h"
+#include "mode_arbiter.h"
 #include "safety_stub.h"
 #include "steering.h"
 
@@ -75,7 +76,10 @@ int16_t pwmToPermille(int16_t pwm) {
 void sendDriveState() {
   MotorSharedState snapshot = motorSharedStateSnapshot();
   DriveState state{};
-  state.appliedSequence = snapshot.lastAcceptedSequence;
+  // **`lastAcceptedSequence` 가 아니다** (S15P11A301-298). 수동 래치 중에는 젯슨
+  // 명령을 받아 두기만 하고 바퀴에 걸지 않으므로, 수락 시퀀스를 보고하면 "반영
+  // 했다"고 거짓말하게 된다. CTRL-29 가 래치 중 이 값의 동결을 확인한다.
+  state.appliedSequence = snapshot.lastAppliedSequence;
   state.state = (uint8_t)snapshot.state;
   state.faultFlags = snapshot.faultFlags;
   state.drivePwmLeftPermille = pwmToPermille(motorDriverAppliedPwmLeft());
@@ -114,6 +118,10 @@ void handleHello() {
   // 상태를 자동 복원하지 않는다 - 여기서도 AUTO/MANUAL이 아니라 SAFE_IDLE까지만 되돌린다).
   // 물리 E-Stop 입력 판독 배선은 후속 하드웨어 티켓 몫이라, 이번 스텁은 FAULT_ESTOP_ACTIVE
   // 비트가 이미 꺼져 있는지만으로 판단한다.
+  //
+  // **수동 래치는 건드리지 않는다** (S15P11A301-298). 젯슨 프로세스 재시작이
+  // 조작 중인 사람에게서 바퀴를 빼앗아선 안 된다. 진짜 보드 리부트는 RAM 이 날아가
+  // 래치가 함께 사라지므로 「스테일 래치」 문제는 존재하지 않는다.
   motorSharedStateUpdate([](MotorSharedState& s) {
     if (s.state == MotorBoardState::ESTOP_LATCHED && (s.faultFlags & FAULT_ESTOP_ACTIVE) == 0) {
       s.state = MotorBoardState::SAFE_IDLE;
@@ -122,6 +130,14 @@ void handleHello() {
   sendHelloAck();
 }
 
+// 이 핸들러는 **액추에이션을 하지 않는다** (S15P11A301-298). 목표만 기록하고 실제
+// 반영은 control_task 의 arbitrateDrive() 가 100Hz 로 결정한다. 바퀴 소유자를 정하는
+// 틱이 하나여야 core 0 의 HTTP 핸들러와 경쟁하지 않는다.
+//
+// 핵심 재배열: **링크 수락과 액추에이션 권한을 분리한다.** 젯슨 명령의 액추에이션
+// 거부는 통신 실패가 아니므로 `lastValidDriveCommandMs` 는 권한과 무관하게 항상
+// 갱신한다. 이 한 줄이 "수동 중 300ms 워치독이 STOPPING 으로 트립하지 않는다" 를
+// 참으로 만든다(CTRL-30).
 void handleDriveCommand(const uint8_t* payload, uint16_t len, uint16_t sequence) {
   DriveCommand cmd{};
   if (!unpackDriveCommand(payload, len, cmd)) {
@@ -129,54 +145,90 @@ void handleDriveCommand(const uint8_t* payload, uint16_t len, uint16_t sequence)
     return;
   }
 
-  bool accepted = false;
+  bool sendStaleAck = false;
+  bool sendRefusedAck = false;
   motorSharedStateUpdate([&](MotorSharedState& s) {
+    const uint32_t now = millis();
     if (s.hasAcceptedSequence && !isSequenceNewer(sequence, s.lastAcceptedSequence)) {
       s.staleSequenceCount++;
+      // 20Hz 스트림이 통째로 밀리면 초당 20개의 ACK 가 나간다. 그것은 진단이
+      // 아니라 소음이므로 200ms 로 레이트리밋한다.
+      if (!s.hasStaleAck || now - s.lastStaleAckMs >= STALE_ACK_MIN_INTERVAL_MS) {
+        s.lastStaleAckMs = now;
+        s.hasStaleAck = true;
+        sendStaleAck = true;
+      }
       return;
     }
     if (s.state == MotorBoardState::ESTOP_LATCHED || s.state == MotorBoardState::FAULT_LATCHED) {
       return;  // 래치 상태에서는 DRIVE_COMMAND를 반영하지 않는다.
     }
+
+    // ---- 링크 신선도. 액추에이션 권한과 무관하게 항상 갱신한다. ----
     s.lastAcceptedSequence = sequence;
     s.hasAcceptedSequence = true;
+    s.lastValidDriveCommandMs = now;
+    s.faultFlags &= ~FAULT_COMM_TIMEOUT_MOTOR;
+
+    // ---- 목표만 기록. 반영 여부는 control_task 가 정한다. ----
     s.targetDriveLeftMmps = cmd.targetDriveLeftMmps;
     s.targetDriveRightMmps = cmd.targetDriveRightMmps;
     s.targetSteeringMdeg = cmd.targetSteeringMdeg;
     s.maxSteeringRateMdps = cmd.maxSteeringRateMdps;
     s.commandTimeoutMs = cmd.commandTimeoutMs;
-    s.lastValidDriveCommandMs = millis();
-    s.faultFlags &= ~FAULT_COMM_TIMEOUT_MOTOR;
+
+    if (!jetsonActuationAllowed(s)) {
+      s.jetsonRefusedCount++;
+      // 엣지 게이팅. 50Hz REJECTED 홍수를 막되 "거부가 시작됐다" 는 한 번은
+      // 반드시 알린다 - 오늘은 거부된 STOP_COMMAND 조차 완전 무음이다.
+      if (!s.jetsonRejectAcked) {
+        s.jetsonRejectAcked = true;
+        sendRefusedAck = true;
+      }
+      return;
+    }
+    s.jetsonRejectAcked = false;
+    // D10: AUTO_REQUIRES_EXPLICIT_SET_MODE 가 false 인 동안은 mode 바이트가 계속
+    // 상태를 올린다. SET_MODE 의 유일한 책무는 래치 해제이며, 그 덕에 이 커밋이
+    // 기존 젯슨 파이프라인의 동작을 바꾸지 않는다.
     switch (cmd.mode) {
       case 0: s.state = MotorBoardState::SAFE_IDLE; break;
       case 1: s.state = MotorBoardState::MANUAL_ACTIVE; break;
       case 2: s.state = MotorBoardState::AUTO_ACTIVE; break;
       default: break;
     }
-    accepted = true;
   });
 
-  if (!accepted) return;
+  if (sendStaleAck) {
+    sendCommandAck(MSG_DRIVE_COMMAND, sequence, ACK_RESULT_REJECTED_STALE_SEQUENCE);
+  }
+  if (sendRefusedAck) {
+    sendCommandAck(MSG_DRIVE_COMMAND, sequence, ACK_RESULT_REJECTED_STATE);
+  }
+}
 
-  // 조향을 먼저 반영한다. 정지 중 조향 금지 판정(§34-2)에 쓰는 선속도는 같은
-  // 명령의 후륜 목표이므로, 구동 목표를 적용하기 전에 판단해야 한다.
-  const int16_t driveMagnitudeMmps =
-      (int16_t)max(abs((int32_t)cmd.targetDriveLeftMmps), abs((int32_t)cmd.targetDriveRightMmps));
-  const bool steeringAccepted =
-      steeringSetTarget(cmd.targetSteeringMdeg, cmd.maxSteeringRateMdps, driveMagnitudeMmps);
+// 모드 전환 원샷 명령(0x13). 페이로드가 깨졌으면 ACK 를 내지 않고 카운터만 올린다 -
+// 어느 명령에 대한 답인지 모르는 ACK 는 젯슨 쪽 상관을 망친다.
+void handleSetMode(const uint8_t* payload, uint16_t len, uint16_t sequence) {
+  SetMode request{};
+  if (!unpackSetMode(payload, len, request)) {
+    motorSharedStateUpdate([](MotorSharedState& s) { s.droppedFrameCount++; });
+    return;
+  }
 
-  // §34-9 bit 14. 래치하지 않는다 - 정상 명령이 들어오면 즉시 내린다. 조향에는
-  // 다른 진단 창구가 없으므로 "지금 클램프·거부되고 있다"를 실시간으로 보여야
-  // 하고, 래치하면 그 구분이 사라진다.
-  motorSharedStateUpdate([steeringAccepted](MotorSharedState& s) {
-    if (steeringAccepted) {
-      s.faultFlags &= ~FAULT_STEERING_COMMAND_INVALID;
-    } else {
-      s.faultFlags |= FAULT_STEERING_COMMAND_INVALID;
-    }
+  SetModeResult result = SetModeResult::REJECTED_STATE;
+  motorSharedStateUpdate([&](MotorSharedState& s) {
+    result = applySetMode(s, request.requestedMode, millis());
   });
 
-  applyDriveTargets(cmd.targetDriveLeftMmps, cmd.targetDriveRightMmps);
+  // 수락된 전환은 어느 방향이든 바퀴를 0 으로 만든다. MANUAL 진입은 아직 폰 입력이
+  // 없고, AUTO 복귀는 다음 DRIVE_COMMAND 까지 굴릴 근거가 없다.
+  if (result == SetModeResult::ACCEPTED) {
+    applySafeOutputs();
+  }
+  sendCommandAck(MSG_SET_MODE, sequence,
+                 result == SetModeResult::ACCEPTED ? ACK_RESULT_ACCEPTED
+                                                    : ACK_RESULT_REJECTED_STATE);
 }
 
 // STOP/ESTOP 모두 구동만 끊고 **조향각은 마지막 목표를 유지한다**(§34-7). 물리
@@ -187,6 +239,16 @@ void handleStopCommand(uint16_t sequence) {
   motorSharedStateUpdate([](MotorSharedState& s) {
     s.targetDriveLeftMmps = 0;
     s.targetDriveRightMmps = 0;
+    if (s.manualLatched) {
+      // 수동 권한은 **막지 않는다**. 바퀴만 세우고 손을 떼었다 다시 눌러야
+      // 움직이게 한다(S15P11A301-298). 상태를 STOPPING 으로 내리면 젯슨이
+      // 「권한이 풀렸다」로 읽고 스트리밍을 시작한다.
+      s.manualReArmRequired = true;
+      s.manualDriveMmps = 0;
+      s.manualSteeringRequested = false;
+      s.state = MotorBoardState::MANUAL_ACTIVE;
+      return;
+    }
     s.state = MotorBoardState::STOPPING;
   });
   sendCommandAck(MSG_STOP_COMMAND, sequence, ACK_RESULT_ACCEPTED);
@@ -199,6 +261,18 @@ void handleEstopCommand(uint16_t sequence) {
     s.targetDriveRightMmps = 0;
     s.state = MotorBoardState::ESTOP_LATCHED;
     s.faultFlags |= FAULT_ESTOP_ACTIVE;
+    // E-Stop 은 수동 권한을 **막는 게 아니라 벗긴다**. 래치와 세션을 함께 파괴해
+    // 폰이 새 세션을 받기 전에는 아무것도 못 하게 한다. 모든 것을 무효화하는
+    // 최상위 안전 장치이므로 다른 정지 경로와 다른 층에 있다.
+    s.manualLatched = false;
+    s.manualReArmRequired = false;
+    s.manualDeadman = false;
+    s.manualSessionId = 0;
+    s.hasManualSequence = false;
+    s.manualDriveMmps = 0;
+    s.manualSteeringRequested = false;
+    s.manualRunActive = false;
+    s.manualRunPackets = 0;
   });
   sendCommandAck(MSG_ESTOP_COMMAND, sequence, ACK_RESULT_ACCEPTED);
 }
@@ -238,6 +312,7 @@ void dispatchFrame(const uint8_t* cobsFrame, size_t len) {
     case MSG_DRIVE_COMMAND: handleDriveCommand(payload, header.payloadLength, header.sequence); break;
     case MSG_STOP_COMMAND: handleStopCommand(header.sequence); break;
     case MSG_ESTOP_COMMAND: handleEstopCommand(header.sequence); break;
+    case MSG_SET_MODE: handleSetMode(payload, header.payloadLength, header.sequence); break;
     case MSG_CONFIG: handleConfig(payload, header.payloadLength); break;
     default: break;  // 모터 보드가 받을 일 없는 타입(텔레메트리류 등)은 무시
   }

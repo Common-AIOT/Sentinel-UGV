@@ -89,6 +89,7 @@ static bool isKnownMessageType(uint8_t type) {
     case MSG_DRIVE_COMMAND:
     case MSG_STOP_COMMAND:
     case MSG_ESTOP_COMMAND:
+    case MSG_SET_MODE:
     case MSG_DRIVE_STATE:
     case MSG_DIAGNOSTIC:
     case MSG_COMMAND_ACK:
@@ -279,6 +280,21 @@ bool unpackDriveCommand(const uint8_t* payload, uint16_t len, DriveCommand& out)
   out.maxAccelMmps2 = readU16LE(payload, offset);
   out.maxSteeringRateMdps = readU16LE(payload, offset);
   out.commandTimeoutMs = readU16LE(payload, offset);
+  return true;
+}
+
+size_t packSetMode(const SetMode& in, uint8_t* out) {
+  size_t offset = 0;
+  writeU8(out, offset, in.requestedMode);
+  writeU8(out, offset, in.flags);
+  return offset;
+}
+
+bool unpackSetMode(const uint8_t* payload, uint16_t len, SetMode& out) {
+  if (len != SET_MODE_BYTES) return false;
+  size_t offset = 0;
+  out.requestedMode = readU8(payload, offset);
+  out.flags = readU8(payload, offset);
   return true;
 }
 

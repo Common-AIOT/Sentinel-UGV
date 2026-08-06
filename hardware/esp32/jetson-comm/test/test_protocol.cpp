@@ -155,6 +155,47 @@ void testImuStateRoundTrip() {
              "unpackImuState rejects a short payload");
 }
 
+void testSetModeRoundTrip() {
+  SetMode req{};
+  req.requestedMode = SET_MODE_AUTO;
+  req.flags = 0;
+
+  uint8_t payload[SET_MODE_BYTES];
+  size_t payloadLen = packSetMode(req, payload);
+  expectTrue(payloadLen == SET_MODE_BYTES, "packSetMode emits expected byte count");
+  // Python `pack_set_mode(SetMode(2, 0)) == bytes.fromhex("0200")`와 같은 바이트여야 한다.
+  expectTrue(payload[0] == 0x02 && payload[1] == 0x00,
+             "packSetMode(AUTO, 0) == 02 00 (Python STRUCT_SET_MODE와 동일)");
+
+  uint8_t frameBuf[MAX_FRAME_BYTES + 4];
+  size_t frameLen = buildFrame(MSG_SET_MODE, 11, 555, payload, (uint16_t)payloadLen,
+                                frameBuf, sizeof(frameBuf));
+  expectTrue(frameLen > 0, "buildFrame accepts MSG_SET_MODE");
+
+  FrameHeader header{};
+  uint8_t decodedPayload[MAX_PAYLOAD_BYTES];
+  ParseResult result =
+      parseFrame(frameBuf, frameLen - 1, header, decodedPayload, sizeof(decodedPayload));
+  // isKnownMessageType()에 0x13을 빠뜨리면 여기서 UNKNOWN_TYPE이 나고 실제 펌웨어에서는
+  // droppedFrameCount만 조용히 오른다(계획 §3.3 리스크 3).
+  expectTrue(result == ParseResult::OK && header.messageType == MSG_SET_MODE,
+             "parseFrame accepts MSG_SET_MODE (0x13) as a known type");
+
+  SetMode decoded{};
+  bool unpacked = unpackSetMode(decodedPayload, header.payloadLength, decoded);
+  expectTrue(unpacked && decoded.requestedMode == SET_MODE_AUTO && decoded.flags == 0,
+             "unpackSetMode recovers original values");
+
+  expectTrue(!unpackSetMode(decodedPayload, SET_MODE_BYTES - 1, decoded),
+             "unpackSetMode rejects a short payload");
+  expectTrue(!unpackSetMode(decodedPayload, SET_MODE_BYTES + 1, decoded),
+             "unpackSetMode rejects an over-long payload");
+
+  req.requestedMode = SET_MODE_MANUAL;
+  packSetMode(req, payload);
+  expectTrue(payload[0] == 0x01, "SET_MODE_MANUAL encodes as 1 (DRIVE_COMMAND.mode와 동일 인코딩)");
+}
+
 void testSequenceWraparound() {
   expectTrue(isSequenceNewer(5, 4), "sequence 5 is newer than 4");
   expectTrue(!isSequenceNewer(4, 5), "sequence 4 is not newer than 5");
@@ -173,6 +214,7 @@ int main() {
   testCobsRoundTrip("0000", "010101", "cobs two consecutive zero bytes");
   testFrameRoundTrip();
   testImuStateRoundTrip();
+  testSetModeRoundTrip();
   testSequenceWraparound();
 
   if (failureCount == 0) {

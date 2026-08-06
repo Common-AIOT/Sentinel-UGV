@@ -27,6 +27,11 @@ void applyDriveTargets(int16_t targetDriveLeftMmps, int16_t targetDriveRightMmps
 // 호출한다. comm_task에서 delay()로 기다리면 그 사이 직렬 수신이 멈춘다.
 void driveUpdate(uint32_t nowMs);
 
+// 방향 전환 데드타임을 기다리는 중인가. 수동 조종 페이지가 「방향 전환 대기」를
+// 표시하는 근거이며, 이것이 없으면 전진 → 후진 사이의 500ms 동안 사람은 로봇이
+// 고장 난 것으로 읽는다 (S15P11A301-298, CTRL-35).
+bool driveDirectionChangePending();
+
 // comm_task의 DRIVE_STATE 송신용 실측 상태 조회.
 bool motorDriverEnabled();
 int16_t motorDriverAppliedPwmLeft();   // -255..255

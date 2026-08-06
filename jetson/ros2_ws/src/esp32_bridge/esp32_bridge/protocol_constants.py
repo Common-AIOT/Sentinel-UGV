@@ -21,6 +21,9 @@ MSG_HELLO_ACK = 0x02
 MSG_DRIVE_COMMAND = 0x10
 MSG_STOP_COMMAND = 0x11
 MSG_ESTOP_COMMAND = 0x12
+# 모드 전환 원샷 명령. 20Hz DRIVE_COMMAND.mode와 달리 모터 보드의 수동 래치를 해제할
+# 수 있는 유일한 트리거이며 MSG_COMMAND_ACK(0x22)로 수락/거부가 회신된다(§34-5).
+MSG_SET_MODE = 0x13
 
 MSG_DRIVE_STATE = 0x20
 MSG_DIAGNOSTIC = 0x21
@@ -40,6 +43,7 @@ KNOWN_MESSAGE_TYPES = frozenset(
         MSG_DRIVE_COMMAND,
         MSG_STOP_COMMAND,
         MSG_ESTOP_COMMAND,
+        MSG_SET_MODE,
         MSG_DRIVE_STATE,
         MSG_DIAGNOSTIC,
         MSG_COMMAND_ACK,
@@ -57,6 +61,51 @@ BOARD_ROLE_SENSOR = 2
 ACK_RESULT_ACCEPTED = 0
 ACK_RESULT_REJECTED_STATE = 1
 ACK_RESULT_REJECTED_STALE_SEQUENCE = 2
+
+ACK_RESULT_NAMES: dict[int, str] = {
+    ACK_RESULT_ACCEPTED: "ACCEPTED",
+    ACK_RESULT_REJECTED_STATE: "REJECTED_STATE",
+    ACK_RESULT_REJECTED_STALE_SEQUENCE: "REJECTED_STALE_SEQUENCE",
+}
+
+MESSAGE_TYPE_NAMES: dict[int, str] = {
+    MSG_HELLO: "HELLO",
+    MSG_HELLO_ACK: "HELLO_ACK",
+    MSG_DRIVE_COMMAND: "DRIVE_COMMAND",
+    MSG_STOP_COMMAND: "STOP_COMMAND",
+    MSG_ESTOP_COMMAND: "ESTOP_COMMAND",
+    MSG_SET_MODE: "SET_MODE",
+    MSG_DRIVE_STATE: "DRIVE_STATE",
+    MSG_DIAGNOSTIC: "DIAGNOSTIC",
+    MSG_COMMAND_ACK: "COMMAND_ACK",
+    MSG_ENVIRONMENT_STATE: "ENVIRONMENT_STATE",
+    MSG_PROXIMITY_STATE: "PROXIMITY_STATE",
+    MSG_ENCODER_STATE: "ENCODER_STATE",
+    MSG_IMU_STATE: "IMU_STATE",
+    MSG_CONFIG: "CONFIG",
+}
+
+
+def ack_result_name(value: int) -> str:
+    """COMMAND_ACK.result 숫자를 이름으로. 미지 값은 UNKNOWN(n)으로 남긴다."""
+    return ACK_RESULT_NAMES.get(value, f"UNKNOWN({value})")
+
+
+def message_type_name(value: int) -> str:
+    """messageType 숫자를 이름으로. 미지 값은 UNKNOWN(n)으로 남긴다."""
+    return MESSAGE_TYPE_NAMES.get(value, f"UNKNOWN({value})")
+
+
+# ---- SET_MODE.requested_mode (message_ids.h의 SetModeRequest) ----
+# DRIVE_COMMAND.mode와 인코딩은 같지만 0(SAFE_IDLE)은 정의하지 않는다 - SET_MODE로
+# SAFE_IDLE을 요청하는 주체가 없고 0은 거부값이다(계획 D11).
+BOARD_MODE_MANUAL = 1
+BOARD_MODE_AUTO = 2
+
+BOARD_MODE_VALUES: dict[str, int] = {
+    "MANUAL": BOARD_MODE_MANUAL,
+    "AUTO": BOARD_MODE_AUTO,
+}
 
 CONFIG_OP_GET = 0
 CONFIG_OP_SET = 1
@@ -137,6 +186,7 @@ def imu_status_flag_names(status_flags: int) -> list[str]:
 
 # ---- struct 포맷 (protocol.h의 packX/unpackX와 필드 순서가 반드시 일치해야 한다) ----
 STRUCT_DRIVE_COMMAND = "<BBhhhHHH"  # 14 bytes
+STRUCT_SET_MODE = "<BB"  # 2 bytes (requestedMode u8, flags u8)
 STRUCT_DRIVE_STATE = "<HBHhhhhBB"  # 15 bytes
 STRUCT_ENCODER_STATE = "<iihhhH"  # 16 bytes
 # f32 6개는 IEEE-754 binary32 리틀엔디안이다. ESP32(xtensa)·Jetson(aarch64) 모두

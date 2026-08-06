@@ -4,6 +4,8 @@
 #include <esp_arduino_version.h>
 #include <math.h>
 
+#include "steering_limits.h"
+
 // 주의: 이 UART는 바이너리 프로토콜 전용이므로 여기에 Serial.print() 디버그를
 // 추가하지 말 것(README 참고).
 
@@ -36,9 +38,8 @@ constexpr uint8_t SERVO_PWM_CHANNEL = 4;
 constexpr float SERVO_CENTER_DEG = 145.0f;
 constexpr float SERVO_MAX_OFFSET_DEG = 30.0f;
 
-// 앞바퀴 실제 조향각(δ) 기준 한계. δ_max 실측(TBD-HW-008) 전에는 서보 엔드포인트와
-// 1:1로 두고, 실측 후 δ_max만 바꾸면 게인이 자동으로 따라온다.
-constexpr int16_t STEERING_MAX_MDEG = 30000;  // 30.000°
+// STEERING_MAX_MDEG 는 steering_limits.h 에 있다. 수동 채널의 ang 매핑이 같은 값을
+// 봐야 하므로 분리했다 - 갈라지면 폰 슬라이더 끝과 실제 δ_max 가 어긋난다.
 
 // +δ = 좌회전(반시계, REP-103). 서보 각도를 올렸을 때 앞바퀴가 우로 꺾이면 이
 // 값만 -1로 바꾼다 - CTRL-24 스윕 시험에서 가장 먼저 확인할 항목이다.
@@ -50,10 +51,9 @@ constexpr float SERVO_DEG_PER_STEERING_DEG =
     SERVO_MAX_OFFSET_DEG / (STEERING_MAX_MDEG / 1000.0f);
 
 // ---- 정지 중 조향 금지 (§34-2) ----
-// 후륜 목표 속도가 이 값보다 작으면 조향 목표 변경을 거부한다. Jetson
-// vehicle_kinematics의 min_linear_mps(0.03m/s)와 같은 값으로 맞춰 둔다 - 양쪽이
-// 어긋나면 Jetson이 보낸 명령을 ESP32가 조용히 거부하는 구간이 생긴다.
-constexpr int16_t STEERING_MIN_DRIVE_MMPS = 30;
+// 임계 STEERING_MIN_DRIVE_MMPS 도 steering_limits.h 에 있다. 수동 경로가 그 값을
+// 모르면 여기서 거부될 명령을 계속 보내게 되고, 그 거부는 bit 14 로 올라간다.
+//
 // 밀리도 반올림 잡음을 회두 명령으로 오판하지 않기 위한 여유.
 constexpr int16_t STEERING_STATIONARY_TOLERANCE_MDEG = 200;
 

@@ -227,3 +227,38 @@ def test_조향_한계는_펌웨어와_같은_값이다():
     # steering.cpp 의 STEERING_MAX_MDEG = 30000. 여기가 더 크면 Jetson 이 보낸
     # 명령을 펌웨어가 조용히 클램프하고 STEERING_COMMAND_INVALID 만 올라온다.
     assert round(math.degrees(DELTA_MAX) * 1000.0) == 30000
+
+
+# ----------------------------------------------------------------------
+# controlMode → DRIVE_COMMAND.mode 바이트 (S15P11A301-298)
+#
+# 수동 래치를 쥔 보드에 20Hz 로 mode=2 를 주장하면 초당 50회 다툰다. mode=1 은
+# 래치와 합의하는 값이다.
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ('control_mode', 'expected'),
+    [
+        ('MANUAL', MODE_MANUAL),
+        ('AUTO', MODE_AUTO),
+        # 모르는 값과 부재는 둘 다 기동 직후 현행 동작(AUTO)을 유지한다. 안전은
+        # 이 바이트가 아니라 safety_gate 의 MISSION_STALE 이 담당한다.
+        (None, MODE_AUTO),
+        ('', MODE_AUTO),
+        ('manual', MODE_AUTO),
+        ('RETURNING', MODE_AUTO),
+    ],
+)
+def test_모드_바이트_변환표(control_mode, expected):
+    from sentinel_drive.kinematics import mode_byte
+
+    assert mode_byte(control_mode) == expected
+
+
+def test_모드_바이트_기본값을_바꿀_수_있다():
+    from sentinel_drive.kinematics import MODE_SAFE_IDLE, mode_byte
+
+    assert mode_byte(None, default=MODE_SAFE_IDLE) == MODE_SAFE_IDLE
+    # 아는 값이면 default 를 보지 않는다.
+    assert mode_byte('MANUAL', default=MODE_SAFE_IDLE) == MODE_MANUAL

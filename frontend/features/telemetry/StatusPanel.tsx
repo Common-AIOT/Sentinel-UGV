@@ -135,8 +135,12 @@ export default function StatusPanel() {
       )}
 
       {/* 복귀 경로 실패 등으로 PAUSED가 되면 관제가 복구를 지시해야 한다(23.5).
-          수동에서는 내보내지 않는다 — 수동 진입이 PAUSE 를 보내므로 수동은 항상
-          PAUSED 이고, 이 안내가 가리키는 두 버튼이 아래에서 사라진다. */}
+          수동에서는 내보내지 않는다 — 이 안내가 가리키는 버튼이 아래에서
+          사라지기 때문이다(수동 분기가 버튼 대신 안내 상자를 낸다).
+
+          조건 자체는 그대로 옳다. 다만 근거는 바뀌었다 (S15P11A301-298):
+          종전에는 "수동 진입이 PAUSE 를 보내므로 수동은 항상 PAUSED" 였지만,
+          이제 MANUAL 은 서버가 아는 독립 상태이고 PAUSED 를 경유해 그리로 간다. */}
       {!manual && missionState === "PAUSED" && (
         <div className="flex items-start gap-1.5 rounded border border-accent/30 bg-accent/5 px-2.5 py-2">
           <Pause size={12} className="text-accent flex-shrink-0 mt-0.5" />
@@ -180,6 +184,13 @@ export default function StatusPanel() {
           했다. 실데이터가 오면 큰 타일이 아니라 영상 좌측 상단 오버레이 줄에
           한 줄로 넣는다 — 그쪽이 "관측값" 형식이다. */}
 
+      {/* 수동에서는 조작 버튼 대신 안내를 낸다. **버튼을 되살리지 말 것**
+          (S15P11A301-298).
+
+          수동 중 「임무 종료」를 누르면 젯슨은 COMPLETED 로 가지만 모터 보드는
+          여전히 래치를 쥐고 있어 폰이 계속 로봇을 굴린다. 화면에는 「완료」가
+          떠 있는데 로봇이 달리는 상태 — 버튼이 없는 것보다 나쁜 불일치다.
+          MANUAL 을 벗어나는 길은 위 「자율」 하나뿐이다. */}
       {manual ? (
         <div className="flex items-start gap-1.5 rounded border border-info/30 bg-info/5 px-2.5 py-2">
           <Smartphone size={12} className="text-info flex-shrink-0 mt-0.5" />
@@ -194,6 +205,19 @@ export default function StatusPanel() {
             <p className="text-[11px] text-muted-foreground leading-snug">
               관제 웹에는 조종 입력이 없습니다. 자율 명령을 내리려면 위 「자율」로
               먼저 되돌리세요.
+            </p>
+            {/* 없는 보호를 있다고 믿게 두지 않는다 (S15P11A301-298).
+
+                수동 명령은 폰 → 모터 ESP32 직결이라 젯슨의 안전 체인
+                (command_mux → velocity_smoother → collision_monitor →
+                safety_gate)을 **한 층도 지나지 않는다.** 04장 14.4 의 안전 우선순위
+                표는 수동을 6위에 두어 4위(Collision Monitor)·5위(소프트 E-Stop)가
+                적용되는 것처럼 읽히지만 실제로는 우회된다.
+
+                한 줄만 넣는다 — 위 주석대로 이 상자에 3줄 블록을 쌓으면 아무도
+                읽지 않는다. 전체 목록은 docs/06 보호 공백 표에 있다. */}
+            <p className="text-[11px] text-accent leading-snug">
+              수동 중에는 라이다 정지구역·충돌 감시·소프트 E-Stop이 적용되지 않습니다.
             </p>
           </div>
         </div>

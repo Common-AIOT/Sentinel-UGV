@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "1.0",
+  "messageId": "b60e4c77-18d3-42a9-b5f1-0ac9d3e57204",
+  "messageType": "COMMAND_ACK",
+  "robotId": "SENTINEL-01",
+  "missionId": "4a43f45c-779f-4df5-ac04-1695724829a4",
+  "sequence": 10318,
+  "sentAt": "2026-07-29T05:20:20.480Z",
+  "data": {
+    "commandId": "7c31a8de-2f64-4b90-9a17-c5e0d8b41f26",
+    "status": "REJECTED",
+    "reasonCode": "MANUAL_INPUT_ACTIVE",
+    "message": "모바일 조종 입력이 계속 들어오는 중 - 조종을 멈춘 뒤 다시 시도하세요"
+  }
+}

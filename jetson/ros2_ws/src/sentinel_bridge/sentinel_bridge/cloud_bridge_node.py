@@ -15,9 +15,13 @@ ROS 2 DDS를 인터넷 구간까지 확장하지 않는다. 관제에 필요한 
 
     cmd/mission  QoS 1  Retain 금지  관제 임무 제어 명령 (S15P11A301-143)
 
-`cmd/drive`(수동 조종)는 아직 구독하지 않는다. 계약이 `MANUAL_DRIVE_COMMAND`로
-따로이고 31-13 2단계이며, `MANUAL` 상태는 control session과 gamepad deadman이
-필요하다(36장).
+`cmd/drive`(수동 조종)는 **영구히 구독하지 않는다** (S15P11A301-298). "아직" 이
+아니다 — 확정된 토폴로지에서 폰은 자기 핫스팟 위에서 모터 ESP32 에 직결하고,
+젯슨과 관제 PC 는 별개 WiFi 망에 있어 젯슨은 폰에 도달할 수 없다. 즉
+`MANUAL_DRIVE_COMMAND` 는 구현자가 없는 messageType 이다.
+
+관제가 수동에 대해 할 수 있는 것은 조종이 아니라 **모드 전환**이며, 그것은
+`cmd/mission` 의 `MANUAL`·`AUTO` 로 온다(같은 채널, 새 채널 없음).
 
 설계에서 중요한 세 가지.
 
@@ -503,7 +507,11 @@ class CloudBridgeNode(Node):
         body = {
             'signal': decision.signal,
             'sentAt': utc_now_iso(),
-            'source': 'CONTROL',
+            # `mission-signal.schema.json` 의 source enum 에 'CONTROL' 은 없다.
+            # 운영자가 낸 신호이므로 'OPERATOR' 다 (S15P11A301-298 에서 발견한
+            # 계약 위반 - additionalProperties 가 아니라 enum 위반이라 스키마
+            # 검증을 붙이면 그때 걸린다).
+            'source': 'OPERATOR',
             'encounterId': None,
             'missionId': decision.mission_id,
             'commandId': decision.command_id,
@@ -854,7 +862,16 @@ class CloudBridgeNode(Node):
                     '안전을 위해 STOPPED로 보낸다.'
                 )
                 safety_state = 'STOPPED'
-            control_mode = 'MANUAL' if mission_state == 'MANUAL' else 'AUTO'
+            # **읽기만 한다. 재계산하지 않는다** (S15P11A301-298).
+            #
+            # S15P11A301-278 이 이 규칙의 소유자를 `mission_state.control_mode` 로
+            # 옮겼는데 여기 사본이 남아 있었다. 규칙이 두 곳에 있으면 어긋나는
+            # 순간이 생기고, 그때 어느 쪽이 맞는지 알 수 없다.
+            #
+            # 필드가 없으면 `None` 을 그대로 둔다. `state.schema.json` 이 null 을
+            # 허용하고, 관제는 **추측된 AUTO 가 아니라 「모름」을 봐야 한다** —
+            # 추측한 AUTO 는 수동 조종 중에도 화면에 「자율」을 띄운다.
+            control_mode = status.get('controlMode')
         else:
             # mission_manager가 없으면 임무 상태를 모른다. 값을 지어내지 않고
             # null로 두어 관제가 "모름"을 알 수 있게 한다. safetyState는 안전

@@ -22,6 +22,7 @@ from esp32_bridge.packet_codec import (  # noqa: E402
     ImuState,
     LengthError,
     ParsedFrame,
+    SetMode,
     build_frame,
     cobs_decode,
     cobs_encode,
@@ -29,15 +30,24 @@ from esp32_bridge.packet_codec import (  # noqa: E402
     is_sequence_newer,
     pack_drive_command,
     pack_imu_state,
+    pack_set_mode,
     parse_frame,
     unpack_drive_command,
     unpack_imu_state,
+    unpack_set_mode,
 )
 from esp32_bridge.protocol_constants import (  # noqa: E402
+    ACK_RESULT_REJECTED_STATE,
+    BOARD_MODE_AUTO,
+    BOARD_MODE_MANUAL,
+    BOARD_MODE_VALUES,
     IMU_STATUS_VALID,
     MSG_DRIVE_COMMAND,
     MSG_IMU_STATE,
+    MSG_SET_MODE,
+    ack_result_name,
     imu_status_flag_names,
+    message_type_name,
 )
 
 
@@ -162,6 +172,53 @@ def test_imu_status_flag_names_reports_unknown_bits():
     assert imu_status_flag_names(IMU_STATUS_VALID) == ["VALID"]
     assert imu_status_flag_names(0) == []
     assert imu_status_flag_names(0x0010) == ["UNKNOWN(0x0010)"]
+
+
+# ---- SET_MODE (0x13) ----
+# 이 페이로드는 C++ packSetMode와 바이트 단위로 같아야 한다
+# (hardware/esp32/jetson-comm/test/test_protocol.cpp testSetModeRoundTrip).
+
+
+def test_set_mode_payload_is_two_bytes():
+    assert len(pack_set_mode(SetMode(BOARD_MODE_AUTO, 0))) == 2
+
+
+def test_set_mode_byte_vector_matches_cpp():
+    # C++ 쪽이 못박는 것과 같은 벡터. 한쪽 struct 포맷을 바꾸면 여기가 먼저 깨진다.
+    assert pack_set_mode(SetMode(BOARD_MODE_AUTO, 0)) == bytes.fromhex("0200")
+    assert pack_set_mode(SetMode(BOARD_MODE_MANUAL, 0)) == bytes.fromhex("0100")
+
+
+def test_set_mode_frame_round_trip():
+    payload = pack_set_mode(SetMode(BOARD_MODE_MANUAL, 0))
+    frame = build_frame(MSG_SET_MODE, sequence=11, sender_uptime_ms=555, payload=payload)
+
+    # 0x13이 KNOWN_MESSAGE_TYPES에 없으면 UnknownMessageTypeError가 난다. 펌웨어에서는
+    # 같은 누락이 droppedFrameCount만 조용히 올린다(계획 리스크 3).
+    parsed = parse_frame(frame[:-1])
+    assert parsed.message_type == MSG_SET_MODE
+
+    decoded = unpack_set_mode(parsed.payload)
+    assert decoded.requested_mode == BOARD_MODE_MANUAL
+    assert decoded.flags == 0
+
+
+@pytest.mark.parametrize("bad", [b"", b"\x01", b"\x01\x00\x00"])
+def test_unpack_set_mode_rejects_wrong_length(bad):
+    with pytest.raises(LengthError):
+        unpack_set_mode(bad)
+
+
+def test_board_mode_values_has_exactly_manual_and_auto():
+    # SET_MODE(SAFE_IDLE)은 보내는 쪽이 없으므로 0을 정의하지 않는다(계획 D11).
+    assert BOARD_MODE_VALUES == {"MANUAL": 1, "AUTO": 2}
+
+
+def test_name_lookups_label_known_values_and_flag_unknown_ones():
+    assert message_type_name(MSG_SET_MODE) == "SET_MODE"
+    assert ack_result_name(ACK_RESULT_REJECTED_STATE) == "REJECTED_STATE"
+    assert message_type_name(0x99) == "UNKNOWN(153)"
+    assert ack_result_name(9) == "UNKNOWN(9)"
 
 
 @pytest.mark.parametrize(

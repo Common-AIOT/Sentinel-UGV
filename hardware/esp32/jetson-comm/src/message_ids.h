@@ -19,6 +19,9 @@ enum MessageId : uint8_t {
   MSG_DRIVE_COMMAND = 0x10,
   MSG_STOP_COMMAND = 0x11,
   MSG_ESTOP_COMMAND = 0x12,
+  // 모드 전환 원샷 명령. 20Hz DRIVE_COMMAND.mode와 달리 수동 래치를 해제할 수 있는
+  // 유일한 트리거이며 MSG_COMMAND_ACK(0x22)로 수락/거부가 회신된다(§34-5).
+  MSG_SET_MODE = 0x13,
 
   MSG_DRIVE_STATE = 0x20,
   MSG_DIAGNOSTIC = 0x21,
@@ -42,6 +45,14 @@ enum ImuStatusFlag : uint16_t {
 
 // IMU_STATE.temperature_centi_c 미지원/무효 sentinel (§34-5 "선택, 미지원 시 INVALID").
 constexpr int16_t IMU_TEMPERATURE_INVALID = -32768;
+
+// SET_MODE.requested_mode
+// DRIVE_COMMAND.mode와 인코딩은 같지만 0(SAFE_IDLE)은 정의하지 않는다 - SET_MODE로
+// SAFE_IDLE을 요청하는 주체가 없고, 0은 거부값(REJECTED_STATE)이다.
+enum SetModeRequest : uint8_t {
+  SET_MODE_MANUAL = 1,
+  SET_MODE_AUTO = 2,
+};
 
 // CONFIG.operation
 enum ConfigOperation : uint8_t {

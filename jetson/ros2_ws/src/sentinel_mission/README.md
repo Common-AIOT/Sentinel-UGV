@@ -114,13 +114,28 @@ confidence가 설정값 이상이다                 탐지 노드
 
 ```text
 구현    SAFE_IDLE, EXPLORING, PERSON_APPROACHING, INTERACTING,
-        POST_RECORDING, REPORTING, PAUSED, ESTOP, ERROR
-자리만  MANUAL, RETURNING, COMPLETED
+        POST_RECORDING, REPORTING, PAUSED, MANUAL, COMPLETED, ESTOP, ERROR
+자리만  RETURNING
 ```
 
-`MANUAL`은 control session과 gamepad deadman이 필요하고(36장), `RETURNING`은 home
-pose와 Nav2 목표 전송이 필요합니다(23.5). 둘 다 이 티켓 범위 밖이므로 상태 값만
-두고 전이 트리거를 받지 않습니다. 그 상태로 들어가면 경고를 남깁니다.
+`RETURNING`은 home pose와 Nav2 목표 전송이 필요합니다(23.5). 범위 밖이므로 상태 값만
+두고 전이 트리거를 받지 않으며, 그 상태로 들어가면 경고를 남깁니다.
+
+`MANUAL`은 S15P11A301-298에서 구현했습니다. 종전 근거였던 「control session과 gamepad
+deadman」(36장)은 성립하지 않습니다 — 그 UI는 삭제됐고, 조종은 폰이 모터 ESP32에
+직결하는 경로로 확정됐습니다.
+
+그래서 이 머신은 모드를 **판단하지 않고 따라갑니다.** 들어오는 신호는
+`MANUAL_ENGAGED`/`AUTO_ENGAGED`, 즉 **보드가 이미 그렇게 됐다는 사실**입니다. 운영자
+의도(`MANUAL_REQUESTED`/`AUTO_REQUESTED`)는 `mode_gateway`가 상태기계 앞에서 가로채
+보드에 물어보고, 답이 온 뒤에야 사실로 바꿔 넣습니다.
+
+- 진입은 26.3·14.2대로 `PAUSED`를 경유합니다. 탐사 중이었다면 한 틱 안에
+  `EXPLORING → PAUSED → MANUAL` 두 전이가 순서대로 발행됩니다(`_pending_manual`).
+- 이탈은 관제 「자율」 하나뿐이고 착지점은 `PAUSED`입니다. 자동 재개는 어떤 경로로도
+  없습니다(SR-008, 30.5).
+- `MOVEMENT[MANUAL] = (False, None)`은 자리표시자가 아니라 정확한 값입니다. deadman은
+  폰에 있고 젯슨에는 수동 속도 소스 자체가 없습니다.
 
 `SENSOR_FAULT`는 `PAUSED`로 갑니다. 26.5는 "`PAUSED` 또는 `ERROR`"라고만 정했고
 어느 쪽인지는 14.5가 정합니다. 복구 가능한 것을 `ERROR`로 만들면 운영자가 재개할

@@ -57,6 +57,9 @@ FINAL_NAME = 'event.mp4'
 THUMBNAIL_NAME = 'thumbnail.jpg'
 REPORT_NAME = 'report.json'
 CONCAT_NAME = 'segments.txt'
+# 마감 판정의 근거 스냅샷 (S15P11A301-304). 링 버퍼가 조각을 8개만 유지하므로
+# 실패 뒤에는 원본이 남지 않는다.
+SEGMENT_SNAPSHOT_NAME = 'segments.json'
 
 # 재다중화와 검사에 주는 시간 제한. 이벤트가 5분(MAX_DURATION)이므로 스트림
 # 복사는 몇 초면 끝난다. 이보다 오래 걸리면 무언가 잘못된 것이고, 무한정
@@ -252,6 +255,42 @@ class EventFinalizer:
         self.thumbnail_offset_seconds = thumbnail_offset_seconds
         self.min_continuity_ratio = min_continuity_ratio
 
+    def _write_segment_snapshot(
+        self,
+        work_directory: Path,
+        segments: list[Segment],
+        continuity: dict[str, Any],
+    ) -> None:
+        """마감 판정의 근거를 이벤트 디렉터리에 남긴다 (S15P11A301-304).
+
+        쓰기 실패는 삼킨다. 스냅샷은 조사용이고, 그것 때문에 이벤트를 잃으면
+        본말이 뒤집힌다.
+        """
+        snapshot = {
+            'continuity': continuity,
+            'segments': [
+                {
+                    'sequence': segment.sequence,
+                    'segmentId': segment.segment_id,
+                    'startedAt': format_utc(segment.started_at),
+                    'endedAt': format_utc(segment.ended_at),
+                    'durationMs': segment.duration_ms,
+                    'firstPts': segment.first_pts,
+                    'muxedPts': segment.muxed_pts,
+                    'firstFrameKey': segment.first_frame_key,
+                    'path': segment.path,
+                }
+                for segment in segments
+            ],
+        }
+        try:
+            (work_directory / SEGMENT_SNAPSHOT_NAME).write_text(
+                json.dumps(snapshot, ensure_ascii=False, indent=2), encoding='utf-8'
+            )
+        except OSError as error:
+            if self._logger is not None:
+                self._logger.warn(f'조각 스냅샷을 남기지 못했다: {error}')
+
     def finalize(
         self,
         segments: list[Segment],
@@ -271,6 +310,32 @@ class EventFinalizer:
 
         # 1. 시각·PTS 순서와 누락 검사
         continuity = continuity_report(segments, self.segment_seconds)
+
+        # 판정 근거를 먼저 남긴다 (S15P11A301-304).
+        #
+        # 링 버퍼는 조각 8개만 유지하므로 마감이 실패하면 몇 초 뒤 근거가 사라진다.
+        # 실제로 PTS 역행 17건을 조사할 때 원본 조각이 이미 순환돼 없었고, 남은
+        # 것은 "PTS 역행 sequence [...]" 로그 한 줄뿐이었다. 검사 전에 쓰는 이유는
+        # 아래 raise 마다 갈래를 두지 않기 위해서다 — 성공한 이벤트에도 남지만
+        # 수십 KB 이고, 실패 경로에서 빠지지 않는 쪽이 중요하다.
+        self._write_segment_snapshot(work_directory, segments, continuity)
+
+        if continuity['ptsTies'] and self._logger is not None:
+            # 마감을 막지는 않는다. 다만 조용히 넘기면 인코더가 실제로 정체된
+            # 경우를 놓치므로 남긴다. 동률 자체는 조각 경계 사이에 새 프레임이
+            # 밀리지 않은 정상 상황에서도 생긴다(S15P11A301-304).
+            self._logger.info(
+                f"조각 첫 PTS 동률 {len(continuity['ptsTies'])}건 "
+                f"(sequence {continuity['ptsTies'][:10]}, 기준 {continuity['ptsSource']}). "
+                '역행이 아니므로 마감을 계속한다.'
+            )
+        if continuity['ptsUnknown'] and self._logger is not None:
+            # 순서 검증이 그만큼 비어 있다는 뜻이다. ok=true 와 구별되어야 한다.
+            self._logger.warn(
+                f"조각 {len(continuity['ptsUnknown'])}개에 순서 판정 PTS가 없다"
+                f"(기준 {continuity['ptsSource']}). 그만큼 순서 검증이 건너뛰어졌다."
+            )
+
         if continuity['missingSequences']:
             raise FinalizeError(
                 'SEGMENTS_MISSING',

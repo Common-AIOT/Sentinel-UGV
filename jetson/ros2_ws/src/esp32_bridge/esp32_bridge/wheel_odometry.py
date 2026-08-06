@@ -1,11 +1,24 @@
-"""차동 구동 wheel odometry 데드레커닝 (Phase 0, 명세 23.2·§35-3).
+"""후륜 엔코더 wheel odometry 데드레커닝 (Phase 0, 명세 23.2·§35-3).
 
-센서 ESP32의 `ENCODER_STATE`(좌·우 누적 tick + senderUptimeMs)를 받아
+센서 ESP32의 `ENCODER_STATE`(후륜 좌·우 누적 tick + senderUptimeMs)를 받아
 정운동학으로 `(v, ω)`와 누적 pose를 구한다.
 
     d_L = Δtick_L · meters_per_tick_L
     d_R = Δtick_R · meters_per_tick_R
     d   = (d_R + d_L) / 2 ,  Δθ = (d_R − d_L) / W
+
+## yaw 는 이 모듈을 신뢰하지 않는다 (2026-08-06 전륜 조향 복구)
+
+`v = (d_R + d_L)/2` 는 구조와 무관하게 성립하지만 `Δθ` 는 그렇지 않다. 전륜 조향
+차량에서는 조향 링크가 회두를 정하고 후륜은 같은 속도로 구동되므로, 선회 중 내·외측
+후륜이 노면에 **스크럽**한다 - 좌·우 속도 차가 기하와 맞지 않으며 부호만 겨우 맞는
+수준이다(§35-3). 그래서 **yaw 의 주 소스는 IMU 자이로**이고 `ekf_node`가 엔코더
+`vx` + IMU `vyaw` 로 융합한다(23.2가 엔코더 `vyaw` 를 EKF 입력에서 아예 뺀 근거가
+이 구조에서 더 강해졌다).
+
+여기서 `Δθ` 를 계속 계산하는 이유는 `x·y` 적분에 자세가 필요하기 때문이고, 이
+모듈이 내는 `angular_z` 는 EKF 입력이 아니라 §35-3의 비교 측정(엔코더 yaw · 조향각
+yaw · IMU yaw · 실제 회전량)용 값이다.
 
 `packet_codec`처럼 `rclpy`를 import하지 않는 순수 로직이라 ROS 없이 pytest로
 검증할 수 있고, Phase 1에서 `sentinel_drive`가 그대로 가져다 쓸 수 있다.

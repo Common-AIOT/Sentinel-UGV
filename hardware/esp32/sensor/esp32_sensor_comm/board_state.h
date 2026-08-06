@@ -23,8 +23,9 @@ struct SensorSharedState {
   int32_t driveEncoderTicksRight = 0;
   int16_t driveSpeedLeftMmps = 0;
   int16_t driveSpeedRightMmps = 0;
-  // 조향 모터·조향 엔코더가 캐스터 휠로 대체되어 제거되었다 - 프로토콜 호환을 위해
-  // 필드는 유지하되 sensor_task.cpp가 항상 0으로 보고한다.
+  // 2026-08-06 전륜 조향이 복구됐지만 조향 액추에이터가 서보이고 내부 폐루프라
+  // 외부 각도 피드백이 없다 - 이 자리를 채울 센서가 애초에 없으므로 sensor_task.cpp가
+  // 항상 0으로 보고한다(§34-5). 엔코더는 후륜 2개 그대로다.
   int16_t measuredSteeringMdeg = 0;
 
   int16_t temperatureDeciC = 0;

@@ -21,11 +21,15 @@ struct MotorSharedState {
   MotorBoardState state = MotorBoardState::SAFE_IDLE;
   uint16_t faultFlags = 0;
 
-  // 가장 최근에 수신한 DRIVE_COMMAND 타깃. 실제 BTS7960 구동 로직은 후속 PWM 티켓의
-  // applyDriveTargets()/applySafeOutputs() 훅이 채운다 - 여기서는 통신 계층 값만 보관한다.
+  // 가장 최근에 수신한 DRIVE_COMMAND 타깃. 실제 액추에이션은 safety_stub.h(후륜
+  // 구동)와 steering.h(전륜 조향 서보)가 담당하고, 여기에는 통신 계층 값만 보관한다.
+  // 후륜은 전·후진 전용이라 좌·우가 같은 값이며(§34-2), 조향은 별도 필드다.
   int16_t targetDriveLeftMmps = 0;
   int16_t targetDriveRightMmps = 0;
+  // Jetson이 보낸 원본 조향 목표. 실제 추종 중인 값(클램프·슬루레이트 적용 후)은
+  // steeringTargetMdeg()가 갖고 있으며 DRIVE_STATE는 그쪽을 보고한다.
   int16_t targetSteeringMdeg = 0;
+  uint16_t maxSteeringRateMdps = 0;
   uint16_t commandTimeoutMs = 300;
 
   uint32_t lastValidDriveCommandMs = 0;

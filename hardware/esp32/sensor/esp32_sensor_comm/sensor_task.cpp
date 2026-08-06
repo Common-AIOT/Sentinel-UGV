@@ -46,8 +46,8 @@ bool writeRegister(uint8_t address, uint8_t reg, uint8_t value) {
 }
 
 // ------------------------------------------------------------
-// MT6701 좌/우 구동 엔코더 (단일 I2C 버스, 주소로 구분)
-// 조향 엔코더는 조향 모터가 캐스터 휠로 대체되면서 제거되었다.
+// MT6701 후륜 좌/우 구동 엔코더 (단일 I2C 버스, 주소로 구분)
+// 조향각 엔코더는 없다 - 전륜 조향 서보가 내부 폐루프라 외부 피드백이 없다(§6.3).
 // ------------------------------------------------------------
 constexpr int DRIVE_I2C_SDA_PIN = 21;
 constexpr int DRIVE_I2C_SCL_PIN = 22;
@@ -563,7 +563,7 @@ void sensorTaskFn(void* pvParameters) {
       s.driveEncoderTicksRight = g_rightEncoder.accumulatedTicks;
       s.driveSpeedLeftMmps = g_leftEncoder.online ? leftSpeedMmps : 0;
       s.driveSpeedRightMmps = g_rightEncoder.online ? rightSpeedMmps : 0;
-      // 조향 모터·조향 엔코더가 캐스터 휠로 대체되어 더 이상 존재하지 않는다.
+      // 조향각을 재는 센서가 없다(서보 내부 폐루프, §34-5). 자리만 유지한다.
       s.measuredSteeringMdeg = 0;
 
       if (driveEncoderFault) {

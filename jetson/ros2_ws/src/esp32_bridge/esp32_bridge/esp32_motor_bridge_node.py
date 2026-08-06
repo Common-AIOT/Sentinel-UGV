@@ -1,11 +1,21 @@
 """모터 ESP32 브리지 노드 (S15P11A301-84).
 
 USB 직렬(921600bps, COBS+CRC16)로 모터 ESP32(`esp32_motor_comm` 스케치)와
-통신한다. 범위는 통신 계층뿐이다 - 실제 BTS7960 PWM 제어·차량 기구학 변환은 이
-노드가 아니라 아직 없는 `vehicle_kinematics_node`/`command_mux_node`(§34-11
-`sentinel_control`)의 몫이다. 그 노드들이 없어 `~/drive_command`는 JSON
-문자열(std_msgs/String)로 받는 placeholder다 - 전용 `esp32_bridge_msgs`
-인터페이스 패키지는 이번 범위에서 만들지 않기로 확정했다(계획 §5).
+통신한다. 범위는 통신 계층뿐이다 - 실제 BTS7960 PWM·조향 서보 PWM 생성은 펌웨어가,
+차량 기구학 변환(v/ω → 후륜 속도 + 전륜 조향각)은 `sentinel_drive`의
+`vehicle_kinematics_node`가 담당한다(§34-11). `~/drive_command`는 전용
+`esp32_bridge_msgs` 인터페이스 대신 JSON 문자열(std_msgs/String)로 받는다(계획 §5).
+
+## 조향 필드는 2026-08-06부터 실제로 쓰인다
+
+`target_steering_mdeg`·`max_steering_rate_mdps`는 차동 구동 전환 때 프로토콜
+호환용 예약 자리로 남아 있었고, 전륜 서보 조향 복구로 다시 의미를 갖게 됐다
+(§34-5). 와이어 포맷은 그대로이며 이 노드는 값을 실어 보내고 `DRIVE_STATE`의
+조향 필드를 그대로 발행한다.
+
+키가 빠진 `drive_command`가 오면 **조향은 마지막 값을 유지한다**. 0을 기본값으로
+두면 조향 필드를 모르는 발행자(수동 시험 스크립트 등)의 명령마다 앞바퀴가 중립으로
+돌아가는데, 그것은 §34-7의 「정지 시 조향각 유지」와 정반대다.
 
 시동 시 HELLO/HELLO_ACK 핸드셰이크로 버전·role을 확인한다(§34-6). 300ms 통신
 워치독과 실제 정지는 ESP32 펌웨어가 로컬로 수행하므로(esp32_motor_comm의
@@ -104,6 +114,10 @@ class Esp32MotorBridgeNode(Node):
 
         self._sequence = 0
         self._sequence_lock = threading.Lock()
+        # 조향 필드가 빠진 명령에서 쓸 마지막 값. 펌웨어도 부팅 시 중립에서
+        # 시작하므로 초기값 0이 맞다(§34-6).
+        self._last_steering_mdeg = 0
+        self._last_steering_rate_mdps = 0
         self._reboot_detector = RebootDetector()
         self._handshake_ok = False
 
@@ -189,14 +203,20 @@ class Esp32MotorBridgeNode(Node):
                 flags=int(data.get("flags", 0)),
                 target_drive_left_mmps=int(data["target_drive_left_mmps"]),
                 target_drive_right_mmps=int(data["target_drive_right_mmps"]),
-                target_steering_mdeg=int(data.get("target_steering_mdeg", 0)),
+                target_steering_mdeg=int(
+                    data.get("target_steering_mdeg", self._last_steering_mdeg)
+                ),
                 max_accel_mmps2=int(data.get("max_accel_mmps2", 0)),
-                max_steering_rate_mdps=int(data.get("max_steering_rate_mdps", 0)),
+                max_steering_rate_mdps=int(
+                    data.get("max_steering_rate_mdps", self._last_steering_rate_mdps)
+                ),
                 command_timeout_ms=int(data.get("command_timeout_ms", 300)),
             )
         except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
             self.get_logger().warn(f"drive_command 파싱 실패, 무시함: {exc}")
             return
+        self._last_steering_mdeg = cmd.target_steering_mdeg
+        self._last_steering_rate_mdps = cmd.max_steering_rate_mdps
         self._send_frame(MSG_DRIVE_COMMAND, pack_drive_command(cmd))
 
     def _on_protective_stop(self, msg: Bool) -> None:

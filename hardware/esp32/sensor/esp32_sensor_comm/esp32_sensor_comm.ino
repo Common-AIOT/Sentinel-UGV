@@ -2,7 +2,9 @@
 // 범위: COBS+CRC16 프레이밍, HELLO/HELLO_ACK, ENCODER/IMU/ENVIRONMENT/PROXIMITY_STATE
 // 송신(실측값), 300ms 통신 워치독(로컬 액추에이터가 없어 STALE 보고만). MT6701(좌/우
 // 구동)·MPU6050 I2C·DHT-11 1-wire·HC-SR04 pulseIn 실측은 sensor_task.cpp가 담당한다.
-// 조향 엔코더는 조향 모터가 캐스터 휠로 대체되면서 제거되었다.
+// 엔코더는 후륜 좌·우 2개뿐이다. 2026-08-06 전륜 조향이 복구됐지만 DS51150 서보가
+// 내부 폐루프로 각도를 유지하고 외부로 출력하지 않아 조향각 피드백을 두지 않는다
+// (§6.3 — 조향은 개루프로 운용한다).
 //
 // 기존 encoder/total 벤치 스케치(mt6701_test_sample, total_sensor_test 등)는 그대로 둔다.
 #include <Arduino.h>

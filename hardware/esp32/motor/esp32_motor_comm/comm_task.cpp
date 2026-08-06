@@ -8,6 +8,7 @@
 #include <fault_codes.h>
 #include "board_state.h"
 #include "safety_stub.h"
+#include "steering.h"
 
 namespace {
 
@@ -79,9 +80,11 @@ void sendDriveState() {
   state.faultFlags = snapshot.faultFlags;
   state.drivePwmLeftPermille = pwmToPermille(motorDriverAppliedPwmLeft());
   state.drivePwmRightPermille = pwmToPermille(motorDriverAppliedPwmRight());
-  // 조향 모터가 캐스터 휠로 대체되어 더 이상 액추에이션되지 않는다 - 항상 0을 보고한다.
-  state.targetSteeringMdeg = 0;
-  state.steeringActuatorCmd = 0;
+  // §34-5: target은 슬루레이트 제한 후 실제 추종 중인 목표, actuator는 서보에
+  // 내보낸 펄스폭(µs)이다. 조향각 피드백이 없으므로(개루프) 이 둘이 Jetson이 볼 수
+  // 있는 조향 상태의 전부다.
+  state.targetSteeringMdeg = steeringTargetMdeg();
+  state.steeringActuatorCmd = steeringActuatorCmdUs();
   state.estopActive = (snapshot.state == MotorBoardState::ESTOP_LATCHED) ? 1 : 0;
   state.driverEnabled = motorDriverEnabled() ? 1 : 0;
 
@@ -140,6 +143,7 @@ void handleDriveCommand(const uint8_t* payload, uint16_t len, uint16_t sequence)
     s.targetDriveLeftMmps = cmd.targetDriveLeftMmps;
     s.targetDriveRightMmps = cmd.targetDriveRightMmps;
     s.targetSteeringMdeg = cmd.targetSteeringMdeg;
+    s.maxSteeringRateMdps = cmd.maxSteeringRateMdps;
     s.commandTimeoutMs = cmd.commandTimeoutMs;
     s.lastValidDriveCommandMs = millis();
     s.faultFlags &= ~FAULT_COMM_TIMEOUT_MOTOR;
@@ -152,11 +156,32 @@ void handleDriveCommand(const uint8_t* payload, uint16_t len, uint16_t sequence)
     accepted = true;
   });
 
-  if (accepted) {
-    applyDriveTargets(cmd.targetDriveLeftMmps, cmd.targetDriveRightMmps, cmd.targetSteeringMdeg);
-  }
+  if (!accepted) return;
+
+  // 조향을 먼저 반영한다. 정지 중 조향 금지 판정(§34-2)에 쓰는 선속도는 같은
+  // 명령의 후륜 목표이므로, 구동 목표를 적용하기 전에 판단해야 한다.
+  const int16_t driveMagnitudeMmps =
+      (int16_t)max(abs((int32_t)cmd.targetDriveLeftMmps), abs((int32_t)cmd.targetDriveRightMmps));
+  const bool steeringAccepted =
+      steeringSetTarget(cmd.targetSteeringMdeg, cmd.maxSteeringRateMdps, driveMagnitudeMmps);
+
+  // §34-9 bit 14. 래치하지 않는다 - 정상 명령이 들어오면 즉시 내린다. 조향에는
+  // 다른 진단 창구가 없으므로 "지금 클램프·거부되고 있다"를 실시간으로 보여야
+  // 하고, 래치하면 그 구분이 사라진다.
+  motorSharedStateUpdate([steeringAccepted](MotorSharedState& s) {
+    if (steeringAccepted) {
+      s.faultFlags &= ~FAULT_STEERING_COMMAND_INVALID;
+    } else {
+      s.faultFlags |= FAULT_STEERING_COMMAND_INVALID;
+    }
+  });
+
+  applyDriveTargets(cmd.targetDriveLeftMmps, cmd.targetDriveRightMmps);
 }
 
+// STOP/ESTOP 모두 구동만 끊고 **조향각은 마지막 목표를 유지한다**(§34-7). 물리
+// E-Stop만이 서보 전원을 끊어 조향을 무여자로 만들며, 그것은 소프트웨어가 관여할
+// 수 없는 경로다(§21.4).
 void handleStopCommand(uint16_t sequence) {
   applySafeOutputs();
   motorSharedStateUpdate([](MotorSharedState& s) {

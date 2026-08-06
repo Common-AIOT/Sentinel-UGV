@@ -23,5 +23,16 @@ public record TelemetryPointResponse(
         Double humidity,
         Double linearVelocity,
         Double angularVelocity,
-        Boolean mcuConnected) {
+        Boolean mcuConnected,
+        /**
+         * 녹화기 상태 (S15P11A301-310). 구간 bool_and — 한 번이라도 실패했으면 false,
+         * 보고가 없었으면 null(판정 근거 없음이며 「정상」이 아니다).
+         */
+        Boolean recorderOk,
+        /**
+         * 마지막 마감 실패 사유. {@code recorderOk=true} 와 함께 오는 것이 정상이며
+         * 「지금은 정상이지만 이번 기동에 실패가 있었다」는 뜻이다 — 젯슨이 성공해도
+         * 지우지 않는다. 값이 늘어날 수 있어 문자열 그대로 내보낸다.
+         */
+        String recorderLastFailure) {
 }

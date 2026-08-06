@@ -27,7 +27,9 @@ public class TelemetryQueryService {
     public TelemetryLatestResponse findLatest() {
         record Env(Instant time, Double temperature, Double humidity) {
         }
-        record Mcu(Instant time, Boolean connected) {
+        // 녹화기 상태를 함께 담는다 (S15P11A301-310). 같은 robot_metrics 최신 행에서
+        // 나오므로 조회가 늘지 않는다.
+        record Mcu(Instant time, Boolean connected, Boolean recorderOk, String recorderLastFailure) {
         }
 
         List<Env> env = jdbc.query("""
@@ -39,11 +41,13 @@ public class TelemetryQueryService {
                         rs.getObject("humidity", Double.class)));
 
         List<Mcu> mcu = jdbc.query("""
-                        SELECT time, mcu_connected
+                        SELECT time, mcu_connected, recorder_ok, recorder_last_failure
                         FROM robot_metrics ORDER BY time DESC LIMIT 1
                         """,
                 (rs, i) -> new Mcu(rs.getTimestamp("time").toInstant(),
-                        rs.getObject("mcu_connected", Boolean.class)));
+                        rs.getObject("mcu_connected", Boolean.class),
+                        rs.getObject("recorder_ok", Boolean.class),
+                        rs.getString("recorder_last_failure")));
 
         // 주행 지표 (S15P11A301-300). robot_pose 는 다른 하이퍼테이블이라 조회가 하나 는다.
         // time 인덱스가 자동 생성되므로 LIMIT 1 은 싸다.
@@ -66,6 +70,8 @@ public class TelemetryQueryService {
                 e == null ? null : e.humidity(),
                 m == null ? null : m.time(),
                 m == null ? null : m.connected(),
+                m == null ? null : m.recorderOk(),
+                m == null ? null : m.recorderLastFailure(),
                 p == null ? null : p.time(),
                 p == null ? null : p.linear(),
                 p == null ? null : p.angular());

@@ -70,7 +70,14 @@ public class MissionService {
                 SELECT time_bucket(make_interval(secs => ?), time) AS bucket,
                        avg(cpu) AS cpu, avg(gpu) AS gpu, avg(memory) AS memory,
                        avg(jetson_temp) AS jetson_temp, avg(battery) AS battery,
-                       bool_and(mcu_connected) AS mcu_connected
+                       bool_and(mcu_connected) AS mcu_connected,
+                       -- 녹화기 상태 (S15P11A301-310). recorder_ok 도 boolean 이라
+                       -- bool_and: 구간 중 한 번이라도 실패했으면 false 로 보인다.
+                       -- 사유는 젯슨이 래치해 두는 값이라 한 버킷 안에서 거의 상수다.
+                       -- max() 는 그 상수를 그대로 집어내며, 값이 섞이는 드문 경우에도
+                       -- 결정적이다(임의로 하나를 고르는 것보다 재현 가능하다).
+                       bool_and(recorder_ok) AS recorder_ok,
+                       max(recorder_last_failure) AS recorder_last_failure
                 FROM robot_metrics
                 WHERE mission_id = ? AND time >= ? AND time <= ?
                 GROUP BY bucket
@@ -90,6 +97,7 @@ public class MissionService {
             )
             SELECT COALESCE(m.bucket, e.bucket, p.bucket) AS bucket,
                    m.cpu, m.gpu, m.memory, m.jetson_temp, m.battery, m.mcu_connected,
+                   m.recorder_ok, m.recorder_last_failure,
                    e.temperature, e.humidity,
                    p.linear_velocity, p.angular_velocity
             FROM m
@@ -186,7 +194,9 @@ public class MissionService {
                         rs.getObject("humidity", Double.class),
                         rs.getObject("linear_velocity", Double.class),
                         rs.getObject("angular_velocity", Double.class),
-                        rs.getObject("mcu_connected", Boolean.class)),
+                        rs.getObject("mcu_connected", Boolean.class),
+                        rs.getObject("recorder_ok", Boolean.class),
+                        rs.getString("recorder_last_failure")),
                 bucketSeconds, missionId, fromTs, toTs,
                 bucketSeconds, missionId, fromTs, toTs,
                 bucketSeconds, missionId, fromTs, toTs);

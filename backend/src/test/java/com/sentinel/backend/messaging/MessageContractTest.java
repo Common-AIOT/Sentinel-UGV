@@ -90,6 +90,46 @@ class MessageContractTest {
     }
 
     @Test
+    void legacyTelemetryHasNoRecorderFields() throws Exception {
+        // 젯슨 재빌드 전 스택이 보내는 형태다 (S15P11A301-310). 두 필드가 **키 자체로**
+        // 없는데, 그것이 파싱을 깨뜨리면 재빌드 순간까지 telemetry 수집이 통째로 멈춘다.
+        TelemetryData data = telemetry("telemetry-esp32-connected.json");
+
+        assertNull(data.health().recorderOk());
+        assertNull(data.health().recorderLastFailure());
+        // 같은 메시지의 나머지가 정상 처리되는지도 함께 본다 — 이 시험의 목적은
+        // 「없어도 통과」이지 「두 필드가 null」이 아니다.
+        assertTrue(data.health().lidarOk());
+    }
+
+    @Test
+    void recorderFailureRidesAlongsideHealthyRecorder() throws Exception {
+        // **정상 조합이다.** 젯슨은 성공해도 마지막 실패 사유를 지우지 않는다 — 지우면
+        // 간헐 실패가 성공 한 번에 덮여 재발을 못 잡는다(S15P11A301-304 가 19건 쌓이는
+        // 동안 드러나지 않은 이유). 「지금은 정상이지만 이번 기동에 실패가 있었다」를
+        // 두 필드가 함께 표현하므로 하나로 합치면 안 된다.
+        TelemetryData data = telemetry("telemetry-recorder-failed.json");
+
+        assertTrue(data.health().recorderOk());
+        assertEquals("RECORDING_FAILED_PTS_REGRESSION", data.health().recorderLastFailure());
+    }
+
+    @Test
+    void recorderFailureIsPlainStringNotEnum() throws Exception {
+        // 젯슨이 RECORDING_FAILED_{사유} 로 만들어 값이 늘어난다. 열거형으로 고정하면
+        // 새 사유가 생기는 날 파싱이 깨진다 — 그때는 수집 전체가 멈춘다.
+        String json = """
+                {"mcuConnected": true, "lidarOk": true, "cameraOk": true,
+                 "recorderOk": false, "recorderLastFailure": "RECORDING_FAILED_SOMETHING_NEW"}
+                """;
+        TelemetryData.Health health = mapper.readValue(json, TelemetryData.Health.class);
+
+        assertEquals("RECORDING_FAILED_SOMETHING_NEW", health.recorderLastFailure());
+        // false 는 「실패했다」이고 null 은 「판정 근거 없음」이다. 섞이면 안 된다.
+        assertEquals(Boolean.FALSE, health.recorderOk());
+    }
+
+    @Test
     void offMissionTelemetryHasNullMissionId() throws Exception {
         MessageEnvelope envelope = envelope("telemetry-esp32-absent.json");
 

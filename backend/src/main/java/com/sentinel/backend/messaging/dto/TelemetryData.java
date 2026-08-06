@@ -34,6 +34,28 @@ public record TelemetryData(
     public record Compute(Double cpuPercent, Double gpuPercent, Double memoryPercent, Double jetsonTempC) {
     }
 
-    public record Health(Boolean mcuConnected, Boolean lidarOk, Boolean cameraOk) {
+    /**
+     * 구성요소별 연결 상태.
+     *
+     * <p>{@code recorderOk}·{@code recorderLastFailure} 는 S15P11A301-310 에서 더했다.
+     * 계약상 **필수가 아니다** — recorder 없이 도는 구성에서는 키 자체가 없다. Jackson 이
+     * 없는 키를 null 로 채우므로 「키 없음」과 「null」이 자연히 같게 처리된다.
+     *
+     * <p>둘은 독립이다. {@code recorderOk=true} 와 {@code recorderLastFailure} 가 함께 오는
+     * 것이 정상 조합이며 「지금은 정상이지만 이번 기동에 실패가 있었다」는 뜻이다 — 젯슨이
+     * 성공해도 사유를 지우지 않는다. 합치면 간헐 실패가 성공에 덮여 재발을 못 잡는다.
+     *
+     * <p>{@code recorderOk} 의 null 은 「정상」이 아니라 「이번 기동에서 마감한 이벤트가
+     * 없어 판정할 근거가 없음」이다. mcuConnected 의 3값 원칙과 같다.
+     *
+     * <p>{@code recorderLastFailure} 는 String 이다. 젯슨이 {@code RECORDING_FAILED_{사유}}
+     * 로 만들어 값이 늘어나므로 enum 으로 고정하지 않는다.
+     */
+    public record Health(
+            Boolean mcuConnected,
+            Boolean lidarOk,
+            Boolean cameraOk,
+            Boolean recorderOk,
+            String recorderLastFailure) {
     }
 }

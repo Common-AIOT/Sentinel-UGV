@@ -22,6 +22,11 @@ public record TelemetryLatestResponse(
         Double humidity,
         Instant mcuTime,
         Boolean mcuConnected,
+        // 녹화기 상태 (S15P11A301-310). mcuTime 과 같은 행에서 온다 — 신선도도 그것을 쓴다.
+        // 두 필드는 독립이며 합치지 않는다: recorderOk=true 와 사유가 함께 오는 것이
+        // 「지금은 정상이지만 이번 기동에 실패가 있었다」는 정상 조합이다.
+        Boolean recorderOk,
+        String recorderLastFailure,
         Instant poseTime,
         Double linearVelocity,
         Double angularVelocity) {

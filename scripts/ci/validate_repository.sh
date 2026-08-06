@@ -18,8 +18,8 @@ backend/compose.prod.yaml
 docs/README.md
 scripts/README.md
 scripts/setup_jetson.sh
-scripts/start_sentinel.sh
-scripts/stop_sentinel.sh
+scripts/demo_up.sh
+scripts/demo_down.sh
 scripts/gen_stream_cert.sh
 "
 

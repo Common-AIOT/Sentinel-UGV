@@ -61,8 +61,9 @@ export ROS_DOMAIN_ID=97
 # ---------------------------------------------------------------------------
 # ROS 와 워크스페이스 소싱
 #
-# 세 진입점(demo_up·start_sentinel·viz_up)이 같은 절차를 각자 복사해 두고 있었다.
-# 한 곳에서만 관리한다.
+# 진입점들이 같은 절차를 각자 복사해 두고 있었다. 한 곳에서만 관리한다.
+# (부분 기동 진입점은 S15P11A301-294 에서 제거했고 지금 소싱하는 쪽은
+#  demo_up·viz_up·jetson_voice_preflight 다.)
 # ---------------------------------------------------------------------------
 
 SENTINEL_ROS_ENV_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -70,7 +71,7 @@ SENTINEL_ROS_ENV_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # set -u 와 ROS setup.bash 는 함께 못 쓴다. 소싱 동안만 푼다.
 #
 # 호출한 스크립트의 -u 설정을 그대로 되돌려야 한다. 무조건 `set -u` 로 끝내면
-# -u 를 쓰지 않는 스크립트(stop_sentinel.sh 계열)의 동작을 바꿔 버린다.
+# -u 를 쓰지 않는 스크립트의 동작을 바꿔 버린다.
 sentinel_ros_env_had_u=0
 case "$-" in
   *u*) sentinel_ros_env_had_u=1 ;;

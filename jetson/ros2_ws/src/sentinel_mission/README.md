@@ -247,6 +247,11 @@ ERROR:gstsplitmuxsink.c:2691:check_completed_gop: assertion failed: (gop != NULL
 `scripts/demo_down.sh`로 전부 내린 뒤 필요한 것만 띄웁니다. MediaMTX가 없으면
 `rtspclientsink`가 재연결 루프에 빠져 조각이 나오지 않는 것도 같은 증상입니다.
 
-이전에는 이 자리에 `stop_sentinel.sh`가 적혀 있었는데 **그것으로는 전부 내려가지
-않습니다**(S15P11A301-217). 센서·스트리밍만 정리하므로 SLAM·녹화·임무·탐지가
-남고, 그 상태로 다시 띄우면 같은 토픽을 중복 발행하는 고아가 쌓입니다.
+이전에는 이 자리에 부분 기동 스크립트(`stop_sentinel.sh`)가 적혀 있었는데
+**그것으로는 전부 내려가지 않았습니다**(S15P11A301-217). 센서·스트리밍만
+정리하므로 SLAM·녹화·임무·탐지가 남고, 그 상태로 다시 띄우면 같은 토픽을 중복
+발행하는 고아가 쌓입니다. 그 스크립트는 S15P11A301-294에서 제거했습니다 —
+내리는 명령이 둘이면 한쪽은 반드시 낡습니다.
+
+`sentinel-demo.service`가 돌고 있으면 `demo_down.sh`가 `systemctl stop`을 탑니다.
+프로세스만 죽이면 `Restart=on-failure`가 5초 뒤 스택을 되살립니다.

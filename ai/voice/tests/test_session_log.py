@@ -41,8 +41,8 @@ def speech(level=0.2, seconds=1.0):
 def silence():
     """조용한 방. **정확히 0이 아니다** — 살아 있는 마이크는 조용해도 신호를 낸다.
 
-    0.0038은 실측 값이고 `SILENCE_RMS`(0.005) 아래다. 정확히 0으로 두면
-    디지털 무음(캡처 경로 사망) 판정에 걸려 장치 오류가 된다(S15P11A301-257).
+    0.0038은 살아 있는 마이크의 실측 값이다. 새 선게이트는 통과하지만 테스트의
+    VAD 대역이 음성 아님을 반환한다. 정확히 0이면 장치 오류가 된다(S15P11A301-257).
     """
     return np.full(config.FS, 0.0038, dtype=np.float32)
 
@@ -239,7 +239,7 @@ class SessionTranscriptTest(TempSessionTest):
 
     def test_silent_turn_is_still_recorded(self):
         """무음으로 빠지는 경로가 진단 대상이다. 여기서 저장을 건너뛰면 안 된다."""
-        runner = build_runner(self.log, audio=silence())
+        runner = build_runner(self.log, audio=silence(), has_speech=False)
         runner.run()
 
         turns = listened(self.log.directory)
@@ -270,7 +270,7 @@ class RetryAttemptIsPreservedTest(TempSessionTest):
     """INTRO 재질문의 1차 관찰이 2차에 덮이면 에코 가설(165)을 검증할 수 없다."""
 
     def test_both_intro_attempts_are_kept(self):
-        runner = build_runner(self.log, audio=silence())
+        runner = build_runner(self.log, audio=silence(), has_speech=False)
         runner.run()
 
         intro = [
@@ -293,7 +293,7 @@ class RetryAttemptIsPreservedTest(TempSessionTest):
         )
 
     def test_audio_filenames_carry_question_and_attempt(self):
-        runner = build_runner(self.log, audio=silence())
+        runner = build_runner(self.log, audio=silence(), has_speech=False)
         runner.run()
         names = sorted(path.name for path in self.log.directory.glob("*.wav"))
         self.assertIn("turn_01_INTRO_a1.wav", names)

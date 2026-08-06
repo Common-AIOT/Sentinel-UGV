@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_MANIFEST = ROOT / "bench" / "fixtures" / "asr-shadow" / "manifest.jsonl"
+DEFAULT_MANIFEST = ROOT / "evaluation" / "fixtures" / "asr-shadow" / "manifest.jsonl"
 DEFAULT_OUTPUT_DIR = ROOT / "results" / "asr-shadow"
 
 
@@ -389,45 +389,70 @@ def _optional_float(value: Any) -> float | None:
     return None if value is None else float(value)
 
 
+def _summary_row(endpoint: str, group: list[Observation]) -> dict[str, Any]:
+    success = [item for item in group if item.ok]
+    scored = [item for item in success if item.cer is not None]
+    critical_total = sum(item.critical_groups_total for item in success)
+    critical_preserved = sum(item.critical_groups_preserved for item in success)
+    inference = [item.inference_ms for item in success if item.inference_ms is not None]
+    cer_units = sum(item.cer_reference_units or 0 for item in scored)
+    wer_units = sum(item.wer_reference_units or 0 for item in scored)
+    rtf_values = [
+        item.inference_ms / 1000 / item.duration_seconds
+        for item in success
+        if item.inference_ms is not None and item.duration_seconds
+    ]
+    return {
+        "endpoint": endpoint,
+        "requests": len(group),
+        "successRate": round(len(success) / len(group), 4) if group else 0.0,
+        "cerMean": round(statistics.mean(item.cer for item in scored), 4) if scored else None,
+        "werMean": round(statistics.mean(item.wer for item in scored), 4) if scored else None,
+        "cerMicro": round(sum(item.cer_edits or 0 for item in scored) / cer_units, 4)
+        if cer_units
+        else None,
+        "werMicro": round(sum(item.wer_edits or 0 for item in scored) / wer_units, 4)
+        if wer_units
+        else None,
+        "criticalTermRecall": round(critical_preserved / critical_total, 4)
+        if critical_total
+        else None,
+        "riskToSafe": sum(item.risk_to_safe for item in success),
+        "nonSpeechHallucinations": sum(item.hallucinated_non_speech for item in success),
+        "latencyP50Ms": _rounded(percentile((item.latency_ms for item in success), 50)),
+        "latencyP95Ms": _rounded(percentile((item.latency_ms for item in success), 95)),
+        "inferenceP50Ms": _rounded(percentile(inference, 50)),
+        "inferenceP95Ms": _rounded(percentile(inference, 95)),
+        "rtfMean": round(statistics.mean(rtf_values), 4) if rtf_values else None,
+    }
+
+
 def summarize(observations: list[Observation]) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    for endpoint in sorted({item.endpoint for item in observations}):
-        group = [item for item in observations if item.endpoint == endpoint]
-        success = [item for item in group if item.ok]
-        scored = [item for item in success if item.cer is not None]
-        critical_total = sum(item.critical_groups_total for item in success)
-        critical_preserved = sum(item.critical_groups_preserved for item in success)
-        inference = [item.inference_ms for item in success if item.inference_ms is not None]
-        cer_units = sum(item.cer_reference_units or 0 for item in scored)
-        wer_units = sum(item.wer_reference_units or 0 for item in scored)
-        rtf_values = [
-            item.inference_ms / 1000 / item.duration_seconds
-            for item in success
-            if item.inference_ms is not None and item.duration_seconds
-        ]
-        rows.append(
-            {
-                "endpoint": endpoint,
-                "requests": len(group),
-                "successRate": round(len(success) / len(group), 4) if group else 0.0,
-                "cerMean": round(statistics.mean(item.cer for item in scored), 4) if scored else None,
-                "werMean": round(statistics.mean(item.wer for item in scored), 4) if scored else None,
-                "cerMicro": round(sum(item.cer_edits or 0 for item in scored) / cer_units, 4)
-                if cer_units
-                else None,
-                "werMicro": round(sum(item.wer_edits or 0 for item in scored) / wer_units, 4)
-                if wer_units
-                else None,
-                "criticalTermRecall": round(critical_preserved / critical_total, 4) if critical_total else None,
-                "riskToSafe": sum(item.risk_to_safe for item in success),
-                "nonSpeechHallucinations": sum(item.hallucinated_non_speech for item in success),
-                "latencyP50Ms": _rounded(percentile((item.latency_ms for item in success), 50)),
-                "latencyP95Ms": _rounded(percentile((item.latency_ms for item in success), 95)),
-                "inferenceP50Ms": _rounded(percentile(inference, 50)),
-                "inferenceP95Ms": _rounded(percentile(inference, 95)),
-                "rtfMean": round(statistics.mean(rtf_values), 4) if rtf_values else None,
-            }
+    return [
+        _summary_row(
+            endpoint,
+            [item for item in observations if item.endpoint == endpoint],
         )
+        for endpoint in sorted({item.endpoint for item in observations})
+    ]
+
+
+def summarize_by_condition(observations: list[Observation]) -> list[dict[str, Any]]:
+    """모델 전체 평균에 가려지지 않도록 소음 조건별 지표를 만든다."""
+
+    rows = []
+    keys = sorted({(item.endpoint, item.condition) for item in observations})
+    for endpoint, condition in keys:
+        row = _summary_row(
+            endpoint,
+            [
+                item
+                for item in observations
+                if item.endpoint == endpoint and item.condition == condition
+            ],
+        )
+        row["condition"] = condition
+        rows.append(row)
     return rows
 
 
@@ -450,8 +475,13 @@ def write_results(
     (output_dir / "asr-shadow-raw.json").write_text(
         json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
+    conditions = summarize_by_condition(observations)
     (output_dir / "asr-shadow-summary.json").write_text(
-        json.dumps({"generatedAt": utc_now(), "models": summary}, ensure_ascii=False, indent=2)
+        json.dumps(
+            {"generatedAt": utc_now(), "models": summary, "conditions": conditions},
+            ensure_ascii=False,
+            indent=2,
+        )
         + "\n",
         encoding="utf-8",
     )
@@ -462,6 +492,13 @@ def write_results(
             writer = csv.DictWriter(stream, fieldnames=list(summary[0]))
             writer.writeheader()
             writer.writerows(summary)
+    if conditions:
+        with (output_dir / "asr-shadow-conditions.csv").open(
+            "w", encoding="utf-8-sig", newline=""
+        ) as stream:
+            writer = csv.DictWriter(stream, fieldnames=list(conditions[0]))
+            writer.writeheader()
+            writer.writerows(conditions)
 
 
 def build_parser() -> argparse.ArgumentParser:

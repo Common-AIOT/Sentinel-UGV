@@ -1,7 +1,5 @@
 package com.sentinel.backend.control;
 
-import java.time.Instant;
-import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.UUID;
 
@@ -63,17 +61,12 @@ public class MissionCommandService {
                         """,
                 missionId, commandId, type);
 
-        // 봉투 스키마의 sentAt 패턴이 소수점 이하 6자리까지만 허용한다. Jackson 은
-        // Instant 를 나노초(9자리)로 직렬화하므로 밀리초로 절단해 계약을 지킨다.
-        Instant now = Instant.now().truncatedTo(ChronoUnit.MILLIS);
-        MessageEnvelope envelope = new MessageEnvelope(
-                MessageEnvelope.SCHEMA_VERSION,
-                UUID.randomUUID(),
+        // 봉투 규칙(sentAt 밀리초 절단·sequence)은 MessageEnvelope.forPublish 가 갖는다.
+        // 계약 시험이 그 메서드를 검사하므로 여기서 규칙을 다시 쓰지 않는다(S15P11A301-288).
+        MessageEnvelope envelope = MessageEnvelope.forPublish(
                 MessageEnvelope.TYPE_MISSION_COMMAND,
                 mission.robotName(),
                 missionId,
-                now.toEpochMilli(),  // 서버 발행 봉투의 sequence 는 시각 기반 단조 증가 값을 쓴다
-                now,
                 objectMapper.valueToTree(new MissionCommandData(commandId, type)));
         try {
             gateway.publish(mission.robotName(), "cmd/mission", envelope);

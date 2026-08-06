@@ -21,10 +21,33 @@ public record EncounterDetailResponse(
         Integer responsivePersonCount,
         Integer unresponsivePersonCount,
         String interactionSummary,
+        EncounterPose encounterPose,
+        List<AdditionalPersonReport> additionalPersonReports,
         Instant startedAt,
         Instant interactionStartedAt,
         Instant interactionEndedAt,
         Instant endedAt,
         String terminationReason,
         List<EncounterMediaResponse> media) {
+
+    public record EncounterPose(
+            double x,
+            double y,
+            double yaw,
+            String mapId) {
+    }
+
+    public record AdditionalPersonReport(
+            String subjectText,
+            Integer reportedCount,
+            String countStatus,
+            String locationText,
+            Integer reportedFloor,
+            String groundingStatus,
+            String responseStatus,
+            String certaintyStatus,
+            String rawUtterance,
+            String verificationStatus,
+            boolean operatorReviewRequired) {
+    }
 }

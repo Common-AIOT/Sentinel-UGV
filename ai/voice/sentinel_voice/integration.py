@@ -49,6 +49,8 @@ def build_interaction_report(
         "encounterId": context.encounter_id,
         "missionId": context.mission_id,
         "visionPersonCount": context.person_count,
+        "encounterPose": context.pose,
+        "additionalPersonReports": list(result.additional_person_reports),
         "startedAt": started_at,
         "endedAt": ended_at,
         "sessionReport": report,

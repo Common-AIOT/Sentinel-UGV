@@ -127,6 +127,40 @@ class SessionRunnerTest(unittest.TestCase):
         self.assertNotIn(None, player.played)
         self.assertEqual(player.played[0], GuideCode.INTRO)
 
+    def test_count_keeps_additional_person_report_separate(self):
+        """추가 인원 제보는 응답 가능 총인원과 섞지 않고 원문과 함께 보존한다."""
+        runner, _ = build_runner(
+            text="2층에 우리 아기가 있어요",
+            extraction={
+                "reportedResponsiveCount": 1,
+                "mobilityStatus": "UNKNOWN",
+                "urgentConditionReported": "UNKNOWN",
+                "additionalPersonReports": [
+                    {
+                        "subjectText": "우리 아기",
+                        "reportedCount": 1,
+                        "countStatus": "EXACT",
+                        "locationText": "2층",
+                        "responseStatus": "UNKNOWN",
+                        "certaintyStatus": "ASSERTED",
+                        "reportedFloor": 2,
+                        "groundingStatus": "UNGROUNDED",
+                        "rawUtterance": "2층에 우리 아기가 있어요",
+                        "verificationStatus": "UNVERIFIED",
+                        "operatorReviewRequired": True,
+                    }
+                ],
+            },
+        )
+        result = runner.run()
+
+        self.assertEqual(result.fields["reportedResponsiveCount"], 1)
+        self.assertEqual(len(result.additional_person_reports), 1)
+        report = result.additional_person_reports[0]
+        self.assertEqual(report["subjectText"], "우리 아기")
+        self.assertEqual(report["reportedFloor"], 2)
+        self.assertEqual(report["responseStatus"], "UNKNOWN")
+
     def test_stt_failure_is_not_recorded_as_no_response(self):
         """음성은 있으나 STT가 무효면 무응답이 아니라 STT 실패로 분류한다."""
         # 반복 환각을 만들어 is_valid_stt를 실패시킨다.

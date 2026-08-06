@@ -13,12 +13,37 @@ public record InteractionReportData(
         UUID encounterId,
         UUID missionId,
         int visionPersonCount,
+        EncounterPose encounterPose,
+        List<AdditionalPersonReport> additionalPersonReports,
         Instant startedAt,
         Instant endedAt,
         SessionReport sessionReport,
         RiskAssessment riskAssessment,
         boolean usedFallback
 ) {
+    public record EncounterPose(
+            double x,
+            double y,
+            double yaw,
+            String mapId
+    ) {
+    }
+
+    public record AdditionalPersonReport(
+            String subjectText,
+            Integer reportedCount,
+            String countStatus,
+            String locationText,
+            Integer reportedFloor,
+            String groundingStatus,
+            String responseStatus,
+            String certaintyStatus,
+            String rawUtterance,
+            String verificationStatus,
+            boolean operatorReviewRequired
+    ) {
+    }
+
     public record SessionReport(
             String responseScope,
             Boolean anyResponseDetected,

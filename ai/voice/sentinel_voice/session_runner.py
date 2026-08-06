@@ -148,6 +148,7 @@ class VoiceSessionRunner:
         self.session_log = session_log or open_session_log(on_event=self.on_event)
         self.diagnostics: list[TurnDiagnostics] = []
         self._extractions: list[dict[str, Any]] = []
+        self._additional_person_reports: list[dict[str, Any]] = []
         self._attempts: dict[QuestionCode, int] = {}
         self._turn_index = 0
 
@@ -321,6 +322,12 @@ class VoiceSessionRunner:
         diagnostic.extraction_source = source
         diagnostic.extraction = dict(extraction)
         self._extractions.append(dict(extraction))
+        if question == QuestionCode.COUNT:
+            reports = extraction.get("additionalPersonReports")
+            if isinstance(reports, list):
+                self._additional_person_reports = [
+                    dict(report) for report in reports if isinstance(report, dict)
+                ]
         if source and source != "GMS":
             self.on_event(f"[LLM] {question.value}: 추출 경로 {source}")
 
@@ -366,6 +373,9 @@ class VoiceSessionRunner:
             # 바로 이쪽이다.
             self._write_transcript(None)
             raise
+        result.additional_person_reports = list(
+            self._additional_person_reports
+        )
         self._write_transcript(result)
         return result
 
@@ -415,6 +425,11 @@ class VoiceSessionRunner:
                 ),
                 "fields": dict(result.fields) if result is not None else None,
                 "usedFallback": self.used_fallback,
+                "additionalPersonReports": (
+                    list(result.additional_person_reports)
+                    if result is not None
+                    else None
+                ),
             }
         )
 

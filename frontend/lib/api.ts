@@ -89,6 +89,27 @@ export interface EncounterMedia {
   durationMs: number | null;
 }
 
+export interface EncounterPose {
+  x: number;
+  y: number;
+  yaw: number;
+  mapId: string | null;
+}
+
+export interface AdditionalPersonReport {
+  subjectText: string | null;
+  reportedCount: number | null;
+  countStatus: "EXACT" | "PRESENCE_CONFIRMED_COUNT_UNKNOWN";
+  locationText: string | null;
+  reportedFloor: number | null;
+  groundingStatus: "UNGROUNDED";
+  responseStatus: "RESPONSIVE" | "UNRESPONSIVE" | "UNKNOWN";
+  certaintyStatus: "ASSERTED" | "TENTATIVE";
+  rawUtterance: string;
+  verificationStatus: "UNVERIFIED";
+  operatorReviewRequired: boolean;
+}
+
 export interface EncounterDetail {
   id: string;
   missionId: string;
@@ -100,6 +121,8 @@ export interface EncounterDetail {
   responsivePersonCount: number | null;
   unresponsivePersonCount: number | null;
   interactionSummary: string | null;
+  encounterPose: EncounterPose | null;
+  additionalPersonReports: AdditionalPersonReport[];
   startedAt: string;
   interactionStartedAt: string | null;
   interactionEndedAt: string | null;

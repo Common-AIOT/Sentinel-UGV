@@ -8,6 +8,7 @@ import re
 from . import config
 from .gms_resilience import GmsCallResult, call_with_limited_retry
 from .safety import coerce_extraction, mobility_no_implied_by_text
+from .reported_person import keyword_additional_person_reports
 
 
 PROMPT = config.PROMPT_PATH.read_text(encoding="utf-8")
@@ -103,10 +104,12 @@ def llm_extract(text, question=None, model=None):
         model=selected_model,
         messages=[{"role": "user", "content": filled}],
         response_format={"type": "json_object"},
-        max_completion_tokens=300,
+        max_completion_tokens=500,
         **request_options(selected_model),
     )
-    return coerce_extraction(json.loads(response.choices[0].message.content))
+    return coerce_extraction(
+        json.loads(response.choices[0].message.content), source_text=text
+    )
 
 
 def _reported_count(text: str) -> int | None:
@@ -126,13 +129,17 @@ def _reported_count(text: str) -> int | None:
     if re.search(r"(대답|말|응답).{0,6}(안\s*(해|하|함)|못\s*(해|하|함)|없)", text):
         return 1
 
-    # "두 명 더", "옆에 한 명" 처럼 주변 인원을 덧붙인 표현은 화자를 더한다.
-    # "저 포함해서 세 명", "여기 두 명"처럼 총인원을 말한 경우는 그대로 둔다.
+    # 추가 사람의 존재만으로 그 사람이 응답 가능하다고 만들지 않는다. 주변 사람을
+    # 덧붙인 표현은 화자 한 명만 확인된 것이다. 응답 가능하다고 직접 말한 경우에만
+    # 추가 인원을 포함한다.
     tail = text[match.end() :]
     if re.search(r"^\s*(더|또)", tail) or re.search(
         r"(옆|근처|주변|같이|함께)\s*(에|에는)?\s*$", text[: match.start()]
     ):
-        count += 1
+        if re.search(r"(대답|응답|말).{0,8}(할\s*수\s*있|가능|해|하)", text):
+            count += 1
+        else:
+            count = 1
     return count
 
 
@@ -147,7 +154,12 @@ def keyword_extract(text):
     놓친다. 33-8이 요구하는 축소 동작이며 이것이 주 경로를 대체하지는 않는다.
     """
     normalized = (text or "").strip()
+    additional_reports = keyword_additional_person_reports(normalized)
     count = _reported_count(normalized)
+    if count is None and additional_reports:
+        # COUNT 답변을 한 화자 한 명은 실제로 응답했다. 추가 사람은 상태를
+        # 명시하지 않은 한 합치지 않는다.
+        count = 1
     cannot_move = bool(
         re.search(r"(못\s*(가|움직|일어나)|움직일\s*수\s*없|일어날\s*수\s*없|이동\s*불가)", normalized)
         or _HARD_TO_MOVE_PATTERN.search(normalized)
@@ -174,7 +186,9 @@ def keyword_extract(text):
             "urgentConditionReported": (
                 "YES" if urgent else "NO" if urgent_denied else "UNKNOWN"
             ),
-        }
+            "additionalPersonReports": additional_reports,
+        },
+        source_text=normalized,
     )
 
 

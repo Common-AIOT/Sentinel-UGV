@@ -11,6 +11,8 @@ frontier.py    자유/미지 경계 추출·군집화·필터(크기·테두리�
 coverage.py    카메라 커버리지 장부(world 키·레이캐스트) + 관측 후보(소스 B)
 selector.py    점수화(m²·m 정규화) + 약속(commitment) 정책 — 진동 방지
 sweep.py       스텝-드웰 관측 스윕 계획(부채꼴 수학)
+blacklist.py   도달 실패한 자리를 임무 동안 기억(좌표 반경)
+navigator.py   NullNavigator / Nav2Navigator(NavigateToPose). rclpy 쪽
 exploration_node.py   구독·발행·시계·TF 만. Navigator 인터페이스 뒤에 주행
 ```
 
@@ -22,15 +24,53 @@ exploration_node.py   구독·발행·시계·TF 만. Navigator 인터페이스 
 관측 후보(카메라 미관측 free 군집). 종료도 2단이다: frontier 소진 후 미관측
 면적이 임계 미만이어야 완료다.
 
-## 지금 로봇은 움직이지 않는다
+## 주행 (S15P11A301-172)
 
-Navigator 기본이 `NullNavigator` 다 — 목표를 `~/goal` 로 발행하고 로그만 남긴다.
+`Nav2Navigator` 가 `NavigateToPose` 로 목표를 보낸다. **노드 기본값은 여전히
+`null`** 이고, `exploration.launch.py` 가 `navigator:=nav2` 를 준다 — 이 노드가 다른
+경로로 켜졌을 때 예상 밖에 모터가 도는 일을 막는다.
 
-- `/cmd_vel` → 좌·우 바퀴 속도 역운동학이 없다 (S15P11A301-234)
-- Nav2 스택이 구성되지 않았다 (S15P11A301-235)
+세 가지가 함께 있어야 바퀴가 돈다.
 
-둘이 오면 `Nav2Navigator` 를 같은 인터페이스에 꽂는다. 이 패키지는 바뀌지
-않는다. 축소판(순찰 시퀀스)도 같은 자리에서 갈아끼운다.
+```bash
+./scripts/demo_up.sh enable_nav2:=true enable_exploration:=true enable_safety:=true
+```
+
+`enable_exploration` 은 `enable_nav2` 와 **AND 로 묶여 있다** — Nav2 없이 탐사만 켜면
+목표를 보낼 곳이 없어 「탐사가 도는데 제자리」가 된다. `enable_safety` 는 자동으로
+켜지지 않는다. 그것이 **실제로 모터를 돌리는 스위치**이므로 사람이 따로 켠다
+(S15P11A301-298).
+
+### 결말 처리 — 안 움직이는 것을 막는 부분
+
+| 결말 | 처리 |
+|---|---|
+| `SUCCEEDED` | 그 자리의 실패 이력을 지운다 |
+| `FAILED`(거부 포함) | 실패 적립. 3회면 임무 동안 후보에서 제외 |
+| `UNAVAILABLE` | 액션 서버 없음. **실패로 세지 않는다** |
+| `CANCELED` | 우리가 취소한 것(게이트 닫힘·사람 발견) |
+
+**약속(commitment)을 결말에서 푼다.** 풀지 않으면 도달한 자리에 약속이 남아, 새
+후보가 125% 를 넘길 때까지 로봇이 서 있는다.
+
+**실패를 기억하지 않으면 영원히 안 움직인다.** 점수는 지도에서 나오므로 거부당한
+후보가 다음 주기에 또 1위이고, 2초마다 같은 목표로 다시 보낸다. `allow_unknown:
+false` 와 겹칠 때 특히 잘 난다 — frontier 는 정의상 미지 공간의 경계다.
+
+**`UNAVAILABLE` 을 실패와 나눈 것이 요점이다.** Nav2 는 lifecycle 묶음이라 활성까지
+몇 초 걸린다. 그동안을 실패로 세면 블랙리스트가 정상 후보를 3회 만에 먹어치우고
+탐사가 시작도 못 하고 `DONE` 이 된다.
+
+### 안 움직일 때 보는 순서
+
+`~/status` 의 `state` 가 어디서 멈췄는지 말해 준다.
+
+| state | 뜻 |
+|---|---|
+| `HOLD` | `movementAllowed=false`. 임무가 EXPLORING 이 아니거나 상태가 낡았다 |
+| `WAIT_MAP` | `/map` 을 못 받았다. slam_toolbox 와 QoS(latched) 확인 |
+| `DONE` | 후보가 없다. `blockedGoals` 가 크면 「다 봤다」가 아니라 「못 갔다」다 |
+| `DRIVING` | 목표를 보냈다. 여기서 바퀴가 안 돌면 아래(Nav2·안전 체인·운동학)다 |
 
 ## 시험
 

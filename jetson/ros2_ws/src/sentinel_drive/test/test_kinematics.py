@@ -34,6 +34,9 @@ from sentinel_drive.kinematics import (
 )
 
 # 시험용 차량 한계. 노드 기본값(실측 전 잠정값)과 같은 수로 둔다.
+#
+# 실측 기하는 아래 `test_실측_기하의_최소회전반경` 이 따로 검증한다 — 이 상수를
+# 실측으로 바꾸면 부호·포화 시험의 기대값이 전부 흔들리므로 분리했다.
 L = 0.50
 DELTA_MAX = math.radians(30.0)
 LIMITS = VehicleLimits(
@@ -262,3 +265,47 @@ def test_모드_바이트_기본값을_바꿀_수_있다():
     assert mode_byte(None, default=MODE_SAFE_IDLE) == MODE_SAFE_IDLE
     # 아는 값이면 default 를 보지 않는다.
     assert mode_byte('MANUAL', default=MODE_SAFE_IDLE) == MODE_MANUAL
+
+
+# ── 실측 기하 (2026-08-06, S15P11A301-172) ───────────────────────────────────
+
+# `sentinel_bringup/config/safety.yaml` 의 vehicle_kinematics 절과 같은 값이어야
+# 한다. 두 곳이 어긋나면 이 시험이 먼저 깨진다.
+MEASURED_WHEELBASE_M = 0.683
+MEASURED_MAX_STEERING_DEG = 22.0
+
+
+def test_실측_기하의_최소회전반경():
+    """R_min 1.69m 를 못 박는다.
+
+    종전 기본값(L=0.50·δ=30°)은 R_min 0.87m 를 뜻했고 그것은 **실제의 절반**이다.
+    이 값이 작으면 자전거 모델이 δ = atan(L·ω/v) 를 작게 계산해 로봇이 지령보다
+    덜 꺾는다 — 경로를 벗어나는데 로그에는 아무 오류가 없다. 그래서 수를 시험에
+    남긴다.
+    """
+    measured = VehicleLimits(
+        wheelbase_m=MEASURED_WHEELBASE_M,
+        max_steering_rad=math.radians(MEASURED_MAX_STEERING_DEG),
+        max_drive_mps=0.30,
+        min_linear_mps=0.03,
+    )
+
+    assert min_turning_radius_m(measured) == pytest.approx(1.690, abs=0.005)
+
+    # 잠정값과 2배 가까이 차이 난다는 사실 자체를 남긴다.
+    assert min_turning_radius_m(measured) > min_turning_radius_m(LIMITS) * 1.9
+
+
+def test_실측_기하에서_최대_각속도():
+    """0.15m/s(첫 실기동 속도)에서 낼 수 있는 ω 상한.
+
+    Nav2 가 이보다 큰 ω 를 지령하면 조향이 포화되고 실제 궤적이 계획과 벌어진다.
+    """
+    measured = VehicleLimits(
+        wheelbase_m=MEASURED_WHEELBASE_M,
+        max_steering_rad=math.radians(MEASURED_MAX_STEERING_DEG),
+        max_drive_mps=0.30,
+        min_linear_mps=0.03,
+    )
+
+    assert max_angular_radps(0.15, measured) == pytest.approx(0.15 / 1.690, abs=0.002)

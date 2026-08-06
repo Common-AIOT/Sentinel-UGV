@@ -192,6 +192,10 @@ def generate_launch_description():
         # 끝나기 전에는 데모 기본 구성을 건드리지 않는다 — 탐지가 이미 10.80FPS
         # 로 목표 미달이라, 얹었을 때 얼마나 깎이는지 수치 없이 켤 수 없다.
         DeclareLaunchArgument('enable_nav2', default_value='false'),
+        # 탐사 (S15P11A301-172). Nav2 가 없으면 목표가 UNAVAILABLE 로 돌아오므로
+        # 아래에서 _effective_exploration 으로 AND 를 걸어 구조로 묶는다 —
+        # enable_nav2 없이 탐사만 켜면 「탐사가 도는데 제자리」가 된다.
+        DeclareLaunchArgument('enable_exploration', default_value='false'),
         # 안전 체인 (S15P11A301-237). Nav2 와 같은 이유로 기본 꺼짐이며, 추가로
         # **켜는 순간 바퀴가 돌 수 있는 상태가 된다.** 지금까지 데모 스택은
         # /cmd_vel 발행자가 없어서 구조적으로 못 움직였는데, 이 체인이 그 연결을
@@ -224,6 +228,15 @@ def generate_launch_description():
             AndSubstitution(
                 LaunchConfiguration('_effective_ekf'),
                 LaunchConfiguration('enable_slam'),
+            ),
+        ),
+        # 탐사 실효 조건 = enable_exploration AND enable_nav2. 탐사는 목표를
+        # NavigateToPose 로만 내보내므로 Nav2 없이는 선택만 하고 끝난다.
+        SetLaunchConfiguration(
+            '_effective_exploration',
+            AndSubstitution(
+                LaunchConfiguration('enable_exploration'),
+                LaunchConfiguration('enable_nav2'),
             ),
         ),
         # 데모 기본은 TLS다. 관제 웹(HTTPS)이 평문 WHEP를 혼합 콘텐츠로
@@ -297,6 +310,11 @@ def generate_launch_description():
         # activate 가 끝난 뒤다.
         _include('sentinel_bringup', 'safety.launch.py',
                  'enable_safety', 10.0),
+        # 안전 체인(10초) 뒤에 띄운다. 먼저 뜨면 첫 목표가 나가는 시점에
+        # command_mux 가 없어 /cmd_vel_nav 가 아무도 안 듣는 토픽으로 사라진다 —
+        # Nav2 를 안전 체인 앞에 두지 않는 것과 같은 이유다.
+        _include('sentinel_bringup', 'exploration.launch.py',
+                 '_effective_exploration', 12.0),
         _include('sentinel_streaming', 'streaming.launch.py',
                  'enable_streaming', 4.0,
                  {'webrtc_encryption': LaunchConfiguration('webrtc_encryption')}),

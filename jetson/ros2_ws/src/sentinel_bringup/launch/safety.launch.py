@@ -168,11 +168,17 @@ def generate_launch_description() -> LaunchDescription:
         # /mission/status 의 controlMode 를 따라가 DRIVE_COMMAND.mode 를 정한다.
         # 수동 래치 중에는 mode=1 로 보드와 합의하고, 스트림 자체는 멈추지 않는다
         # (그것이 보드의 300ms 워치독을 갱신하는 유일한 것이다).
+        #
+        # 실측 기하는 safety.yaml 의 vehicle_kinematics 절에 있다
+        # (S15P11A301-172). params 를 주지 않던 동안 이 노드는 코드 기본값
+        # wheelbase 0.50·δ_max 30° 로 돌았고, 그것은 실제의 절반인 R_min 을
+        # 뜻했다 — 지령보다 덜 꺾이는데 로그에는 오류가 없다.
         Node(
             package='sentinel_drive',
             executable='vehicle_kinematics',
             name='vehicle_kinematics',
             output='screen',
+            parameters=[params],
             condition=IfCondition(LaunchConfiguration('enable_kinematics')),
         ),
     ])

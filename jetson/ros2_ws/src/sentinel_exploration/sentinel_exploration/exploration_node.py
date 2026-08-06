@@ -37,30 +37,19 @@ from rclpy.qos import (
 from std_msgs.msg import String
 from tf2_ros import Buffer, TransformListener
 
+from .blacklist import GoalBlacklist
 from .coverage import CameraCoverage, observation_candidates
 from .frontier import cluster_alive, extract_frontiers
 from .grid import GridInfo
+from .navigator import (
+    STATUS_CANCELED,
+    STATUS_FAILED,
+    STATUS_SUCCEEDED,
+    Nav2Navigator,
+    NullNavigator,
+)
 from .selector import Candidate, Commitment, Weights, compute_gains, score
 from .sweep import needed_sectors, plan_sweep
-
-
-class NullNavigator:
-    """Nav2 가 붙기 전의 자리 표시자. 목표를 받기만 하고 이동은 없다.
-
-    도달 콜백을 부르지 않으므로 노드는 SELECT 상태에 머문다 — 그것이 정직한
-    표현이다. 로그에 목표가 계속 찍히면 "선택은 되는데 주행이 없다"가 보인다.
-    """
-
-    def __init__(self, node: Node) -> None:
-        self._node = node
-
-    def send_goal(self, x: float, y: float, yaw: float) -> None:
-        self._node.get_logger().info(
-            f'목표 선택 (Nav2 미연결 — S15P11A301-235 대기): ({x:.2f}, {y:.2f}, {math.degrees(yaw):.0f}°)'
-        )
-
-    def cancel(self) -> None:
-        pass
 
 
 class ExplorationNode(Node):
@@ -80,6 +69,15 @@ class ExplorationNode(Node):
         self.declare_parameter('sweep_sectors', 9)
         self.declare_parameter('max_angular_for_coverage_radps', 0.2)
         self.declare_parameter('breadcrumb_spacing_m', 0.5)
+        # 주행 층 선택 (S15P11A301-172). 'nav2' 는 NavigateToPose 로 실제 주행하고
+        # 'null' 은 목표만 로그로 남긴다. 기본을 null 로 두는 이유는 이 노드가
+        # enable_exploration 없이 켜지는 구성에서 모터를 돌리지 않게 하는 것이다 —
+        # launch 가 명시적으로 nav2 를 준다.
+        self.declare_parameter('navigator', 'null')
+        self.declare_parameter('nav2_action_name', 'navigate_to_pose')
+        # 도달 실패 상한. 넘으면 그 자리를 임무 동안 후보에서 뺀다.
+        self.declare_parameter('blacklist_after_failures', 3)
+        self.declare_parameter('blacklist_radius_m', 0.5)
 
         self._coverage = CameraCoverage()
         self._weights = Weights()
@@ -95,7 +93,20 @@ class ExplorationNode(Node):
         self._last_pose: tuple[float, float, float] | None = None
         self._last_pose_time: float | None = None
 
-        self._navigator = NullNavigator(self)
+        self._blacklist = GoalBlacklist(
+            radius_m=float(self.get_parameter('blacklist_radius_m').value),
+            max_failures=int(self.get_parameter('blacklist_after_failures').value),
+        )
+
+        kind = str(self.get_parameter('navigator').value).lower()
+        if kind == 'nav2':
+            self._navigator = Nav2Navigator(
+                self, str(self.get_parameter('nav2_action_name').value)
+            )
+            self.get_logger().info('navigator=nav2 — NavigateToPose 로 실제 주행한다')
+        else:
+            self._navigator = NullNavigator(self)
+            self.get_logger().info('navigator=null — 목표만 발행하고 주행하지 않는다')
 
         self._tf_buffer = Buffer()
         self._tf_listener = TransformListener(self._tf_buffer, self)
@@ -188,6 +199,9 @@ class ExplorationNode(Node):
             self._commitment = None
             self._publish_status('HOLD')
             return
+
+        self._consume_outcome()
+
         if self._grid is None or self._info is None:
             self._publish_status('WAIT_MAP')
             return
@@ -204,17 +218,17 @@ class ExplorationNode(Node):
             home_x=home_x, home_y=home_y,
             max_radius_m=self.get_parameter('max_radius_m').value,
         )
-        candidates = [
+        candidates = self._drop_blacklisted([
             Candidate(x=c.rep_x, y=c.rep_y, kind='frontier', payload=c) for c in clusters
-        ]
+        ])
 
         # 소스 B: 관측 후보. frontier 소진은 지도 완성이지 수색 완료가 아니다.
         unseen = self._coverage.unseen_free(self._grid, self._info)
         if not candidates:
-            candidates = [
+            candidates = self._drop_blacklisted([
                 Candidate(x=ox, y=oy, kind='observation')
                 for ox, oy in observation_candidates(unseen)
-            ]
+            ])
 
         if not candidates:
             self._navigator.cancel()
@@ -252,6 +266,39 @@ class ExplorationNode(Node):
         self._publish_status('DRIVING', unseen_count=len(unseen))
 
     # ── 보조 ────────────────────────────────────────────────────────────────
+
+    def _consume_outcome(self) -> None:
+        """끝난 목표의 결말을 반영한다 (S15P11A301-172).
+
+        약속을 여기서 푸는 것이 요점이다. 풀지 않으면 도달한 자리에 계속 약속이
+        남아, 새 후보가 125% 를 넘길 때까지 로봇이 서 있는다.
+        """
+        outcome = self._navigator.take_outcome()
+        if outcome is None:
+            return
+        if outcome.status == STATUS_CANCELED:
+            # 우리가 취소한 것이다(게이트 닫힘·사람 발견). 이미 약속을 풀었다.
+            return
+        if outcome.status == STATUS_SUCCEEDED:
+            self._blacklist.record_success(outcome.x, outcome.y)
+        elif outcome.status == STATUS_FAILED:
+            count = self._blacklist.record_failure(outcome.x, outcome.y)
+            limit = int(self.get_parameter('blacklist_after_failures').value)
+            if count >= limit:
+                self.get_logger().warn(
+                    f'({outcome.x:.2f}, {outcome.y:.2f}) 도달 실패 {count}회 — '
+                    '임무 동안 후보에서 제외한다'
+                )
+        # UNAVAILABLE 은 실패로 세지 않는다. Nav2 활성 전의 정상 상황이다.
+        self._commitment = None
+
+    def _drop_blacklisted(self, candidates: list[Candidate]) -> list[Candidate]:
+        """도달 실패가 상한에 닿은 자리를 뺀다.
+
+        빼지 않으면 지도가 그대로인 동안 같은 후보가 계속 1위여서, 거부당하는
+        목표로 2초마다 다시 보낸다 — 겉보기 증상은 "탐사가 도는데 제자리"다.
+        """
+        return [c for c in candidates if not self._blacklist.is_blocked(c.x, c.y)]
 
     def _goal_yaw(self, candidate: Candidate, unseen: list[tuple[float, float]]) -> float:
         """도착 자세의 yaw 를 미관측 방향으로 잡는다 — 도착 즉시 정면이 유효 관측이다."""
@@ -308,6 +355,9 @@ class ExplorationNode(Node):
             'unseenCount': unseen_count,
             'coverageCells': self._coverage.seen_count,
             'breadcrumbs': len(self._breadcrumbs),
+            # 제외된 자리 수. 0 이 아닌데 로봇이 안 움직이면 도달 실패가 쌓인
+            # 것이고, DONE 인데 이 값이 크면 「다 봤다」가 아니라 「못 갔다」다.
+            'blockedGoals': self._blacklist.blocked_count,
             'goal': (
                 {'x': self._commitment.candidate.x, 'y': self._commitment.candidate.y,
                  'kind': self._commitment.candidate.kind}

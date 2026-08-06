@@ -1,16 +1,42 @@
 # Nav2 구성 (S15P11A301-235, 명세 24.1).
 #
-# 컨트롤러는 rotation shim 이 RPP 를 감싼다. 전방 수동 캐스터의 회전 슬립이
-# 오도메트리 yaw 를 갉아먹는데(03장 캘리브레이션 절), DWB 는 궤적 시뮬레이션이
-# 그 품질에 민감하다. RPP + shim 은 "제자리에서 방향 맞추고 직진"에 가까워
-# 슬립에 관용적이다 — 24.1 v2.0 확정.
+# ## 전륜 조향 실측 반영 (2026-08-06, S15P11A301-172)
 #
-# 속도 상한(0.25m/s·0.6rad/s)은 24.2 자율 탐사 행이다. 사람 접근 0.10m/s 는
-# 여기서 다루지 않는다 — 그 감속은 접근 노드(S15P11A301-247)와 안전 체인
+# 이 파일은 차동 구동 + 제자리 회전 전제로 쓰여 있었다. 전륜 서보 조향으로
+# 바뀌면서 **그 전제가 전부 무효**가 됐고, 실측값이 들어와 다시 세웠다.
+#
+#   휠베이스 L      0.683 m        조향각 δ_max   22° (좌·우 동일)
+#   트랙폭 W        0.530 m        전체 폭        0.615 m
+#   차체 길이       0.910 m        바퀴 지름      0.250 m
+#
+#   R_min = L / tan(δ_max) = 0.683 / tan(22°) = 1.69 m
+#
+# **제자리 회전을 명령하면 안 된다.** 종전 `RotationShimController` 는 목표
+# 방향과 45° 이상 어긋나면 v=0·ω 를 낸다. 조향 차량에서 그것은 앞바퀴만 꺾고
+# 전진 0 이므로 로봇이 서 있고, 15초 뒤 progress checker 가 실패로 보고 복구
+# 행동 `spin` 을 부른다 — 그것도 제자리 회전이라 또 실패한다. 즉 **한 발짝도
+# 못 가고 목표를 포기**한다. shim 과 `spin` 을 뺀 이유다.
+#
+# ## footprint 를 원이 아니라 다각형으로 둔다
+#
+# `base_link` 원점이 **후축 중심**이다(자전거 모델이 그 점을 기준으로 적분하고
+# 뒷바퀴 엔코더가 그 점의 이동을 보고한다). 그래서 몸집이 앞으로 크게 치우쳐
+# 있어 원으로는 표현되지 않는다 — 앞을 덮는 원을 그리면 뒤가 과대해지고, 뒤에
+# 맞추면 앞이 벗겨진다.
+#
+# 앞 0.80·뒤 -0.11 은 차체 길이 0.91 과 휠베이스 0.683 에서 오버행을 반씩 본
+# **추정값**이다. 오버행을 재면 이 두 숫자만 고친다.
+#
+# ## planner 는 NavFn 을 유지하되 한계를 적어 둔다
+#
+# NavFn 은 회전반경을 모르므로 R_min 1.69m 로 못 따라갈 경로를 낸다. 옆이나
+# 뒤쪽 목표에서 드러난다. **정면 직선 목표는 정상 동작**하므로 첫 실기동은
+# 그것으로 확인하고, Smac Hybrid-A\* 전환은 R_min 실측(원주행) 뒤에 판정한다
+# (S15P11A301-299 가 그 값을 남긴다).
+#
+# 속도 상한(0.25m/s)은 24.2 자율 탐사 행이다. 사람 접근 0.10m/s 는 여기서
+# 다루지 않는다 — 그 감속은 접근 노드(S15P11A301-247)와 안전 체인
 # (S15P11A301-237)의 몫이고, 두 곳에 두면 언젠가 한쪽만 바뀐다.
-#
-# robot_radius 0.20 은 잠정값이다(TBD-HW-006 실측 전). 실측이 오면 여기와
-# inflation_radius 만 바꾼다.
 
 bt_navigator:
   ros__parameters:
@@ -51,17 +77,14 @@ controller_server:
       yaw_goal_tolerance: 0.30
 
     FollowPath:
-      plugin: "nav2_rotation_shim_controller::RotationShimController"
-      primary_controller: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
-      # 목표 방향과 45° 이상 어긋나면 제자리 회전으로 먼저 맞춘다.
-      angular_dist_threshold: 0.785
-      forward_sampling_distance: 0.3
-      rotate_to_heading_angular_vel: 0.5
-      max_angular_accel: 1.5
-      simulate_ahead_time: 1.0
+      # shim 을 벗겼다 (S15P11A301-172). 조향 차량은 제자리 회전을 못 한다 —
+      # 머리말 참고. RPP 를 직접 쓴다.
+      plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
 
       # ── RPP ──
-      desired_linear_vel: 0.25          # 24.2 자율 탐사 상한
+      # 첫 실기동은 0.15 로 낮춘다. 25cm 바퀴에 1m 급 차체이고 정지거리가 아직
+      # 실측되지 않았다(S15P11A301-299). 확인 뒤 24.2 상한 0.25 로 올린다.
+      desired_linear_vel: 0.15
       lookahead_dist: 0.4
       min_lookahead_dist: 0.25
       max_lookahead_dist: 0.6
@@ -75,8 +98,12 @@ controller_server:
       use_cost_regulated_linear_velocity_scaling: false
       regulated_linear_scaling_min_radius: 0.4
       regulated_linear_scaling_min_speed: 0.1
-      use_rotate_to_heading: true
-      rotate_to_heading_min_angle: 0.785
+      # 조향 차량은 제자리에서 방향을 맞출 수 없다. true 로 두면 RPP 가
+      # v=0·ω 를 내고 로봇은 앞바퀴만 꺾은 채 서 있는다.
+      use_rotate_to_heading: false
+      # 최소 회전반경. RPP 는 이 값을 직접 쓰지 않지만, 여기 적어 두면 Smac
+      # 전환 때 옮길 자리가 명확하고 실측 근거가 한곳에 남는다.
+      minimum_turning_radius: 1.69
       max_robot_pose_search_dist: 1.0
 
 planner_server:
@@ -98,9 +125,12 @@ behavior_server:
     costmap_topic: local_costmap/costmap_raw
     footprint_topic: local_costmap/published_footprint
     cycle_frequency: 10.0
-    behavior_plugins: ["spin", "backup", "wait"]
-    spin:
-      plugin: "nav2_behaviors/Spin"
+    # `spin` 을 뺐다 (S15P11A301-172). 제자리 회전 복구 행동이라 조향 차량에서는
+    # 성공할 수 없고, 실패하는 복구를 반복하며 목표를 포기하게 만든다.
+    #
+    # `backup` 은 남긴다 — 후진은 물리적으로 가능하다. 다만 **후방 센서가 없어서**
+    # 거리·속도를 제한해야 하고 그 근거는 S15P11A301-299 의 후진 가능 범위다.
+    behavior_plugins: ["backup", "wait"]
     backup:
       plugin: "nav2_behaviors/BackUp"
     wait:
@@ -132,7 +162,10 @@ global_costmap:
       publish_frequency: 0.5
       global_frame: map
       robot_base_frame: base_footprint
-      robot_radius: 0.20                # TBD-HW-006 실측 전 잠정
+      # 실측 다각형 (S15P11A301-172). 원점이 후축 중심이라 몸집이 앞으로
+      # 치우쳐 있어 robot_radius 로는 표현되지 않는다 — 머리말 참고.
+      # 앞 0.80 / 뒤 -0.11 / 좌우 ±0.31(전체 폭 0.615 의 절반).
+      footprint: "[[0.80, 0.31], [0.80, -0.31], [-0.11, -0.31], [-0.11, 0.31]]"
       resolution: 0.05
       track_unknown_space: true
       rolling_window: false
@@ -147,7 +180,9 @@ global_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0
-        inflation_radius: 0.45
+        # 반폭 0.31 에 약 19cm 여유. 정지거리가 실측되면(S15P11A301-299)
+        # 그 값으로 다시 잡는다. 좁은 실내에서 이보다 키우면 통로가 막힌다.
+        inflation_radius: 0.50
 
 local_costmap:
   local_costmap:
@@ -161,7 +196,10 @@ local_costmap:
       width: 3
       height: 3
       resolution: 0.05
-      robot_radius: 0.20
+      # 실측 다각형 (S15P11A301-172). 원점이 후축 중심이라 몸집이 앞으로
+      # 치우쳐 있어 robot_radius 로는 표현되지 않는다 — 머리말 참고.
+      # 앞 0.80 / 뒤 -0.11 / 좌우 ±0.31(전체 폭 0.615 의 절반).
+      footprint: "[[0.80, 0.31], [0.80, -0.31], [-0.11, -0.31], [-0.11, 0.31]]"
       plugins: ["obstacle_layer", "inflation_layer"]
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
@@ -179,4 +217,6 @@ local_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0
-        inflation_radius: 0.45
+        # 반폭 0.31 에 약 19cm 여유. 정지거리가 실측되면(S15P11A301-299)
+        # 그 값으로 다시 잡는다. 좁은 실내에서 이보다 키우면 통로가 막힌다.
+        inflation_radius: 0.50

@@ -13,8 +13,9 @@ import java.util.UUID;
  * 가 없어 {@code CommandAckWriter} 경로를 타지 않기 때문이다.
  *
  * <p>{@code missionState} 는 임무 상태 머신(26.2)의 값이고 {@code safetyState} 와 다른
- * 상태 공간이다. 서버는 이 중 **수동 여부만** {@code missions.status} 에 반영한다
- * ({@code RobotStateWriter} 참고).
+ * 상태 공간이다. 서버는 이 값을 {@code missions.status} 에 반영하며, 그것이 관제 화면의
+ * 임무 상태 표시의 근거다 — 명령 이력이 아니라 로봇의 보고가 「지금 무엇을 하고 있나」를
+ * 정한다({@code RobotStateWriter}, S15P11A301-316).
  */
 public record RobotStateData(
         String robotId,

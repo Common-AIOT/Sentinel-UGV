@@ -10,6 +10,7 @@ import {
   type RobotStatus,
   type MissionState,
 } from "./mockData";
+import { missionStateFromServer } from "./missionStatus";
 
 import { api, ApiError, type CommandType } from "@/lib/api";
 import { motionFromLatest } from "@/features/telemetry/motionReading";
@@ -57,24 +58,6 @@ const REASON_LABEL: Record<string, string> = {
 const COMMAND_LABEL: Record<string, string> = {
   START: "시작", PAUSE: "일시정지", RESUME: "재개", RETURN: "복귀", STOP: "정지",
   MANUAL: "수동 전환", AUTO: "자율 전환",
-};
-
-/**
- * 서버 missions.status → 관제 화면 MissionState.
- *
- * `MANUAL` 은 S15P11A301-298 에서 추가됐다. 종전에는 서버가 MANUAL 을 몰라
- * (그리고 이 표에도 없어) 3초 폴링이 수동 표시를 즉시 EXPLORING 으로 덮었고,
- * 그 결과 `controlMode` 만 MANUAL 로 남아 두 값이 어긋났다. 이제 서버가
- * `missions.status = 'MANUAL'` 을 실제로 갖고(`RobotStateWriter`·
- * `CommandAckWriter`) 이 표가 그것을 받는다 — 근원에서 해결된다.
- */
-const SERVER_MISSION_STATE: Record<string, MissionState> = {
-  CREATED: "SAFE_IDLE",
-  EXPLORING: "EXPLORING",
-  PAUSED: "PAUSED",
-  MANUAL: "MANUAL",
-  RETURNING: "RETURNING",
-  COMPLETED: "COMPLETED",
 };
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -146,6 +129,31 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
   const pendingCommand = useRef<{ before: MissionState; at: number } | null>(null);
   const COMMAND_GRACE_MS = 10_000;
 
+  /**
+   * 서버 상태를 화면에 반영한다. 푸시·폴링·명령 거부 공용. COMPLETED 는 임무를 닫는다.
+   *
+   * `controlMode` 도 서버 값에서 파생한다 (S15P11A301-298). 이것이 있어야
+   * **새로고침 후에도 수동 표시가 유지된다** — 종전에는 낙관적 전이만 있어
+   * 페이지를 다시 열면 자율로 보였다. 파생 규칙은 젯슨
+   * `mission_state.control_mode` 와 같다(MANUAL 이 아니면 AUTO).
+   */
+  const applyServerStatus = useCallback((serverStatus: string) => {
+    const mapped = missionStateFromServer(serverStatus);
+    if (!mapped) return;
+    pendingCommand.current = null;
+    mockMission.current = mapped;
+    setStatus(s => ({
+      ...s,
+      missionState: mapped,
+      controlMode: mapped === "MANUAL" ? "MANUAL" : "AUTO",
+    }));
+    if (serverStatus === "COMPLETED") {
+      // 다음 explore 가 새 임무를 만들 수 있게 활성 임무를 비운다.
+      missionIdRef.current = null;
+      setMissionId(null);
+    }
+  }, []);
+
   // ── 명령 결과 감시 (S15P11A301-207) ──────────────────────────────────────
   // 202 는 "보냈다"일 뿐이라, 거부되면 화면이 조용히 원래 상태로 되돌아가기만
   // 했다. 발급 후 2·5·10초에 결과를 확인해 거부·실패는 사유와 함께, 10초
@@ -172,12 +180,17 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
           ? (REASON_LABEL[found.reasonCode] ?? found.reasonCode)
           : found.result === "FAILED" ? "전달 실패" : found.result;
         setCommandAlert(`${name} 명령이 거부되었습니다 — ${reason}`);
+        // **낙관적 표시를 즉시 되돌린다** (S15P11A301-316). 거부는 서버 상태를
+        // 바꾸지 않으므로 푸시가 오지 않고, 종전에는 최대 15초 뒤 백업 폴링이
+        // 조용히 표시를 되돌렸다 — 조작자에게는 "가만히 있는데 갑자기 탐사 중으로
+        // 바뀌는" 것으로 보였다. 사유 알림과 같은 순간에 표시도 되돌린다.
+        applyServerStatus((await api.missionDetail(mid)).status);
       } catch {
         // 조회 실패는 알림을 만들지 않는다 — 상태 폴링·푸시가 진실을 따라잡는다.
       }
     };
     setTimeout(() => void check(0), checkAt[0]);
-  }, []);
+  }, [applyServerStatus]);
 
   // ── Mock simulation ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -227,8 +240,8 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
 
     // 가짜 탐지 생성기는 뺐다 (S15P11A301-196). 배지의 탐지 수는 실 임무의
     // encounter 폴링(아래)만 채운다 — 목업 숫자가 섞이면 데모에서 실제 발견과
-    // 구분할 수 없다. PERSON_APPROACHING 같은 중간 상태도 서버가 아직 노출하지
-    // 않으므로(SERVER_MISSION_STATE 5종) 화면에 지어내지 않는다.
+    // 구분할 수 없다. PERSON_APPROACHING 같은 중간 상태도 화면이 지어내지 않는다 —
+    // 이제 로봇이 보고하고 서버가 담아 오며(S15P11A301-316), 그것이 유일한 출처다.
 
     return () => {
       clearTimeout(connectTimer);
@@ -447,28 +460,6 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
   // 주 채널은 STOMP 푸시(S15P11A301-204), REST 폴링은 끊김 대비 저빈도 백업이다.
   // 어느 쪽이 가져와도 서버 상태가 진실이라는 원칙(27.3)은 같다.
 
-  /** 서버 상태를 화면에 반영한다. 푸시·폴링 공용. COMPLETED 는 임무를 닫는다. */
-  const applyServerStatus = useCallback((serverStatus: string) => {
-    const mapped = SERVER_MISSION_STATE[serverStatus];
-    if (!mapped) return;
-    pendingCommand.current = null;
-    mockMission.current = mapped;
-    // `controlMode` 도 서버 값에서 파생한다 (S15P11A301-298). 이것이 있어야
-    // **새로고침 후에도 수동 표시가 유지된다** — 종전에는 낙관적 전이만 있어
-    // 페이지를 다시 열면 자율로 보였다. 파생 규칙은 젯슨
-    // `mission_state.control_mode` 와 같다(MANUAL 이 아니면 AUTO).
-    setStatus(s => ({
-      ...s,
-      missionState: mapped,
-      controlMode: mapped === "MANUAL" ? "MANUAL" : "AUTO",
-    }));
-    if (serverStatus === "COMPLETED") {
-      // 다음 explore 가 새 임무를 만들 수 있게 활성 임무를 비운다.
-      missionIdRef.current = null;
-      setMissionId(null);
-    }
-  }, []);
-
   // 푸시와 폴링이 같은 발견을 두 번 목록에 넣지 않도록 본 것을 공유한다.
   const seenEncounters = useRef(new Set<string>());
   useEffect(() => { seenEncounters.current.clear(); }, [missionId]);
@@ -544,16 +535,15 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
         if (!active) return;
         missionIdRef.current = active.id;
         setMissionId(active.id);
-        const mapped = SERVER_MISSION_STATE[active.status];
-        if (mapped) {
-          mockMission.current = mapped;
-          setStatus(s => ({ ...s, missionState: mapped }));
-        }
+        // 푸시·폴링과 **같은 경로**로 반영한다 (S15P11A301-316). 종전에는 여기서
+        // missionState 만 세워 `controlMode` 가 null 로 남았고, 첫 백업 폴링까지
+        // 최대 15초 동안 「수동 조종」인데 토글은 「자율」인 화면이 나왔다.
+        applyServerStatus(active.status);
       } catch {
         // 서버에 못 붙으면 목 초기 상태로 남는다. 폴링이 아니므로 재시도하지 않는다.
       }
     })();
-  }, []);
+  }, [applyServerStatus]);
 
   // 임무 상태 백업 폴링 — STOMP 연결 중엔 15초로 늦추고, 끊기면 3초로 돌아온다.
   useEffect(() => {
@@ -561,7 +551,7 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
     const timer = setInterval(async () => {
       try {
         const m = await api.missionDetail(missionId);
-        const mapped = SERVER_MISSION_STATE[m.status];
+        const mapped = missionStateFromServer(m.status);
         if (!mapped) return;
         const pc = pendingCommand.current;
         if (pc && Date.now() - pc.at < COMMAND_GRACE_MS && mapped === pc.before) {

@@ -29,7 +29,7 @@ imgsz=416 : 29.37 FPS (34.0 ms/frame)
 
 입력 크기를 줄여도 FPS가 거의 변하지 않는다. 연산이 아니라 호출당 오버헤드(Python 전처리·커널 런치)가 병목이므로 TensorRT 전환의 이득이 큰 구간이다.
 
-**FP32는 사용하지 않습니다.** Orin Nano는 CPU와 GPU가 RAM을 공유하며, 여유가 적을 때 FP32 추론은 `CUBLAS_STATUS_ALLOC_FAILED`로 시작조차 못 합니다. 동시 부하에서는 PyTorch 캐싱 할당자의 NVML 조회 경로가 Tegra 미지원으로 assert를 냅니다. 상세는 [`../streaming/poc/README.md`](../streaming/poc/README.md)의 「메모리 제약」을 참조합니다.
+**FP32는 사용하지 않습니다.** Orin Nano는 CPU와 GPU가 RAM을 공유하며, 여유가 적을 때 FP32 추론은 `CUBLAS_STATUS_ALLOC_FAILED`로 시작조차 못 합니다. 동시 부하에서는 PyTorch 캐싱 할당자의 NVML 조회 경로가 Tegra 미지원으로 assert를 냅니다. 상세는 [`../streaming_poc/poc/README.md`](../streaming_poc/poc/README.md)의 「메모리 제약」을 참조합니다.
 
 ### TensorRT 변환 (미수행)
 

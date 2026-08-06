@@ -1,0 +1,723 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sentinel UGV 관제 웹 와이어프레임</title>
+
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+
+  :root {
+    --paper:      #f1f4f6;
+    --frame:      #ffffff;
+    --rule:       #9fabb6;
+    --rule-soft:  #c9d1d8;
+    --fill:       #e7ebee;
+    --fill-strong:#d5dce1;
+    --ink:        #141a20;
+    --ink-soft:   #5b6874;
+    --ink-faint:  #8a95a0;
+    --note:       #b0450d;
+    --note-bg:    #fbeee6;
+
+    --sans: 'Pretendard Variable', Pretendard, -apple-system, BlinkMacSystemFont,
+            'Apple SD Gothic Neo', 'Malgun Gothic', 'Segoe UI', system-ui, sans-serif;
+    --mono: ui-monospace, SFMono-Regular, 'Cascadia Mono', 'D2Coding', Consolas,
+            'Malgun Gothic', monospace;
+
+    --gap: clamp(1.5rem, 4vw, 3rem);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper:      #0e1216;
+      --frame:      #161c22;
+      --rule:       #3d4854;
+      --rule-soft:  #2a333c;
+      --fill:       #1d242b;
+      --fill-strong:#28313a;
+      --ink:        #e2e8ee;
+      --ink-soft:   #8a97a4;
+      --ink-faint:  #66727e;
+      --note:       #e2854e;
+      --note-bg:    #2a1c12;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper:      #0e1216;
+    --frame:      #161c22;
+    --rule:       #3d4854;
+    --rule-soft:  #2a333c;
+    --fill:       #1d242b;
+    --fill-strong:#28313a;
+    --ink:        #e2e8ee;
+    --ink-soft:   #8a97a4;
+    --ink-faint:  #66727e;
+    --note:       #e2854e;
+    --note-bg:    #2a1c12;
+  }
+  :root[data-theme="light"] {
+    --paper:      #f1f4f6;
+    --frame:      #ffffff;
+    --rule:       #9fabb6;
+    --rule-soft:  #c9d1d8;
+    --fill:       #e7ebee;
+    --fill-strong:#d5dce1;
+    --ink:        #141a20;
+    --ink-soft:   #5b6874;
+    --ink-faint:  #8a95a0;
+    --note:       #b0450d;
+    --note-bg:    #fbeee6;
+  }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: clamp(2rem, 6vw, 4.5rem) clamp(1rem, 4vw, 2.5rem) 5rem;
+    display: flex;
+    flex-direction: column;
+    gap: var(--gap);
+  }
+
+  /* ── 문서 머리 ───────────────────────────── */
+  .doc-head { display: flex; flex-direction: column; gap: .85rem; }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: .7rem;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin: 0;
+  }
+  h1 {
+    margin: 0;
+    font-size: clamp(1.6rem, 4vw, 2.3rem);
+    font-weight: 650;
+    letter-spacing: -.02em;
+    text-wrap: balance;
+  }
+  .lede {
+    margin: 0;
+    max-width: 62ch;
+    color: var(--ink-soft);
+    font-size: 1rem;
+  }
+  .meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .4rem 1.6rem;
+    padding-top: .85rem;
+    border-top: 1px solid var(--rule-soft);
+    font-family: var(--mono);
+    font-size: .72rem;
+    color: var(--ink-faint);
+  }
+  .meta b { color: var(--ink-soft); font-weight: 500; }
+
+  /* ── 화면 섹션 ───────────────────────────── */
+  .screen { display: flex; flex-direction: column; gap: 1rem; }
+  .screen-head {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: .5rem .9rem;
+    padding-bottom: .7rem;
+    border-bottom: 1.5px solid var(--rule);
+  }
+  .screen-no {
+    font-family: var(--mono);
+    font-size: .75rem;
+    font-weight: 600;
+    color: var(--note);
+    letter-spacing: .06em;
+  }
+  .screen-head h2 {
+    margin: 0;
+    font-size: 1.12rem;
+    font-weight: 620;
+    letter-spacing: -.01em;
+  }
+  .route {
+    font-family: var(--mono);
+    font-size: .74rem;
+    color: var(--ink-faint);
+    background: var(--fill);
+    border-radius: 3px;
+    padding: .1rem .45rem;
+  }
+  .screen-note {
+    margin: 0;
+    font-size: .88rem;
+    color: var(--ink-soft);
+    max-width: 68ch;
+  }
+
+  /* ── 프레임 ─────────────────────────────── */
+  .scroller { overflow-x: auto; padding-bottom: .4rem; }
+  .frame {
+    position: relative;
+    min-width: 760px;
+    aspect-ratio: 16 / 9;
+    background: var(--frame);
+    border: 1.5px solid var(--rule);
+    display: flex;
+    flex-direction: column;
+    font-family: var(--mono);
+    font-size: .68rem;
+    color: var(--ink-soft);
+    overflow: hidden;
+  }
+
+  .row { display: flex; flex: 1; min-height: 0; }
+  .col { display: flex; flex-direction: column; min-width: 0; }
+
+  .bar-top {
+    height: 34px; flex: none;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 .8rem;
+    border-bottom: 1px solid var(--rule-soft);
+    background: var(--fill);
+  }
+  .bar-cmd {
+    height: 58px; flex: none;
+    display: flex; align-items: center; gap: 1rem;
+    padding: 0 .8rem;
+    border-top: 1px solid var(--rule-soft);
+    background: var(--fill);
+  }
+  .nav-left {
+    width: 46px; flex: none;
+    display: flex; flex-direction: column; align-items: center; gap: 2px;
+    padding-top: 6px;
+    border-right: 1px solid var(--rule-soft);
+    background: var(--fill);
+  }
+  .nav-item {
+    width: 100%; padding: 6px 0;
+    display: flex; flex-direction: column; align-items: center; gap: 3px;
+    font-size: .58rem;
+    border-left: 2px solid transparent;
+  }
+  .nav-item.on { border-left-color: var(--note); color: var(--note); background: var(--note-bg); }
+  .glyph {
+    width: 13px; height: 13px;
+    border: 1.2px solid currentColor; border-radius: 2px;
+  }
+  .glyph.round { border-radius: 50%; }
+
+  .side-right {
+    width: 17%; flex: none;
+    display: flex; flex-direction: column;
+    border-left: 1px solid var(--rule-soft);
+    background: var(--fill);
+  }
+
+  .stage {
+    flex: 1; min-height: 0;
+    display: flex; align-items: center; justify-content: center;
+    padding: 10px;
+  }
+  .stage > * { width: 100%; aspect-ratio: 16 / 9; max-height: 100%; }
+
+  /* 자리표시 상자 */
+  .box {
+    position: relative;
+    border: 1.2px solid var(--rule-soft);
+    background: var(--fill);
+    display: flex; align-items: center; justify-content: center;
+    text-align: center;
+    padding: 4px;
+  }
+  .box.media {
+    background:
+      linear-gradient(to top right,   transparent calc(50% - .6px), var(--rule-soft) 50%, transparent calc(50% + .6px)),
+      linear-gradient(to bottom right, transparent calc(50% - .6px), var(--rule-soft) 50%, transparent calc(50% + .6px)),
+      var(--fill);
+  }
+  .box.map {
+    background-color: var(--fill);
+    background-image: radial-gradient(var(--rule-soft) 1.1px, transparent 1.1px);
+    background-size: 11px 11px;
+  }
+  .box .tag {
+    background: var(--frame);
+    padding: 2px 7px;
+    border: 1px solid var(--rule-soft);
+    border-radius: 2px;
+    font-size: .64rem;
+    color: var(--ink-soft);
+  }
+
+  .panel {
+    padding: 7px 8px;
+    border-bottom: 1px solid var(--rule-soft);
+    display: flex; flex-direction: column; gap: 5px;
+  }
+  .panel-title {
+    font-size: .6rem; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--ink-faint);
+  }
+  .kv { display: flex; justify-content: space-between; gap: 6px; font-size: .63rem; }
+  .kv span:last-child { color: var(--ink); }
+
+  .chip {
+    border: 1.2px solid var(--rule);
+    border-radius: 3px;
+    padding: .32rem .7rem;
+    background: var(--frame);
+    font-size: .65rem;
+    color: var(--ink);
+    white-space: nowrap;
+  }
+  .toggle {
+    display: flex; border: 1.2px solid var(--rule); border-radius: 3px; overflow: hidden;
+  }
+  .toggle span { padding: .3rem .6rem; font-size: .62rem; }
+  .toggle span.on { background: var(--fill-strong); color: var(--ink); }
+
+  .state-lg { font-size: .9rem; font-weight: 600; color: var(--ink); font-family: var(--sans); }
+  .fill-rest { flex: 1; min-width: 0; }
+  .stack { display: flex; flex-direction: column; gap: 4px; }
+  .listrow {
+    border: 1.1px solid var(--rule-soft); background: var(--frame);
+    padding: 5px 6px; font-size: .6rem;
+    display: flex; justify-content: space-between; gap: 5px;
+  }
+  .listrow.on { border-color: var(--note); background: var(--note-bg); }
+
+  .toast {
+    position: absolute; left: 50%; bottom: 68px; transform: translateX(-50%);
+    border: 1.2px dashed var(--note); color: var(--note); background: var(--note-bg);
+    padding: .3rem .7rem; font-size: .62rem; white-space: nowrap;
+  }
+
+  /* ── 핀 ─────────────────────────────────── */
+  .pin {
+    position: absolute;
+    width: 19px; height: 19px;
+    border-radius: 50%;
+    background: var(--note); color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--mono); font-size: .62rem; font-weight: 600;
+    box-shadow: 0 0 0 2.5px var(--frame);
+    z-index: 5;
+  }
+
+  /* ── 범례 ───────────────────────────────── */
+  .legend {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(275px, 1fr));
+    gap: .5rem 1.6rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .legend li {
+    display: grid;
+    grid-template-columns: 1.35rem 1fr;
+    gap: .55rem;
+    align-items: start;
+    font-size: .84rem;
+    padding: .3rem 0;
+    border-top: 1px solid var(--rule-soft);
+  }
+  .legend b {
+    font-family: var(--mono); font-size: .7rem; font-weight: 600;
+    color: var(--note); padding-top: .18rem;
+  }
+  .legend em { font-style: normal; color: var(--ink-faint); }
+
+  /* ── 흐름도 ─────────────────────────────── */
+  .flow {
+    display: flex; flex-wrap: wrap; align-items: center; gap: .7rem;
+    font-family: var(--mono); font-size: .78rem;
+  }
+  .flow .node {
+    border: 1.3px solid var(--rule); background: var(--frame);
+    padding: .5rem .9rem;
+  }
+  .flow .arr { color: var(--ink-faint); }
+
+  .footnote {
+    font-size: .82rem; color: var(--ink-soft);
+    border-left: 2.5px solid var(--note);
+    padding: .1rem 0 .1rem 1rem;
+    max-width: 70ch;
+  }
+  .footnote code {
+    font-family: var(--mono); font-size: .93em;
+    background: var(--fill); padding: .05rem .3rem; border-radius: 2px;
+  }
+  .hint {
+    font-family: var(--mono); font-size: .7rem; color: var(--ink-faint);
+    display: none; margin: 0;
+  }
+  @media (max-width: 800px) { .hint { display: block; } }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <header class="doc-head">
+    <p class="eyebrow">Sentinel UGV · 화면 설계</p>
+    <h1>관제 웹(GCS) 와이어프레임</h1>
+    <p class="lede">
+      재난 현장에 먼저 들어간 로봇을 관제자가 지켜보고 조작하는 웹 화면이다.
+      실시간 관제와 임무 이력 두 페이지로 이루어지며, 아래 배치는 구현된 화면 구조를 그대로 옮긴 것이다.
+    </p>
+    <div class="meta">
+      <span><b>대상</b> 관제 웹 · Next.js App Router</span>
+      <span><b>페이지</b> 2개 (관제 / 이력)</span>
+      <span><b>기준 해상도</b> 가로 모니터 16:9</span>
+      <span><b>근거</b> frontend/app · frontend/features</span>
+    </div>
+    <p class="hint">↔ 화면 그림은 좌우로 밀어 볼 수 있습니다.</p>
+  </header>
+
+  <!-- ═══════════ 화면 1 ═══════════ -->
+  <section class="screen">
+    <div class="screen-head">
+      <span class="screen-no">화면 1</span>
+      <h2>실시간 관제 — 영상이 주 화면</h2>
+      <span class="route">/</span>
+    </div>
+    <p class="screen-note">
+      기본 상태다. 주 화면은 로봇 카메라 영상이고, 지도는 오른쪽 위 작은 슬롯에 둔다.
+      관측하는 것들은 오른쪽 세로로, 조작하는 것들은 아래 가로로 모았다.
+    </p>
+
+    <div class="scroller">
+      <div class="frame">
+
+        <div class="bar-top">
+          <span>◉ SENTINEL-UGV</span>
+          <span>● 관제 서버 연결됨 &nbsp;·&nbsp; 14:32:07 UTC+9</span>
+        </div>
+
+        <div class="row">
+          <div class="nav-left">
+            <div class="nav-item on"><i class="glyph round"></i>관제</div>
+            <div class="nav-item"><i class="glyph"></i>이력</div>
+          </div>
+
+          <div class="col fill-rest">
+            <div class="stage">
+              <div class="box media">
+                <span class="tag">실시간 영상 (WebRTC) &nbsp;16:9</span>
+              </div>
+            </div>
+            <div class="bar-cmd">
+              <div class="stack" style="gap:1px">
+                <span class="state-lg">탐사 중</span>
+                <span style="font-size:.6rem">자율</span>
+              </div>
+              <div class="fill-rest" style="font-size:.62rem">
+                안내 · 경고 문구 자리
+              </div>
+              <div class="toggle">
+                <span class="on">자율</span><span>수동</span>
+              </div>
+              <span class="chip">탐사 시작</span>
+              <span class="chip">일시정지</span>
+              <span class="chip">임무 종료</span>
+            </div>
+          </div>
+
+          <div class="side-right">
+            <div class="box map" style="aspect-ratio:16/9;flex:none;border:0;border-bottom:1px solid var(--rule-soft)">
+              <span class="tag">SLAM 지도</span>
+            </div>
+            <div class="panel" style="border-style:dashed">
+              <span class="panel-title">비상 정지 · 오류</span>
+              <span style="font-size:.6rem;color:var(--ink-faint)">평상시 숨김</span>
+            </div>
+            <div class="panel">
+              <span class="panel-title">센서</span>
+              <span class="kv"><span>온도</span><span>24.1 °C</span></span>
+              <span class="kv"><span>습도</span><span>38 %</span></span>
+            </div>
+            <div class="panel" style="border-bottom:0">
+              <span class="panel-title">주행</span>
+              <span class="kv"><span>속도</span><span>0.32 m/s</span></span>
+              <span class="kv"><span>회전 속도</span><span>0.07 rad/s</span></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="toast">⚠ 명령 결과 알림 · 8초 후 사라짐</div>
+
+        <span class="pin" style="top:8px; right:calc(17% + 190px)">1</span>
+        <span class="pin" style="top:44px; left:14px">2</span>
+        <span class="pin" style="top:34%; left:36%">3</span>
+        <span class="pin" style="top:44px; right:calc(17% - 26px)">4</span>
+        <span class="pin" style="top:33%; right:calc(17% - 26px)">5</span>
+        <span class="pin" style="top:52%; right:calc(17% - 26px)">6</span>
+        <span class="pin" style="top:71%; right:calc(17% - 26px)">7</span>
+        <span class="pin" style="bottom:20px; left:60px">8</span>
+        <span class="pin" style="bottom:60px; left:calc(50% - 130px)">9</span>
+      </div>
+    </div>
+
+    <ol class="legend">
+      <li><b>1</b><span>상단 바 — 서비스명, 관제 서버 실시간 연결 표시, 시계. <em>연결 표시는 화면 전체에서 이 자리 하나뿐이다.</em></span></li>
+      <li><b>2</b><span>좌측 내비 — 관제 / 이력. <em>페이지가 둘뿐이라 폭을 좁게 유지한다.</em></span></li>
+      <li><b>3</b><span>주 화면 — 로봇 카메라 실시간 영상. <em>16:9를 유지하며 남는 공간에 가운데 맞춤한다.</em></span></li>
+      <li><b>4</b><span>보조 슬롯 — SLAM 실시간 지도. <em>누르면 주 화면과 자리를 바꾼다(→ 화면 2).</em></span></li>
+      <li><b>5</b><span>경고 패널 — 비상 정지·오류일 때만 나타난다. <em>평상시에는 자리를 차지하지 않는다.</em></span></li>
+      <li><b>6</b><span>센서 — 현장 온도·습도. <em>임계 초과 시 경고 표시.</em></span></li>
+      <li><b>7</b><span>주행 — 속도·회전 속도.</span></li>
+      <li><b>8</b><span>명령 바 — 임무 상태, 안내 문구, 운행 모드 전환, 임무 명령. <em>상태에 따라 버튼이 바뀐다.</em></span></li>
+      <li><b>9</b><span>명령 결과 알림 — 거부·실패 사유를 함께 띄운다.</span></li>
+    </ol>
+  </section>
+
+  <!-- ═══════════ 화면 2 ═══════════ -->
+  <section class="screen">
+    <div class="screen-head">
+      <span class="screen-no">화면 2</span>
+      <h2>실시간 관제 — 지도가 주 화면</h2>
+      <span class="route">/ (교체 상태)</span>
+    </div>
+    <p class="screen-note">
+      보조 슬롯을 누르면 지도와 영상이 자리를 맞바꾼다. 골격은 화면 1과 완전히 같고 두 상자의 내용만 뒤집힌다 —
+      관제자가 화면을 다시 익힐 필요가 없게 하기 위해서다.
+    </p>
+
+    <div class="scroller">
+      <div class="frame">
+        <div class="bar-top">
+          <span>◉ SENTINEL-UGV</span>
+          <span>● 관제 서버 연결됨 &nbsp;·&nbsp; 14:32:07 UTC+9</span>
+        </div>
+
+        <div class="row">
+          <div class="nav-left">
+            <div class="nav-item on"><i class="glyph round"></i>관제</div>
+            <div class="nav-item"><i class="glyph"></i>이력</div>
+          </div>
+
+          <div class="col fill-rest">
+            <div class="stage">
+              <div class="box map">
+                <span class="tag">SLAM 실시간 지도 · 로봇 위치 · 목표 지정</span>
+              </div>
+            </div>
+            <div class="bar-cmd">
+              <div class="stack" style="gap:1px">
+                <span class="state-lg">수동 조종</span>
+                <span style="font-size:.6rem">수동</span>
+              </div>
+              <div class="fill-rest" style="font-size:.62rem">
+                모바일 앱에서 조종합니다 · 자율 명령을 내리려면 「자율」로 되돌리세요
+              </div>
+              <div class="toggle">
+                <span>자율</span><span class="on">수동</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="side-right">
+            <div class="box media" style="aspect-ratio:16/9;flex:none;border:0;border-bottom:1px solid var(--rule-soft)">
+              <span class="tag">실시간 영상</span>
+            </div>
+            <div class="panel">
+              <span class="panel-title">센서</span>
+              <span class="kv"><span>온도</span><span>24.1 °C</span></span>
+              <span class="kv"><span>습도</span><span>38 %</span></span>
+            </div>
+            <div class="panel" style="border-bottom:0">
+              <span class="panel-title">주행</span>
+              <span class="kv"><span>속도</span><span>0.00 m/s</span></span>
+              <span class="kv"><span>회전 속도</span><span>0.00 rad/s</span></span>
+            </div>
+          </div>
+        </div>
+
+        <span class="pin" style="top:34%; left:36%">1</span>
+        <span class="pin" style="top:44px; right:calc(17% - 26px)">2</span>
+        <span class="pin" style="bottom:20px; left:calc(50% - 40px)">3</span>
+      </div>
+    </div>
+
+    <ol class="legend">
+      <li><b>1</b><span>주 화면이 지도로 바뀐다. <em>위치 확인과 자율 탐사 실패 시 목표 지점 지정에 쓴다.</em></span></li>
+      <li><b>2</b><span>영상이 보조 슬롯으로 내려간다. <em>다시 누르면 화면 1로 되돌아간다.</em></span></li>
+      <li><b>3</b><span>수동 조종 중에는 임무 명령 버튼이 사라지고 안내만 남는다. <em>조종은 모바일 앱이 맡고, 관제 웹에는 자율로 되돌리는 전환만 둔다.</em></span></li>
+    </ol>
+  </section>
+
+  <!-- ═══════════ 화면 3 ═══════════ -->
+  <section class="screen">
+    <div class="screen-head">
+      <span class="screen-no">화면 3</span>
+      <h2>임무 이력</h2>
+      <span class="route">/blackbox</span>
+    </div>
+    <p class="screen-note">
+      끝난 임무를 되짚는 화면이다. 임무를 고르면 가운데 지도에 이동 경로와 발견 지점이 찍히고,
+      오른쪽에 그 임무에서 만난 사람들이 나열된다.
+    </p>
+
+    <div class="scroller">
+      <div class="frame">
+        <div class="bar-top">
+          <span>‹ SENTINEL-UGV &nbsp;|&nbsp; ▤ 임무 이력</span>
+          <span>12개 임무</span>
+        </div>
+
+        <div class="row">
+          <div class="col" style="width:18%;flex:none;border-right:1px solid var(--rule-soft);background:var(--fill)">
+            <div class="panel" style="padding:8px"><span style="font-size:.72rem;color:var(--ink)">임무 목록</span></div>
+            <div class="stack" style="padding:6px">
+              <span class="listrow on"><span>08-06 14:12</span><span>3명</span></span>
+              <span class="listrow"><span>08-06 11:40</span><span>1명</span></span>
+              <span class="listrow"><span>08-05 17:05</span><span>—</span></span>
+              <span class="listrow"><span>08-05 09:22</span><span>2명</span></span>
+            </div>
+          </div>
+
+          <div class="col fill-rest" style="padding:9px;gap:9px">
+            <div style="display:flex;gap:6px;flex:none">
+              <span class="listrow fill-rest"><span>걸린 시간</span><span>12분 04초</span></span>
+              <span class="listrow fill-rest"><span>이동 거리</span><span>84.2 m</span></span>
+              <span class="listrow fill-rest"><span>발견 인원</span><span>3</span></span>
+              <span class="listrow fill-rest"><span>종료 사유</span><span>운영자 종료</span></span>
+            </div>
+            <div class="box map fill-rest">
+              <span class="tag">임무 지도 · 이동 경로 + 발견 지점 마커 (마커 클릭 → 영상)</span>
+            </div>
+          </div>
+
+          <div class="side-right" style="width:22%">
+            <div class="panel">
+              <span class="panel-title">임무 중 온도</span>
+              <svg viewBox="0 0 120 26" preserveAspectRatio="none" style="width:100%;height:26px" aria-hidden="true">
+                <polyline points="0,20 20,17 40,19 60,11 80,13 100,6 120,8" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".55"/>
+              </svg>
+            </div>
+            <div class="panel">
+              <span class="panel-title">임무 중 습도</span>
+              <svg viewBox="0 0 120 26" preserveAspectRatio="none" style="width:100%;height:26px" aria-hidden="true">
+                <polyline points="0,9 20,12 40,10 60,16 80,14 100,19 120,17" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".55"/>
+              </svg>
+            </div>
+            <div class="panel" style="border-bottom:0">
+              <span class="panel-title">발견 이벤트 (3)</span>
+              <div class="stack">
+                <span class="listrow on"><span>◍ 대화 완료 · 2명</span><span>▶</span></span>
+                <span class="listrow"><span>◍ 무응답 · 1명</span><span>▶</span></span>
+                <span class="listrow"><span>◍ 대화 완료 · 1명</span><span>▶</span></span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <span class="pin" style="top:44px; left:calc(18% - 26px)">1</span>
+        <span class="pin" style="top:44px; left:calc(18% + 30px)">2</span>
+        <span class="pin" style="top:52%; left:44%">3</span>
+        <span class="pin" style="top:44px; right:calc(22% - 26px)">4</span>
+        <span class="pin" style="top:62%; right:calc(22% - 26px)">5</span>
+      </div>
+    </div>
+
+    <ol class="legend">
+      <li><b>1</b><span>임무 목록 — 날짜·시각과 발견 인원. <em>고른 항목이 화면 전체의 기준이 된다.</em></span></li>
+      <li><b>2</b><span>임무 결과 요약 — 걸린 시간, 이동 거리, 발견 인원, 종료 사유.</span></li>
+      <li><b>3</b><span>임무 지도 — 이동 경로와 발견 지점. <em>마커를 누르면 그 자리의 영상이 열린다(→ 화면 4).</em></span></li>
+      <li><b>4</b><span>임무 중 온도·습도 그래프. <em>재난 현장 기록으로 남긴다.</em></span></li>
+      <li><b>5</b><span>발견 이벤트 목록 — 상태, 인원, 시각, 좌표. <em>이 화면의 주인공이라 스크롤 없이 항상 보이는 자리에 둔다.</em></span></li>
+    </ol>
+  </section>
+
+  <!-- ═══════════ 화면 4 ═══════════ -->
+  <section class="screen">
+    <div class="screen-head">
+      <span class="screen-no">화면 4</span>
+      <h2>발견 이벤트 상세 — 영상과 음성 보고</h2>
+      <span class="route">/blackbox · 겹침 창</span>
+    </div>
+    <p class="screen-note">
+      발견 지점을 누르면 지도 위에 겹쳐 뜬다. 닫으면 지도로 되돌아간다 —
+      화면 전체를 밀어내지 않으므로 여러 발견을 연달아 확인하기 쉽다.
+      <strong>로봇이 요구조자와 나눈 대화 결과가 관제자에게 도달하는 유일한 자리다.</strong>
+    </p>
+
+    <div class="scroller">
+      <div class="frame" style="background:var(--fill)">
+        <div style="position:relative;margin:auto;width:64%;background:var(--frame);border:1.4px solid var(--rule);padding:12px;display:flex;flex-direction:column;gap:9px">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <span style="color:var(--ink)">대화 완료 · 발견 14:31:02</span>
+            <span class="chip">✕ 닫기</span>
+          </div>
+
+          <div class="box media" style="aspect-ratio:16/9;width:100%">
+            <span class="tag">이벤트 영상 (발견 전후 구간)</span>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:10px">
+            <span class="chip">🔊 소음 제거본으로 듣기</span>
+            <span style="font-size:.6rem;color:var(--ink-faint);line-height:1.5">
+              제거본은 명료도 보조입니다. 원본이 증거이며 두드림·신음 같은 비언어 소리는 사라질 수 있습니다.
+            </span>
+          </div>
+
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px">
+            <span class="listrow"><span>감지 인원</span><span>2</span></span>
+            <span class="listrow"><span>상호작용</span><span>14:31~14:32</span></span>
+            <span class="listrow"><span>영상 개수</span><span>2</span></span>
+            <span class="listrow on"><span>요구조자가 말한 인원</span><span>3명</span></span>
+            <span class="listrow on"><span>무응답 인원</span><span>1명</span></span>
+            <span class="listrow on"><span>종료 사유</span><span>정상 종료</span></span>
+          </div>
+        </div>
+
+        <span class="pin" style="top:26%; left:15%">1</span>
+        <span class="pin" style="bottom:27%; left:15%">2</span>
+        <span class="pin" style="bottom:13%; right:15%">3</span>
+      </div>
+    </div>
+
+    <ol class="legend">
+      <li><b>1</b><span>이벤트 영상 — 사람을 발견한 전후 구간. <em>카드 폭 전체를 영상에 준다.</em></span></li>
+      <li><b>2</b><span>소음 제거본 토글 — 영상은 그대로 두고 소리만 바꾼다. <em>원본이 증거라는 점을 문구로 함께 밝힌다.</em></span></li>
+      <li><b>3</b><span>음성 보고 — 로봇이 물어 얻은 값이다. 요구조자가 말한 인원, 무응답 인원, 종료 사유. <em>영상만으로는 알 수 없는 정보이며, 확인되지 않으면 0이 아니라 「미확인」으로 표시한다.</em></span></li>
+    </ol>
+  </section>
+
+  <!-- ═══════════ 흐름 ═══════════ -->
+  <section class="screen">
+    <div class="screen-head">
+      <span class="screen-no">화면 흐름</span>
+      <h2>관제자가 지나는 길</h2>
+    </div>
+    <div class="flow">
+      <span class="node">실시간 관제</span>
+      <span class="arr">──▸</span>
+      <span class="node">임무 이력</span>
+      <span class="arr">──▸</span>
+      <span class="node">임무 선택</span>
+      <span class="arr">──▸</span>
+      <span class="node">발견 이벤트</span>
+      <span class="arr">──▸</span>
+      <span class="node">영상 · 음성 보고</span>
+    </div>
+    <p class="footnote">
+      실시간 관제 안에서 영상과 지도를 맞바꾸는 것은 페이지 이동이 아니라 같은 화면의 상태 변화다.
+      주소는 <code>/</code> 그대로이며 골격도 바뀌지 않는다.
+    </p>
+  </section>
+
+</div>
+</body>
+</html>

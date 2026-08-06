@@ -1,10 +1,10 @@
 # esp32_bridge
 
-모터·센서 ESP32와 USB 직렬(COBS+CRC16, 921600bps)로 통신하고, 센서 페이로드를 **표준 ROS 메시지**로 변환하는 ROS2 패키지 (S15P11A301-84). `/cmd_vel` 역운동학·안전 중재·BTS7960 제어 체인은 아직 README 스텁인 `sentinel_drive`/`sentinel_safety`의 몫이며 이번엔 만들지 않는다.
+모터·센서 ESP32와 USB 직렬(COBS+CRC16, 921600bps)로 통신하고, 센서 페이로드를 **표준 ROS 메시지**로 변환하는 ROS2 패키지 (S15P11A301-84). `/cmd_vel` 역운동학은 `sentinel_drive`(전륜 조향 변환), 안전 중재는 `sentinel_safety`, BTS7960·조향 서보 실제 구동은 ESP32 펌웨어의 몫이다.
 
 ## 노드
 
-- `esp32_motor_bridge` — `/dev/sentinel_mcu_motor`(기본값)를 열어 모터 ESP32와 통신. `~/drive_command`(std_msgs/String, JSON)를 구독해 `DRIVE_COMMAND`로 전송, `~/stop`/`~/estop` (`std_srvs/Trigger`) 서비스 제공, `~/drive_state`/`~/command_ack` 발행, `/diagnostics` 발행.
+- `esp32_motor_bridge` — `/dev/sentinel_mcu_motor`(기본값)를 열어 모터 ESP32와 통신. `~/drive_command`(std_msgs/String, JSON)를 구독해 `DRIVE_COMMAND`로 전송, `~/stop`/`~/estop` (`std_srvs/Trigger`) 서비스 제공, `~/drive_state`/`~/command_ack` 발행, `/diagnostics` 발행. JSON 은 후륜 좌·우 `target_drive_*_mmps` 와 전륜 `target_steering_mdeg`·`max_steering_rate_mdps` 를 함께 싣는다(2026-08-06 전륜 조향 복구로 조향 필드가 다시 살아났다). **조향 키가 빠지면 마지막 값을 유지한다** — 0 을 기본값으로 두면 명령마다 앞바퀴가 중립으로 돌아가 §34-7 과 정반대가 된다.
 - `esp32_sensor_bridge` — `/dev/sentinel_mcu_sensor`(기본값)를 열어 센서 ESP32와 통신. 아래 "발행 토픽" 표대로 표준 메시지를 발행하고 `/diagnostics`에 보드 상태와 오도메트리 카운터를 낸다. HELLO를 ~6-7Hz로 keep-alive 재전송해 센서 보드의 300ms 통신 워치독에 입력을 공급한다(§34-7 gap-fill, README 하단 참고).
 - `esp32_hello_check` — ROS 없이 포트를 열어 HELLO/HELLO_ACK만 확인하는 브링업 도구. 하드웨어를 막 연결했을 때 가장 먼저 실행할 것.
 
@@ -12,7 +12,7 @@
 
 | 프레임 | 토픽 | 타입 | 비고 |
 |---|---|---|---|
-| `ENCODER_STATE` | `/wheel/odometry` | `nav_msgs/Odometry` | `odom`→`base_footprint`, 차동 구동 정운동학 |
+| `ENCODER_STATE` | `/wheel/odometry` | `nav_msgs/Odometry` | `odom`→`base_footprint`, 후륜 tick 정운동학(yaw 는 IMU 가 주 소스, 아래 참고) |
 | `IMU_STATE` | `/imu/data_raw` | `sensor_msgs/Imu` | `imu_link`, 원시 gyro/accel, 100Hz |
 | `PROXIMITY_STATE` | `/range/front` | `sensor_msgs/Range` | `ultrasonic_front_link`, ULTRASOUND |
 | `PROXIMITY_STATE` | `/proximity/protective_stop` | `std_msgs/Bool` | 보드 로컬 보호 정지, TRANSIENT_LOCAL |
@@ -28,7 +28,7 @@
 - **QoS는 전부 RELIABLE**이다. RELIABLE 발행자는 BEST_EFFORT 구독자도 받을 수 있지만 반대는 조용히 아무것도 오지 않는다. Nav2·`robot_localization`의 기본 구독 프로파일이 제각각이라 호환 범위가 넓은 쪽으로 통일했다.
 - **`/range/front`의 `+Inf`는 "미검출"이다.** 보드는 에코 타임아웃을 `MAX_VALID_DISTANCE_CM`(4m)으로 clamp해 보내는데, 그대로 두면 4m 지점의 실제 장애물처럼 읽힌다. `valid_sensor_mask` 비트가 꺼졌거나 거리가 `range_max_m` 이상이면 `+Inf`로 바꾼다.
 - **온습도는 `status_flags`가 정상일 때만 발행한다.** 보드가 실패 시 마지막 정상값을 그대로 들고 있어, 그냥 내보내면 오래된 값이 새 측정처럼 보인다. 실패는 `/diagnostics`의 `ENVIRONMENT_SENSOR_FAULT`로만 드러낸다.
-- **`measured_steering_mdeg`는 발행하지 않는다.** 조향 모터가 캐스터 휠로 대체되어 항상 0이다.
+- **`measured_steering_mdeg`는 발행하지 않는다.** 항상 0이다 — 전륜 조향이 복구됐지만 DS51150 서보가 내부 폐루프로 각도를 유지하고 외부로 출력하지 않아 **조향은 개루프**이며 실제 각도를 재는 수단이 없다(§34-5). 모터 채널 `DRIVE_STATE`의 `target_steering_mdeg`·`steering_actuator_cmd`는 명령이지 측정이 아니다.
 
 ## IMU (`/imu/data_raw`, S15P11A301-244)
 
@@ -54,7 +54,7 @@
 
 ## 오도메트리와 TF
 
-`ENCODER_STATE`의 좌·우 누적 tick으로 차동 구동 정운동학을 계산한다.
+`ENCODER_STATE`의 후륜 좌·우 누적 tick으로 정운동학을 계산한다.
 
 ```
 d_L = Δtick_L · meters_per_tick_L,  d_R = Δtick_R · meters_per_tick_R
@@ -67,13 +67,15 @@ v   = (d_R + d_L) / 2Δt ,  ω = (d_R − d_L) / WΔt
 - 보드가 재부팅하면 tick 카운터가 0으로 돌아간다. 기준점만 다시 잡고 **pose는 유지한다** — odom 프레임은 연속이어야 한다(REP-105). 재부팅 동안의 이동량은 유실된다.
 - tick 점프(I2C 글리치)는 `max_wheel_speed_mps`로 걸러 `/diagnostics`의 `rejected_sample_count`로 센다.
 
-> ⚠️ **캘리브레이션 값이 전부 임시값이다(TBD-CAL-001, §35-3).** `meters_per_tick`은 `sensor_task.cpp`의 실측 전 상수(바퀴 지름 120mm·기어비 82)에서 유도했고, 트랙폭 `W = 0.30`은 근거 없는 자리값이다. 그대로면 노드가 기동 시 경고를 띄운다. 3m 직선 5회(좌·우 개별)와 제자리 회전 역산으로 확정하기 전까지 거리·각도 **절대값을 신뢰하면 안 된다.**
+- **`ω`(`angular_z`)는 EKF 입력이 아니다.** 전륜 조향 차량에서 후륜 좌·우 속도 차는 회두의 근거가 되지 못한다 — 조향 링크가 회두를 정하고 후륜은 같은 속도로 구동되므로 선회 중 내·외측 후륜이 노면에 **스크럽**한다(§35-3). yaw 의 주 소스는 IMU 자이로이고 `ekf_node`가 엔코더 `vx` + IMU `vyaw` 로 융합한다(23.2). 여기서 계속 계산하는 이유는 `x·y` 적분에 자세가 필요하고, §35-3 의 네 값(엔코더 yaw · 조향각 yaw · IMU yaw · 실제 회전량) 비교에 쓰기 때문이다.
+
+> ⚠️ **캘리브레이션 값이 전부 임시값이다(TBD-CAL-001, §35-3).** `meters_per_tick`은 `sensor_task.cpp`의 실측 전 상수(바퀴 지름 120mm·기어비 82)에서 유도했고, 트랙폭 `W = 0.30`은 근거 없는 자리값이다. 그대로면 노드가 기동 시 경고를 띄운다. 3m 직선 5회(좌·우 개별)와 **`δ_max` 원주행**(제자리 360° 회전은 전륜 조향에서 불가능하다 — §35-3 이 정한 대체 기동)으로 확정하기 전까지 거리·각도 **절대값을 신뢰하면 안 된다.**
 
 ## 모듈
 
 - `packet_codec.py` — CRC-16/CCITT-FALSE, COBS, 프레임 build/parse, 메시지별 pack/unpack. `rclpy`를 import하지 않아 ROS 없이도 `pytest`로 검증할 수 있다(`test/test_packet_codec.py`).
 - `imu_clock.py` — 보드 monotonic 시계 → ROS 시각 오프셋 추정(min filter + 창 단위 재동기 + 재부팅 시 폐기). 역시 `rclpy`-free라 `pytest`로 검증한다(`test/test_imu_clock.py`).
-- `wheel_odometry.py` — 차동 구동 정운동학·원호 적분·int32 tick 랩어라운드 처리. 역시 `rclpy`-free라 `pytest`로 검증하며(`test/test_wheel_odometry.py`), Phase 1에서 `sentinel_drive`가 그대로 가져다 쓸 수 있다.
+- `wheel_odometry.py` — 후륜 tick 정운동학·원호 적분·int32 tick 랩어라운드 처리. 역시 `rclpy`-free라 `pytest`로 검증하며(`test/test_wheel_odometry.py`), Phase 1에서 `sentinel_drive`가 그대로 가져다 쓸 수 있다.
 - `protocol_constants.py` — 메시지 코드·fault bit·struct 포맷. `hardware/esp32/jetson-comm/message_ids.h`/`fault_codes.h`/`protocol.h`와 값이 반드시 동일해야 한다(수동 동기화).
 - `serial_transport.py` — pyserial 래퍼. 백그라운드 스레드가 0x00 구분 청크를 큐에 담고, 포트가 없거나 끊기면 재연결을 계속 시도한다.
 - `diagnostics.py` — HELLO_ACK/DIAGNOSTIC → `diagnostic_msgs/DiagnosticArray` 변환, `senderUptimeMs` 역행으로 보드 재부팅 감지.

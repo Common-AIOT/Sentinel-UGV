@@ -38,8 +38,12 @@ EKF도 Nav2 costmap/collision_monitor도 아무것도 구독할 수 없다. 자�
 재전송이므로 버린다 - 같은 스탬프의 메시지 두 개는 EKF에서 한 측정을 두 번 세는 것이
 된다. 그래서 `ros2 topic hz /imu/data_raw`는 100Hz보다 조금 낮게 나올 수 있다.
 
-`measured_steering_mdeg`는 조향 모터가 캐스터 휠로 대체되며 항상 0이라
-발행하지 않는다.
+`measured_steering_mdeg`는 항상 0이라 발행하지 않는다. 2026-08-06 전륜 조향이
+복구됐지만 **조향은 개루프**다 - DS51150 서보가 내부 폐루프로 각도를 유지하고
+외부로 각도를 출력하지 않으므로 실제 조향각을 재는 수단이 없다(§34-5). 이 자리를
+쓰려면 앞바퀴 킹핀이나 타이로드에 별도 각도 센서를 달아야 하고 현재 구성에 없다.
+Jetson이 볼 수 있는 조향 값은 모터 채널의 `DRIVE_STATE`(목표각·서보 지령값)뿐이며
+그것은 명령이지 측정이 아니다.
 
 ## TF
 
@@ -617,8 +621,10 @@ class Esp32SensorBridgeNode(Node):
         ) = yaw_to_quaternion(sample.pose.yaw)
         message.pose.covariance = self._pose_covariance
 
-        # 차동 구동은 횡방향 속도가 정의상 0이며 측정하지도 않는다. twist
-        # covariance의 y/z/roll/pitch를 크게 둬 EKF가 융합하지 않게 한다.
+        # 횡방향 속도는 이 모델(후륜 기준 자전거 모델)에서 정의상 0이며 측정하지도
+        # 않는다. twist covariance의 y/z/roll/pitch를 크게 둬 EKF가 융합하지 않게 한다.
+        # angular_z 도 EKF 입력이 아니다 — 선회 중 후륜 스크럽 때문에 좌·우 속도 차가
+        # 기하와 맞지 않으므로 yaw 는 IMU 가 담당한다(§35-3, wheel_odometry docstring).
         message.twist.twist.linear.x = sample.linear_x
         message.twist.twist.angular.z = sample.angular_z
         message.twist.covariance = self._twist_covariance

@@ -12,9 +12,10 @@
 - `ENCODER_STATE`(50Hz)/`IMU_STATE`(100Hz)/`ENVIRONMENT_STATE`(~1Hz)/`PROXIMITY_STATE`(~15Hz)/`DIAGNOSTIC`(5Hz) 송신(실측값)
 - 300ms 통신 워치독(§34-7) — 로컬 액추에이터가 없어 정지 동작은 없고 `COMM_LOST`/`FAULT_COMM_TIMEOUT_SENSOR`만 보고
 - MT6701 좌/우 구동 엔코더 I2C 실측, MPU6050 차체 IMU I2C 실측, DHT-11 1-wire 판독,
-  HC-SR04 `pulseIn` 거리 측정과 로컬 `protective_stop` 판단 — `sensor_task.cpp`. 조향
-  엔코더는 조향 모터가 캐스터 휠로 대체되어 제거되었고, `measured_steering_mdeg`는
-  프로토콜 호환을 위해 항상 0으로 보고한다.
+  HC-SR04 `pulseIn` 거리 측정과 로컬 `protective_stop` 판단 — `sensor_task.cpp`.
+  엔코더는 **후륜 2개뿐**이며 `measured_steering_mdeg`는 항상 0으로 보고한다 —
+  2026-08-06 전륜 조향이 복구됐지만 DS51150 서보가 내부 폐루프라 외부 각도
+  피드백이 없어 조향은 개루프다(§6.3·34-5).
 - 지속 오류 기준 `FAULT_DRIVE_ENCODER_FAULT`/`FAULT_IMU_SENSOR_FAULT`/
   `FAULT_PROXIMITY_SENSOR_FAULT`/`FAULT_ENVIRONMENT_SENSOR_FAULT` 판정과 `DEGRADED`
   상태 전이(환경/근접 한정)

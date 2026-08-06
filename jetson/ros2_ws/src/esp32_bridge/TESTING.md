@@ -43,7 +43,7 @@ python3 -m pytest test/ -v
 
 1단계와 동일한 벡터를 Python 쪽에서 재검증한다. C++/Python 두 구현이 바이트 단위로 같은 결과를 내는지 여기서 잡아낸다. `IMU_STATE`(0x26)도 1단계와 같은 벡터로 확인한다 — 36바이트 길이, `-0.125f` = `0xBE000000` 비트 패턴, `u64 sample_time_us` 상위 바이트 보존, 짧은 페이로드 거부.
 
-`test_wheel_odometry.py`가 함께 돌면서 차동 구동 정운동학(직진·제자리 회전·원호 적분·tick 랩어라운드·좌우 스케일 편차)을, `test_imu_clock.py`가 보드 monotonic 시계 → ROS 시각 오프셋 추정(지터 속에서 min filter 수렴, 도착 지터가 스탬프 간격에 새지 않음, 드리프트 재동기, 재부팅 시 폐기, 수신 지연을 재부팅으로 오진하지 않음)을 검증한다.
+`test_wheel_odometry.py`가 함께 돌면서 후륜 tick 정운동학(직진·회전·원호 적분·tick 랩어라운드·좌우 스케일 편차)을, `test_imu_clock.py`가 보드 monotonic 시계 → ROS 시각 오프셋 추정(지터 속에서 min filter 수렴, 도착 지터가 스탬프 간격에 새지 않음, 드리프트 재동기, 재부팅 시 폐기, 수신 지연을 재부팅으로 오진하지 않음)을 검증한다.
 
 ## 3단계 — jetson-comm 라이브러리 설치 + 두 ESP32 플래싱
 
@@ -576,31 +576,50 @@ ros2 topic echo /range/front | grep --line-buffered '^range:'
 
 ---
 
-## 12단계 — 실제 구동 확인 (바퀴를 반드시 띄운 상태)
+## 12단계 — 실제 구동 확인 (뒷바퀴를 반드시 띄운 상태)
 
 ```sh
 ros2 topic pub -r 50 /esp32_motor_bridge/drive_command std_msgs/msg/String \
-  "{data: '{\"mode\": 1, \"target_drive_left_mmps\": 150, \"target_drive_right_mmps\": 150}'}"
+  "{data: '{\"mode\": 1, \"target_drive_left_mmps\": 150, \"target_drive_right_mmps\": 150, \"target_steering_mdeg\": 0, \"max_steering_rate_mdps\": 60000}'}"
 ```
 
 다른 터미널에서 `ros2 topic echo /esp32_motor_bridge/drive_state`.
 
-- 좌·우 바퀴가 모두 같은 방향(전진)으로 도는지 눈으로 확인한다. 반대로 돌면 `safety_stub.cpp`의 `LEFT_MOTOR_REVERSED`/`RIGHT_MOTOR_REVERSED`를 뒤집는다.
+- 좌·우 뒷바퀴가 모두 같은 방향(전진)으로 도는지 눈으로 확인한다. 반대로 돌면 `safety_stub.cpp`의 `LEFT_MOTOR_REVERSED`/`RIGHT_MOTOR_REVERSED`를 뒤집는다.
 - `drive_pwm_left/right_permille`가 0이 아니고 `driver_enabled`가 `true`인지 확인한다.
-- 좌·우 부호를 반대로 보내(`target_drive_left_mmps: 150, target_drive_right_mmps: -150`) 제자리 회전 방향이 기대와 맞는지 확인한다.
-- 전진 중 즉시 반대 부호로 바꿔 보내(급후진) 드라이버 fault 없이 짧은 dead-time 이후 반대 방향으로 전환되는지 확인한다(CTRL-13).
+- **좌·우 부호를 반대로 보내지 않는다.** 2026-08-06 전륜 조향 복구로 후륜은 전·후진 전용이며(§6.3), 부호가 반대인 명령은 펌웨어가 양쪽 0으로 만든다. 제자리 회전은 더 이상 존재하지 않는 기동이다.
+- 전진 중 즉시 반대 부호로 바꿔 보내(급후진) 드라이버 fault 없이 데드타임(500ms) 이후 반대 방향으로 전환되는지 확인한다(CTRL-13). 데드타임 동안 `driver_enabled`가 `false`인 것이 정상이다.
 - Ctrl-C로 발행을 멈추고, 300ms 뒤 바퀴가 실제로 멈추는지 확인한다(8단계 워치독 확인을 실제 PWM으로 재확인하는 것).
 
-## 13단계 — mm/s ↔ PWM, 거리 매핑은 아직 임시값
+## 12-2단계 — 조향 서보 확인 (앞바퀴도 띄운 상태, CTRL-24·25·26)
 
-`safety_stub.cpp`의 `MAX_DRIVE_SPEED_MMPS`(현재 600), `sensor_task.cpp`의 `LEFT/RIGHT_GEAR_RATIO`(82.0)·`WHEEL_DIAMETER_MM`(120)·`PROXIMITY_STOP_DISTANCE_MM`(300), `config/esp32_bridge.yaml`의 `meters_per_tick_left/right`·`track_width_m`은 전부 §35-3/§35-4 실측 전 임시값이다. 10~12단계에서는 부호·방향·응답성만 확인하고, 절대 속도(mm/s)나 절대 거리의 정확도는 실측 캘리브레이션 이후에 판단한다.
+조향 중립·엔드포인트를 아직 잡지 않았다면 먼저 `hardware/esp32/motor/steering_servo_test/`
+벤치 스케치로 §35-3 절차를 끝낸다. 여기서는 통합 경로(`drive_command` → 서보)만 본다.
+
+```sh
+# 좌 15° 조향 + 전진. v_min(30mm/s) 이상이어야 조향 목표가 반영된다
+ros2 topic pub -r 50 /esp32_motor_bridge/drive_command std_msgs/msg/String \
+  "{data: '{\"mode\": 1, \"target_drive_left_mmps\": 100, \"target_drive_right_mmps\": 100, \"target_steering_mdeg\": 15000, \"max_steering_rate_mdps\": 60000}'}"
+```
+
+- `drive_state`의 `target_steering_mdeg`가 15000 으로 **서서히** 수렴하는지 본다. 계단으로 뛰면 슬루레이트가 안 걸린 것이다(CTRL-25). `steering_actuator_cmd`는 서보 펄스폭(µs)이다.
+- `+15000`에서 앞바퀴가 **좌**로 꺾이는지 눈으로 본다. 반대면 `steering.cpp`의 `SERVO_DIRECTION_SIGN`을 `-1`로 바꾼다 — 부호가 뒤집힌 채 자율주행에 들어가면 회피가 장애물 쪽으로 향한다.
+- `±30000`을 넘는 값(예: 40000)을 보내 `drive_state`가 30000에서 포화하고 `/diagnostics`에 `STEERING_COMMAND_INVALID`(bit 14)가 서는지 확인한다(CTRL-14). 정상 값으로 되돌리면 즉시 내려간다 — 래치하지 않는다.
+- **정지 상태(`target_drive_*_mmps: 0`)에서 조향각을 바꿔 보낸다.** 서보가 움직이지 않고 `STEERING_COMMAND_INVALID`가 서면 정상이다(§34-2 — 정지 조향은 회두를 만들지 못하고 타이어·서보에만 부담이다).
+- 조향을 준 상태에서 Ctrl-C로 발행을 멈춘다. 구동은 300ms 안에 멈추고 **조향각은 그대로 유지**돼야 한다(CTRL-26, §34-7). 중립으로 튀면 정지 경로 어딘가가 조향을 건드리는 것이다.
+
+## 13단계 — mm/s ↔ PWM, 조향 매핑, 거리 매핑은 아직 임시값
+
+`safety_stub.cpp`의 `MAX_DRIVE_SPEED_MMPS`(현재 600), `steering.cpp`의 `SERVO_CENTER_DEG`(145)·`SERVO_MAX_OFFSET_DEG`(30)·`STEERING_MAX_MDEG`(30000), `sensor_task.cpp`의 `LEFT/RIGHT_GEAR_RATIO`(82.0)·`WHEEL_DIAMETER_MM`(120)·`PROXIMITY_STOP_DISTANCE_MM`(300), `config/esp32_bridge.yaml`의 `meters_per_tick_left/right`·`track_width_m`, `sentinel_drive`의 `wheelbase_m`(0.50)·`max_steering_deg`(30)은 전부 §35-3/§35-4 실측 전 임시값이다. 10~12단계에서는 부호·방향·응답성만 확인하고, 절대 속도(mm/s)·조향각·절대 거리의 정확도는 실측 캘리브레이션 이후에 판단한다.
+
+조향은 개루프라 **매핑 정확도가 곧 조향 정확도**이며(§34-8), 실제 조향각을 재는 센서가 없어 이 값이 틀려도 시스템은 아무 오류도 내지 않는다.
 
 ## 14단계 — 오도메트리 캘리브레이션 (§35-3, Phase 1)
 
 여기부터는 바퀴를 내리고 바닥에서 실제로 주행시킨다. 순서를 바꾸면 원인 구분이 불가능해진다(앞 단계가 틀린 채로 뒤 값을 맞추면 오차가 서로를 상쇄한다).
 
 1. **거리 스케일** — 3m 직선을 좌·우 각각 5회 주행하고 `/wheel/odometry`의 `pose.pose.position.x`와 줄자 실측을 비교한다. 합격 기준 오차 ±5%, 좌우 편차 ±3%p. 어긋난 만큼 `meters_per_tick_left`/`meters_per_tick_right`를 개별로 나눠 보정한다(좌우를 따로 두는 이유가 이 편차 보정이다).
-2. **트랙폭 `W`** — 접지 중심 거리를 자로 재 `track_width_m`에 넣고, 제자리 360° 회전을 좌·우 방향으로 각각 반복해 `pose`의 yaw가 실제 회전량과 맞는지 본다. 각속도 대칭 오차 ±10% 이내가 될 때까지 `W`를 역산해 조정한다. **1번이 끝나기 전에는 손대지 않는다** — 거리 스케일이 틀리면 `W`도 반드시 틀리게 나온다.
+2. **휠베이스 `L`과 `δ_max`** — 전·후 차축 중심 거리를 자로 재 `sentinel_drive`의 `wheelbase_m`에 넣고, 조향을 `δ_max`로 고정한 채 저속으로 원을 한 바퀴 돌려 `R_min`을 실측한다(§35-3). 좌·우 각각 5회, 대칭 오차 ±10% 이내. **제자리 360° 회전은 전륜 조향에서 불가능하므로 이 원주행이 대체 기동이다.** 트랙폭 `W`(`track_width_m`)는 오도메트리 yaw 계산에 계속 쓰이지만 그 yaw 는 EKF 입력이 아니다 — 후륜 스크럽 때문에 신뢰할 수 없고 yaw 의 주 소스는 IMU 다(§35-3). **1번이 끝나기 전에는 손대지 않는다** — 거리 스케일이 틀리면 `L`·`R_min` 역산도 반드시 틀리게 나온다.
 3. 확정값을 `config/esp32_bridge.yaml`에 기록하고, 기동 시 임시값 경고가 더 이상 뜨지 않는지 확인한다. `docs/TBD.md`의 TBD-CAL-001도 함께 갱신한다.
 
 ---
@@ -633,4 +652,4 @@ ros2 topic pub -r 50 /esp32_motor_bridge/drive_command std_msgs/msg/String \
 
 다만 텔레메트리 값 자체는 통신 검증용 가짜 값이 아니라 실측값이므로, 실제 센서·모터 동작까지 확인하려면 10단계 이후가 필요하다. 물리 E-Stop 배선은 여전히 이 스케치의 범위 밖이다.
 
-하드웨어 변경 이력: 조향 모터·조향 엔코더는 캐스터 휠로 대체되어 제거되었고(`measured_steering_mdeg`는 프로토콜 호환을 위해 항상 0), 차체 IMU로 MPU6050이 추가되었다(S15P11A301-244).
+하드웨어 변경 이력: 조향 모터(RS380SP)·조향 엔코더는 2026-08-01에 캐스터 휠로 대체되어 제거되었고, 차체 IMU로 MPU6050이 추가되었다(S15P11A301-244). **2026-08-06에 캐스터를 다시 떼고 전륜 조향부를 복구해 DS51150-12V 서보 1개를 모터 ESP32의 PWM 1채널(GPIO18)에 연결했다**(S15P11A301-297) — 후륜 2개는 전·후진 전용이 되고 조향은 서보가 담당한다. 조향 엔코더는 돌아오지 않았으므로 `measured_steering_mdeg`는 여전히 항상 0이다(서보 내부 폐루프, 외부 각도 피드백 없음).

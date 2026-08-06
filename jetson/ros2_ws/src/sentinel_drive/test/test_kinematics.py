@@ -1,12 +1,16 @@
-"""역운동학 시험 (S15P11A301-234).
+"""전륜 조향 역운동학 시험 (S15P11A301-234·297).
 
-부호가 이 패키지의 전부다. 틀려도 로봇은 움직이고 오도메트리는 SLAM 이 보정해
-버려서, 회전 명령에 반대로 도는 것으로만 드러난다 — 그때는 실차 위다. 여기서
-값으로 못박는다.
+부호와 거부 규칙이 이 패키지의 전부다. 틀려도 로봇은 움직이고 오도메트리는 SLAM 이
+보정해 버려서, 회전 명령에 반대로 도는 것으로만 드러난다 — 그때는 실차 위다.
+여기서 값으로 못박는다.
+
+2026-08-06 하드웨어 변경으로 차동 구동 시험(`제자리 회전은 오른쪽이 전진` 등)은
+폐기했다. 전륜 조향 차량은 제자리 회전을 **할 수 없고**, 그 명령은 거부돼야 한다.
 """
 
 from __future__ import annotations
 
+import math
 import sys
 from pathlib import Path
 
@@ -19,119 +23,190 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from sentinel_drive.kinematics import (
     MODE_AUTO,
     MODE_MANUAL,
+    REJECT_SPIN_IN_PLACE,
+    VehicleLimits,
     drive_command,
-    saturate,
+    max_angular_radps,
+    min_turning_radius_m,
+    solve,
+    steering_angle_rad,
     stop_command,
-    wheel_speeds_mps,
 )
 
-W = 0.30  # 시험용 트랙폭. 실측 전 잠정값과 같은 수
+# 시험용 차량 한계. 노드 기본값(실측 전 잠정값)과 같은 수로 둔다.
+L = 0.50
+DELTA_MAX = math.radians(30.0)
+LIMITS = VehicleLimits(
+    wheelbase_m=L, max_steering_rad=DELTA_MAX, max_drive_mps=0.30, min_linear_mps=0.03
+)
 
 
-# ── 역운동학 부호 — 정운동학(delta_yaw = (r-l)/W)과 왕복 일치 ────────────────
+# ── 조향각 부호 — ω = v·tanδ/L 과 왕복 일치 ─────────────────────────────────
 
-def test_전진은_양쪽_동일_양수():
-    left, right = wheel_speeds_mps(0.25, 0.0, W)
-    assert left == right == 0.25
-
-
-def test_후진은_양쪽_동일_음수():
-    left, right = wheel_speeds_mps(-0.25, 0.0, W)
-    assert left == right == -0.25
+def test_직진은_조향각_0():
+    delta, clamped = steering_angle_rad(0.25, 0.0, LIMITS)
+    assert delta == 0.0
+    assert clamped is False
 
 
-def test_반시계_제자리_회전은_오른쪽이_전진():
-    # REP-103: ω > 0 = 반시계. 정운동학 delta_yaw = (r-l)/W 이므로 r > l 이어야
-    # 한다. 여기가 뒤집히면 회전 명령에 로봇이 반대로 돈다.
-    left, right = wheel_speeds_mps(0.0, 1.0, W)
-    assert right > 0 > left
-    assert right == pytest.approx(0.15)   # ω·W/2 = 1.0 × 0.30 / 2
-    assert left == pytest.approx(-0.15)
+def test_반시계는_좌조향_양수다():
+    # REP-103: ω > 0 = 반시계 = 좌회전. 프로토콜 target_steering_mdeg 도 "+= 좌회전"
+    # 이다. 여기가 뒤집히면 회전 명령에 로봇이 반대로 돈다.
+    delta, _ = steering_angle_rad(0.25, 0.5, LIMITS)
+    assert delta > 0
 
 
-def test_시계_회전은_왼쪽이_전진():
-    left, right = wheel_speeds_mps(0.0, -1.0, W)
-    assert left > 0 > right
+def test_시계는_우조향_음수다():
+    delta, _ = steering_angle_rad(0.25, -0.5, LIMITS)
+    assert delta < 0
+
+
+def test_후진_반시계는_조향이_뒤집힌다():
+    # 후진하며 반시계로 돌려면 앞바퀴를 우로 꺾어야 한다. 자전거 모델 식이
+    # 그대로 처리하므로 후진에 특례를 두지 않는다 — 특례를 두면 그것이 버그다.
+    delta, _ = steering_angle_rad(-0.25, 0.5, LIMITS)
+    assert delta < 0
 
 
 def test_정운동학과_왕복이_항등이다():
-    # 역운동학 결과를 wheel_odometry 의 공식에 되넣으면 (v, ω) 가 나와야 한다.
-    # 이 왕복이 두 패키지의 부호 계약이다.
-    for v, w in [(0.25, 0.0), (0.0, 0.6), (0.2, -0.4), (-0.1, 0.3)]:
-        left, right = wheel_speeds_mps(v, w, W)
-        assert (left + right) / 2.0 == pytest.approx(v)
-        assert (right - left) / W == pytest.approx(w)
+    # 역운동학 결과를 ω = v·tanδ/L 에 되넣으면 지령 ω 가 나와야 한다. 클램프에
+    # 걸리지 않는 조합만 쓴다 — R_min=0.866m 이므로 v=0.2 에서 |ω| ≤ 0.23rad/s 다.
+    for v, w in [(0.25, 0.0), (0.2, 0.15), (0.1, -0.05), (-0.15, 0.05)]:
+        delta, clamped = steering_angle_rad(v, w, LIMITS)
+        assert clamped is False, f'이 조합은 클램프되지 않아야 한다: v={v} ω={w}'
+        assert v * math.tan(delta) / L == pytest.approx(w)
 
 
-def test_트랙폭이_클수록_같은_회전에_바퀴차가_크다():
-    # W 를 절반으로 틀리면(줄자 실측 실수) 같은 ω 지령에 바퀴 차가 절반이 되고,
-    # 실제 yaw rate 가 지령의 두 배가 된다 — TBD-CAL-002 가 급한 이유.
-    _, right_narrow = wheel_speeds_mps(0.0, 1.0, 0.15)
-    _, right_wide = wheel_speeds_mps(0.0, 1.0, 0.30)
-    assert right_wide == pytest.approx(right_narrow * 2)
+def test_델타맥스를_넘으면_클램프하고_알린다():
+    # 저속 + 큰 ω 는 물리 한계에 걸린다. 조용히 자르면 실제 회두가 지령보다
+    # 작은데 상위는 그것을 모른다 — 클램프 여부를 반환해 진단으로 올린다.
+    delta, clamped = steering_angle_rad(0.05, 2.0, LIMITS)
+    assert clamped is True
+    assert delta == pytest.approx(DELTA_MAX)
 
 
-def test_트랙폭_0이하는_거부한다():
+def test_최소_회전반경은_L_over_tan_delta_max():
+    assert min_turning_radius_m(LIMITS) == pytest.approx(L / math.tan(DELTA_MAX))
+
+
+def test_각속도_상한은_선속도에_종속된다():
+    # ω_max(v) = |v| / R_min. 정지에서 0 이 되는 것이 제자리 회전 불가의 수식 표현이다.
+    r_min = min_turning_radius_m(LIMITS)
+    assert max_angular_radps(0.30, LIMITS) == pytest.approx(0.30 / r_min)
+    assert max_angular_radps(0.0, LIMITS) == 0.0
+
+
+@pytest.mark.parametrize(
+    'override',
+    [
+        {'wheelbase_m': 0.0},
+        {'wheelbase_m': -0.5},
+        {'max_steering_rad': 0.0},
+        {'max_steering_rad': math.pi / 2.0},  # tan 이 발산해 R_min 이 0 이 된다
+        {'max_drive_mps': 0.0},
+        {'min_linear_mps': -0.01},
+    ],
+)
+def test_한계값_검증(override):
+    invalid = VehicleLimits(
+        **{
+            'wheelbase_m': L,
+            'max_steering_rad': DELTA_MAX,
+            'max_drive_mps': 0.30,
+            'min_linear_mps': 0.03,
+            **override,
+        }
+    )
     with pytest.raises(ValueError):
-        wheel_speeds_mps(0.1, 0.0, 0.0)
+        invalid.validate()
 
 
-# ── 포화 — 곡률 보존 ─────────────────────────────────────────────────────────
+# ── solve() — 후륜 속도·포화·거부 ───────────────────────────────────────────
 
-def test_상한_이내면_그대로다():
-    assert saturate(0.1, 0.2, 0.3) == (0.1, 0.2)
-
-
-def test_상한_초과면_비율을_유지하며_줄인다():
-    # 곡률 = (r-l)/(r+l) 비가 보존돼야 한다. 한쪽만 자르면 지령한 호가 아니라
-    # 다른 방향으로 간다 — Nav2 컨트롤러가 보정하려다 진동한다.
-    left, right = saturate(0.2, 0.6, 0.3)
-    assert right == pytest.approx(0.3)          # 최대가 상한에 붙는다
-    assert left == pytest.approx(0.1)           # 0.2 × (0.3/0.6)
-    assert left / right == pytest.approx(0.2 / 0.6)
+def test_후륜은_좌우_같은_속도다():
+    # 조향 링크가 회두를 정하므로 좌·우 속도 차로 회두를 보조하지 않는다(6.3).
+    solution = solve(0.2, 0.4, LIMITS)
+    command = drive_command(solution.speed_mps, solution.steering_rad)
+    assert command['target_drive_left_mmps'] == command['target_drive_right_mmps'] == 200
 
 
-def test_음수_쪽이_큰_경우도_비율_유지():
-    left, right = saturate(-0.6, 0.2, 0.3)
-    assert left == pytest.approx(-0.3)
-    assert right == pytest.approx(0.1)
+def test_속도_상한에서_포화한다():
+    solution = solve(1.5, 0.0, LIMITS)
+    assert solution.speed_mps == pytest.approx(0.30)
+    assert solution.accepted
 
 
-def test_제자리_회전_포화도_대칭이다():
-    left, right = saturate(-0.5, 0.5, 0.3)
-    assert left == pytest.approx(-0.3)
-    assert right == pytest.approx(0.3)
+def test_후진도_상한에서_포화한다():
+    assert solve(-1.5, 0.0, LIMITS).speed_mps == pytest.approx(-0.30)
 
 
-def test_상한_0이하는_거부한다():
-    with pytest.raises(ValueError):
-        saturate(0.1, 0.1, 0.0)
+def test_포화_후_속도로_조향각을_계산한다():
+    # 명세 §34-2 식이 δ = atan(L·ω / v_cmd) 이고 v_cmd 는 포화 후 값이다. 지령 ω 를
+    # 지키는 쪽이며, 포화 전 v 를 쓰면 조향각이 작아져 실제 회두가 지령보다 작아진다.
+    solution = solve(1.5, 0.3, LIMITS)
+    expected, _ = steering_angle_rad(0.30, 0.3, LIMITS)
+    assert solution.steering_rad == pytest.approx(expected)
+
+
+def test_제자리_회전은_거부하고_조향을_유지한다():
+    # 전륜 조향 차량은 v≈0 에서 회두하지 못한다(§34-2). 구동 0, 조향각은 마지막 값.
+    solution = solve(0.0, 0.8, LIMITS, hold_steering_rad=0.2)
+    assert solution.accepted is False
+    assert solution.reject_reason == REJECT_SPIN_IN_PLACE
+    assert solution.speed_mps == 0.0
+    assert solution.steering_rad == pytest.approx(0.2)
+
+
+def test_v_min_미만_저속_회두도_거부한다():
+    # 0 이 아니라 v_min(0.03m/s) 이 경계다. "아주 조금 전진하면서 돌아라" 는
+    # 타이어를 비틀 뿐 회두를 만들지 못한다.
+    assert solve(0.02, 0.8, LIMITS).reject_reason == REJECT_SPIN_IN_PLACE
+    assert solve(0.05, 0.8, LIMITS).accepted
+
+
+def test_정지_명령은_거부가_아니다():
+    # v≈0, ω=0 은 정지 명령으로 실행한다(조향각 유지).
+    solution = solve(0.0, 0.0, LIMITS, hold_steering_rad=-0.1)
+    assert solution.accepted
+    assert solution.speed_mps == 0.0
+    assert solution.steering_rad == pytest.approx(-0.1)
 
 
 # ── JSON 계약 — esp32_motor_bridge._on_drive_command 가 받는 형태 ───────────
 
-def test_계약_필수_필드와_mm_변환():
-    cmd = drive_command(0.25, -0.15)
-    assert cmd['mode'] == MODE_AUTO
-    assert cmd['target_drive_left_mmps'] == 250
-    assert cmd['target_drive_right_mmps'] == -150
-    assert cmd['command_timeout_ms'] == 300
+def test_계약_필수_필드와_단위_변환():
+    command = drive_command(0.25, math.radians(-12.5), max_steering_rate_mdps=60000)
+    assert command['mode'] == MODE_AUTO
+    assert command['target_drive_left_mmps'] == 250
+    assert command['target_drive_right_mmps'] == 250
+    assert command['target_steering_mdeg'] == -12500  # 밀리도
+    assert command['max_steering_rate_mdps'] == 60000
+    assert command['command_timeout_ms'] == 300
     # 브리지가 int() 로 파싱하므로 전부 정수여야 한다. float 이 섞이면
     # int("250.0") 이 ValueError 로 명령이 조용히 버려진다.
-    assert all(isinstance(v, int) for v in cmd.values())
+    assert all(isinstance(v, int) for v in command.values())
+
+
+def test_조향각_부호가_밀리도까지_보존된다():
+    assert drive_command(0.1, math.radians(30.0))['target_steering_mdeg'] == 30000
+    assert drive_command(0.1, math.radians(-30.0))['target_steering_mdeg'] == -30000
 
 
 def test_반올림은_round_다():
-    # int() 절단이면 0.6mm/s 가 0 이 된다 — 초저속에서 방향 자체가 죽는다.
-    assert drive_command(0.0006, -0.0006)['target_drive_left_mmps'] == 1
-    assert drive_command(0.0006, -0.0006)['target_drive_right_mmps'] == -1
+    # int() 절단이면 0.6mm/s 와 0.6mdeg 가 0 이 된다 — 초저속·소각도에서 방향이 죽는다.
+    assert drive_command(0.0006, 0.0)['target_drive_left_mmps'] == 1
+    assert drive_command(-0.0006, 0.0)['target_drive_right_mmps'] == -1
+    assert drive_command(0.0, math.radians(0.0006))['target_steering_mdeg'] == 1
 
 
-def test_정지_명령():
-    cmd = stop_command()
-    assert cmd['target_drive_left_mmps'] == 0
-    assert cmd['target_drive_right_mmps'] == 0
-    assert cmd['mode'] == MODE_AUTO
+def test_정지_명령은_조향각을_유지한다():
+    # §34-7: 정지는 정차가 아니다. 0 을 실어 보내면 관성 주행 중 앞바퀴가 중립으로
+    # 돌아가 궤적이 바뀐다.
+    command = stop_command(steering_rad=math.radians(20.0))
+    assert command['target_drive_left_mmps'] == 0
+    assert command['target_drive_right_mmps'] == 0
+    assert command['target_steering_mdeg'] == 20000
+    assert command['mode'] == MODE_AUTO
 
 
 def test_모드_치환():
@@ -146,3 +221,9 @@ def test_모드_상수는_명세_값이다():
     assert MODE_SAFE_IDLE == 0
     assert MODE_MANUAL == 1
     assert MODE_AUTO == 2
+
+
+def test_조향_한계는_펌웨어와_같은_값이다():
+    # steering.cpp 의 STEERING_MAX_MDEG = 30000. 여기가 더 크면 Jetson 이 보낸
+    # 명령을 펌웨어가 조용히 클램프하고 STEERING_COMMAND_INVALID 만 올라온다.
+    assert round(math.degrees(DELTA_MAX) * 1000.0) == 30000

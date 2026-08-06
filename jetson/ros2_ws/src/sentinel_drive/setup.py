@@ -15,7 +15,7 @@ setup(
     zip_safe=True,
     maintainer='Sentinel Team',
     maintainer_email='team@example.com',
-    description='/cmd_vel 차동 구동 역운동학.',
+    description='/cmd_vel 전륜 조향 역운동학(후륜 속도 + 조향각).',
     license='Apache-2.0',
     entry_points={
         'console_scripts': [

@@ -1,0 +1,187 @@
+#include "steering.h"
+
+#include <Arduino.h>
+#include <esp_arduino_version.h>
+#include <math.h>
+
+// 주의: 이 UART는 바이너리 프로토콜 전용이므로 여기에 Serial.print() 디버그를
+// 추가하지 말 것(README 참고).
+
+namespace {
+
+// ---- 배선 ----
+// DS51150 신호선. 부팅 strapping 핀과 부팅 중 상태가 변하는 핀을 피해야 하며
+// (§34-1) 외부 pull-down을 함께 둔다(§34-10). GPIO18은 esp32_vehicle_control 벤치
+// 시험(조향 서보 실동작 확인)에서 쓴 것과 같은 핀이다.
+constexpr uint8_t SERVO_SIGNAL_PIN = 18;
+
+// ---- 서보 신호 규격 (표준 RC PWM, 데이터시트 확인은 TBD-HW-008) ----
+constexpr uint32_t SERVO_PWM_FREQUENCY_HZ = 50;
+constexpr uint8_t SERVO_PWM_RESOLUTION_BITS = 16;
+constexpr uint32_t SERVO_PWM_MAX_DUTY = (1UL << SERVO_PWM_RESOLUTION_BITS) - 1UL;
+constexpr uint32_t SERVO_PWM_PERIOD_US = 1000000UL / SERVO_PWM_FREQUENCY_HZ;
+constexpr float SERVO_MIN_PULSE_US = 500.0f;
+constexpr float SERVO_MAX_PULSE_US = 2500.0f;
+constexpr float SERVO_TOTAL_ANGLE_DEG = 270.0f;
+
+// 구동 PWM(20kHz)과 같은 LEDC 타이머를 쓰면 한쪽 주파수를 바꿀 때 다른 쪽이 함께
+// 흔들린다(§34-1). Core 2.x는 채널 2개가 타이머 1개를 공유하므로 구동이 쓰는
+// 0~3(타이머 0·1) 밖의 채널 4(타이머 2)를 배정한다. Core 3.x는 핀으로 제어하며
+// ledcAttach가 빈 타이머를 알아서 잡는다.
+constexpr uint8_t SERVO_PWM_CHANNEL = 4;
+
+// ---- 캘리브레이션 (§35-3 「조향 중립·각도 매핑」 실측 전 임시값) ----
+// 서보 각도계의 중립과 좌·우 엔드포인트. 벤치 시험에서 링키지 기계 한계보다
+// 안쪽임을 확인한 값이며, 실측 표가 나오면 이 세 상수만 바꾼다.
+constexpr float SERVO_CENTER_DEG = 145.0f;
+constexpr float SERVO_MAX_OFFSET_DEG = 30.0f;
+
+// 앞바퀴 실제 조향각(δ) 기준 한계. δ_max 실측(TBD-HW-008) 전에는 서보 엔드포인트와
+// 1:1로 두고, 실측 후 δ_max만 바꾸면 게인이 자동으로 따라온다.
+constexpr int16_t STEERING_MAX_MDEG = 30000;  // 30.000°
+
+// +δ = 좌회전(반시계, REP-103). 서보 각도를 올렸을 때 앞바퀴가 우로 꺾이면 이
+// 값만 -1로 바꾼다 - CTRL-24 스윕 시험에서 가장 먼저 확인할 항목이다.
+constexpr float SERVO_DIRECTION_SIGN = 1.0f;
+
+// δ(도) → 서보 각도(도) 게인. 개루프이므로 이 선형 근사의 오차가 곧 조향 오차다.
+// 5점 실측 표(§35-3)가 나오면 선형 보간으로 교체한다.
+constexpr float SERVO_DEG_PER_STEERING_DEG =
+    SERVO_MAX_OFFSET_DEG / (STEERING_MAX_MDEG / 1000.0f);
+
+// ---- 정지 중 조향 금지 (§34-2) ----
+// 후륜 목표 속도가 이 값보다 작으면 조향 목표 변경을 거부한다. Jetson
+// vehicle_kinematics의 min_linear_mps(0.03m/s)와 같은 값으로 맞춰 둔다 - 양쪽이
+// 어긋나면 Jetson이 보낸 명령을 ESP32가 조용히 거부하는 구간이 생긴다.
+constexpr int16_t STEERING_MIN_DRIVE_MMPS = 30;
+// 밀리도 반올림 잡음을 회두 명령으로 오판하지 않기 위한 여유.
+constexpr int16_t STEERING_STATIONARY_TOLERANCE_MDEG = 200;
+
+// 슬루레이트 갱신 간격. 서보 신호 자체가 50Hz라 이보다 자주 써도 의미가 없다(§34-8).
+constexpr uint32_t SERVO_UPDATE_INTERVAL_MS = 20;
+
+int16_t g_commandedMdeg = 0;  // 클램프까지 끝난 최종 목표
+int16_t g_outputMdeg = 0;     // 슬루레이트 제한을 거쳐 실제 추종 중인 목표
+int16_t g_actuatorUs = 0;
+uint16_t g_maxRateMdps = 0;   // 0 = 소프트웨어 제한 없음(§34-5 프로토콜 정의)
+uint32_t g_lastUpdateMs = 0;
+
+void writePwm(uint32_t duty) {
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+  ledcWrite(SERVO_SIGNAL_PIN, duty);
+#else
+  ledcWrite(SERVO_PWM_CHANNEL, duty);
+#endif
+}
+
+float steeringMdegToServoDeg(int16_t steeringMdeg) {
+  const float servoDeg =
+      SERVO_CENTER_DEG +
+      SERVO_DIRECTION_SIGN * (steeringMdeg / 1000.0f) * SERVO_DEG_PER_STEERING_DEG;
+  // 최종 출력 직전에도 엔드포인트를 다시 제한한다. 어떤 코드 경로로 들어와도
+  // 서보가 링키지의 기계 한계를 밀지 않게 하는 마지막 방어선이다(§21.6).
+  return constrain(servoDeg,
+                    SERVO_CENTER_DEG - SERVO_MAX_OFFSET_DEG,
+                    SERVO_CENTER_DEG + SERVO_MAX_OFFSET_DEG);
+}
+
+float servoDegToPulseUs(float servoDeg) {
+  const float bounded = constrain(servoDeg, 0.0f, SERVO_TOTAL_ANGLE_DEG);
+  return SERVO_MIN_PULSE_US +
+         bounded / SERVO_TOTAL_ANGLE_DEG * (SERVO_MAX_PULSE_US - SERVO_MIN_PULSE_US);
+}
+
+uint32_t pulseUsToDuty(float pulseUs) {
+  const float bounded = constrain(pulseUs, SERVO_MIN_PULSE_US, SERVO_MAX_PULSE_US);
+  return (uint32_t)(bounded * (float)SERVO_PWM_MAX_DUTY / (float)SERVO_PWM_PERIOD_US + 0.5f);
+}
+
+void writeSteeringMdeg(int16_t steeringMdeg) {
+  const float pulseUs = servoDegToPulseUs(steeringMdegToServoDeg(steeringMdeg));
+  writePwm(pulseUsToDuty(pulseUs));
+  g_actuatorUs = (int16_t)lroundf(pulseUs);
+}
+
+}  // namespace
+
+void steeringInit() {
+  // 부팅 구간에 유효한 펄스가 만들어지지 않게 먼저 LOW로 고정한 뒤 attach한다
+  // (§34-10, 외부 pull-down과 이중 방어).
+  pinMode(SERVO_SIGNAL_PIN, OUTPUT);
+  digitalWrite(SERVO_SIGNAL_PIN, LOW);
+
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+  ledcAttach(SERVO_SIGNAL_PIN, SERVO_PWM_FREQUENCY_HZ, SERVO_PWM_RESOLUTION_BITS);
+#else
+  ledcSetup(SERVO_PWM_CHANNEL, SERVO_PWM_FREQUENCY_HZ, SERVO_PWM_RESOLUTION_BITS);
+  ledcAttachPin(SERVO_SIGNAL_PIN, SERVO_PWM_CHANNEL);
+#endif
+
+  // §34-6: 재부팅 직후에는 믿을 수 있는 마지막 값이 없으므로 중립이 유일하게
+  // 정의된 안전 상태다. 정지 시 각도 유지 정책(§34-7)의 유일한 예외다.
+  g_commandedMdeg = 0;
+  g_outputMdeg = 0;
+  g_maxRateMdps = 0;
+  g_lastUpdateMs = millis();
+  writeSteeringMdeg(0);
+}
+
+bool steeringSetTarget(int16_t requestedMdeg, uint16_t maxRateMdps, int16_t driveTargetMmps) {
+  g_maxRateMdps = maxRateMdps;
+
+  const int16_t clamped =
+      (int16_t)constrain((int32_t)requestedMdeg, -(int32_t)STEERING_MAX_MDEG,
+                          (int32_t)STEERING_MAX_MDEG);
+
+  // 정지 상태에서의 조향 변경 거부. 목표를 바꾸지 않고 마지막 값을 유지한다.
+  if (abs(driveTargetMmps) < STEERING_MIN_DRIVE_MMPS &&
+      abs(clamped - g_commandedMdeg) > STEERING_STATIONARY_TOLERANCE_MDEG) {
+    return false;
+  }
+
+  g_commandedMdeg = clamped;
+  return clamped == requestedMdeg;
+}
+
+void steeringUpdate(uint32_t nowMs) {
+  const uint32_t elapsedMs = nowMs - g_lastUpdateMs;
+  if (elapsedMs < SERVO_UPDATE_INTERVAL_MS) return;
+  g_lastUpdateMs = nowMs;
+
+  if (g_outputMdeg != g_commandedMdeg) {
+    if (g_maxRateMdps == 0) {
+      // 프로토콜상 0은 「제한 없음」이다. 그때 실제 변화율은 서보의 물리 최대
+      // 속도이며 그것이 곧 급조향이므로, Jetson은 항상 유효한 값을 보낸다
+      // (vehicle_kinematics의 max_steering_rate_mdps, §35-4로 실측 확정).
+      g_outputMdeg = g_commandedMdeg;
+    } else {
+      // 태스크 지연으로 elapsed가 크게 튀었을 때 한 번에 몰아서 꺾이지 않게
+      // 상한을 둔다 - 슬루레이트 제한의 목적 자체가 계단 입력 방지다.
+      const uint32_t boundedElapsedMs = min(elapsedMs, 100UL);
+      const int32_t maxStepMdeg =
+          (int32_t)(((uint64_t)g_maxRateMdps * boundedElapsedMs) / 1000ULL);
+      const int32_t difference = (int32_t)g_commandedMdeg - (int32_t)g_outputMdeg;
+      if (abs(difference) <= maxStepMdeg) {
+        g_outputMdeg = g_commandedMdeg;
+      } else {
+        g_outputMdeg += (int16_t)(difference > 0 ? maxStepMdeg : -maxStepMdeg);
+      }
+    }
+  }
+
+  // 목표에 도달한 뒤에도 매 주기 같은 듀티를 다시 쓴다. LEDC는 듀티를 유지하므로
+  // 기능상 필요는 없지만, 서보 지령이 살아 있다는 것을 파형으로 확인할 수 있다.
+  writeSteeringMdeg(g_outputMdeg);
+}
+
+int16_t steeringTargetMdeg() {
+  return g_outputMdeg;
+}
+
+int16_t steeringActuatorCmdUs() {
+  return g_actuatorUs;
+}
+
+int16_t steeringMaxMdeg() {
+  return STEERING_MAX_MDEG;
+}

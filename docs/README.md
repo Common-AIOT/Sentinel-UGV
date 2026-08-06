@@ -76,6 +76,8 @@ date: "2026-07-27"
 
 | v2.0-r14 | 2026-08-05 | AI 탐지·음성 문서 분리 | S15P11A301-287. 기존 `07-AI-탐지-음성.md`, `docs/ai/detection/*`, `ai/voice/docs/*`에 분산된 설계·실측·실행 기록을 `07-AI-탐지.md`와 `08-AI-음성.md`로 통합했다. 음성 현재 운영안을 **Jetson Silero VAD → L40S FastAPI Qwen3-ASR-1.7B → GMS gpt-5.4-mini → 규칙 위험도 → 승인 사전 녹음 WAV**로 정정하고, 로컬 Whisper·로컬 LLM·동적 TTS·STT 앞 DeepFilterNet은 미채택 이력으로 분리했다. 변경 파일: `README.md`, `07-AI-탐지.md`, `08-AI-음성.md`, AI 코드·문서 링크 |
 
+| v2.0-r15 | 2026-08-06 | **구동계 전륜 서보 조향 전환** | 하드웨어 변경 반영. 프레임 앞부분의 **수동 캐스터 바퀴 2개를 제거하고 유아전동차 기존 조향 앞바퀴 2개를 복구**했으며, 타이로드에 **DS51150-12V 서보모터**를 직결해 조향한다(제어는 모터 ESP32). 전진·후진은 후륜 좌·우 RS540 2개 + BTS7960 2개를 그대로 쓴다. **즉 v1.1-r5(2026-08-01) 의 차동 구동 전환을 되돌려 구동과 조향을 다시 분리**했고, 운동학이 전륜 조향(자전거·Ackermann 근사)으로 돌아갔다. **가장 큰 파급은 제자리 회전 불가다** — `v≈0`·`ω≠0` 명령을 실행할 수 없어 `vehicle_kinematics` 가 이를 거부하고 진단으로 보고하며(03장 34-2), Nav2 의 rotation shim·`spin` 복구·RPP `use_rotate_to_heading` 를 모두 끄고 `minimum_turning_radius` 를 넣어야 한다(04장 24.1). planner 는 NavFn 유지 vs Smac Hybrid-A\* 전환이 미결이며 **판단 기준은 `R_min` 실측 하나**다. **프로토콜은 와이어 포맷이 바뀌지 않는다** — 2026-08-01 에 호환용 예약으로 남겨 둔 `target_steering_mdeg`·`max_steering_rate_mdps`·`steering_actuator_cmd`·`measured_steering_mdeg` 자리를 되살려 쓰며, 종전 03장 payload 표가 그 예약 필드를 빠뜨려 코드(14/15/16 bytes)와 어긋나 있던 것도 함께 정정했다. **조향은 개루프다** — 서보가 내부 폐루프로 각도를 유지하고 외부로 출력하지 않아 MT6701 은 후륜 2개를 유지하고, **링키지 이탈·서보 고장을 전기적으로 감지할 수 없다.** 감지 수단은 IMU 기대 yaw rate 대조 하나이며(`STEERING_RESPONSE_MISMATCH`) 그것도 선회를 시도할 때만 드러난다(03장 34-9, SR-013). **오도메트리는 결론이 그대로이고 근거가 강해졌다** — 캐스터 슬립이 없어진 대신 후륜 스크럽과 개루프 조향 때문에 엔코더로 yaw 를 만들 근거가 **아예 없어져**, EKF 의 「엔코더 `vx` 만·IMU `vyaw` 만」 입력 선택이 선택이 아니라 유일한 구성이 됐다(04장 23.2). **전원·안전**: 서보는 12V 모터 계통의 **E-Stop 하류**에서 급전해 차단점을 하나로 유지하고(저전압 DC-DC 레일에 올리지 않는다 — stall 전류), 그 대가로 **E-Stop 후 조향각은 정의되지 않는다**(서보 무여자). 소프트웨어 정지에서는 반대로 **조향각을 마지막 값으로 유지**한다 — 급정지 순간에도 관성 주행이 남으므로 중립으로 꺾으면 의도한 궤적을 벗어난다(03장 34-7, SR-014). 예외는 부팅·리셋 직후와 정차 후 `SAFE_IDLE` 복귀 둘뿐이다. **폐기했던 TBD-HW-008 을 「전륜 서보 조향 기하」로 부활**시켰고(휠베이스 `L`·`δ_max`·`R_min`·서보 중립/엔드포인트 µs·히스테리시스·신호 규격·stall 전류, **즉시**), TBD-CAL-002 의 트랙폭 `W` 는 필수 파라미터에서 스크럽 정량화·전자 차동 검토용으로 역할이 바뀌었다(전자 차동은 **기본 미적용** — 초기에는 좌·우 동일 속도, 실측 후 필요하면 추가). 시험은 CTRL-15 를 「거부 확인」으로 바꾸고 CTRL-24~27(서보 스윕·슬루레이트·단절 시 각도 유지·링키지 이탈 감지)을 신설했으며, CAL-04 를 조향 기하 항목으로 교체했다. **소프트웨어는 아직 차동 구동을 가정한다** — 04장 8.2 에 「전륜 조향 전환이 남긴 소프트웨어 갭」 절을 신설해 `vehicle_kinematics`·`esp32_motor_bridge`·모터 펌웨어·`esp32_sensor_bridge` 정운동학·`nav2.yaml` 다섯 곳을 미구현으로 명시했고, **지금 상태로 안전 체인을 켜면 `ω` 가 차동 역운동학을 타고 후륜을 반대로 돌려 앞바퀴가 고정된 채 노면을 문지른다**는 것도 적었다(`enable_safety`·`enable_nav2` 기본 false 가 이 사고도 막고 있다). 03장 35-2 의 TF 트리 링크 이름을 `sentinel.urdf` 실제 값(`rear_drive_wheel_link`·`front_*_wheel_link`)으로 정정했고 — 「URDF 가 이 트리와 일치한다」던 문장이 이 부분은 사실이 아니었다 — **조향각을 TF 에 반영하지 않는 이유**(개루프라 실제 각도가 없고, 목표각을 실제각처럼 발행하면 없는 측정을 만든다)를 함께 적었다. 변경 파일: `README.md`, `01`, `02`, `03`, `04`, `05`, `06`, `TBD.md` |
+
 > 문서를 변경할 때는 위 표에 한 줄을 추가하고, 어느 파일이 바뀌었는지 함께 적는다. 파일별 버전은 두지 않는다.
 
 ## 결정 상태 표기
@@ -94,7 +96,7 @@ date: "2026-07-27"
 - 고수준 컴퓨팅은 Jetson Orin Nano 8GB, 저수준 주행 제어는 ESP32 WROOM-32 2개(모터 제어용·센서 제어용 분리)가 담당하며 Raspberry Pi 5는 차량에 탑재하지 않는다.
 - Jetson↔ESP32 제어 링크는 각 ESP32마다 독립된 유선 USB Serial을 사용한다. ESP32 Wi-Fi/Bluetooth는 모터 제어·E-Stop·watchdog 경로에 사용하지 않는다.
 - 실제 Jetson에서 확인한 `JetPack 6.2.1+b38`과 ROS 2 Humble을 소프트웨어 기준선으로 고정한다.
-- 구동계는 후륜 좌·우 RS540 FD-12V RPM14000 모터 2개로 차동 구동하며 별도 조향 모터·앞바퀴 없이 전진·후진·조향·제자리 회전을 모두 수행한다(2026-08-01 전환). 전방은 수동 캐스터 바퀴 2개로 지지한다. 모터 드라이버(BTS7960 2개), 엔코더(MT6701 2개), 초음파(HC-SR04), 온습도(DHT-11), 배터리(모터용 유아전동차 내장 12V·Jetson용 대용량 보조배터리 분리 급전)는 모델·수량을 확정했다. 차체 IMU는 센서 ESP32의 I2C/SPI에 연결하는 구조와 수량 1개를 확정했고 모델·핀·장착 오프셋은 TBD-HW-012로 관리한다. 감속비·정지 전류·트랙폭·좌우 속도 대칭 등 세부 실측값과 전력 예산은 계속 TBD로 관리한다(부록 H).
+- **구동계는 후륜 좌·우 RS540 FD-12V RPM14000 모터 2개가 전진·후진을, 전륜 타이로드에 직결된 DS51150-12V 서보모터 1개가 조향을 담당한다**(2026-08-06 전환 — 2026-08-01 차동 구동 전환을 되돌렸다). 조향 기하가 있어 최소 회전반경 제약이 있고 **제자리 회전은 할 수 없다.** 조향은 서보 내부 폐루프이므로 외부 각도 피드백 없이 개루프로 운용한다. 모터 드라이버(BTS7960 2개), 엔코더(MT6701 2개 — 후륜만), 초음파(HC-SR04), 온습도(DHT-11), 배터리(모터용 유아전동차 내장 12V·Jetson용 대용량 보조배터리 분리 급전)는 모델·수량을 확정했고, 조향 서보는 모터 계통 12V 의 **E-Stop 하류**에서 급전한다. 차체 IMU는 센서 ESP32의 I2C/SPI에 연결하는 구조와 수량 1개를 확정했고 모델·핀·장착 오프셋은 TBD-HW-012로 관리한다. 감속비·정지 전류·**휠베이스 `L`·최대 조향각 `δ_max`·최소 회전반경 `R_min`·서보 중립/엔드포인트**(TBD-HW-008) 등 세부 실측값과 전력 예산은 계속 TBD로 관리한다(부록 H).
 - 사람 탐지는 사전학습 YOLO26n Detect를 사용한다. 파인튜닝은 교차 평가에서 일반화 성능이 하락해 미채택했으며, Pose는 사람 감지 시에만 실행하는 조건부 파이프라인으로 운영한다.
 - 짐벌은 프로젝트에서 완전히 제외한다. 카메라·LiDAR는 차체에 고정 마운트하며 정적(static) TF만 사용한다. 기존 FR-024(짐벌 NAV_LOCK/CENTER_LOCK)는 폐기한다.
 - 피해자 음성 출력은 블루투스 스피커, 입력은 BRIO 100 내장 마이크를 사용한다. VAD는 Jetson, STT는 L40S FastAPI Qwen3-ASR-1.7B, 정보 추출은 GMS `gpt-5.4-mini`, 안내는 승인된 사전 녹음 WAV로 운영한다. 동적 TTS와 Jetson 로컬 STT·LLM은 사용하지 않는다.
@@ -224,8 +226,8 @@ date: "2026-07-27"
 - [ROS 2 Humble Ubuntu 22.04 설치](https://docs.ros.org/en/humble/Installation/Ubuntu-Install-Debs.html)
 - [Ultralytics YOLO26](https://docs.ultralytics.com/models/yolo26/)
 - [Nav2 공식 문서](https://docs.nav2.org/)
-- [Nav2 알고리즘 선택 - 차동 구동(differential) 지원](https://docs.nav2.org/setup_guides/algorithm/select_algorithm.html)
-- [ROS 2 Control Humble - Wheeled Mobile Robot Kinematics](https://control.ros.org/humble/doc/ros2_controllers/doc/mobile_robot_kinematics.html)
+- [Nav2 알고리즘 선택 - 로봇 운동학별 planner·controller 지원(differential·Ackermann)](https://docs.nav2.org/setup_guides/algorithm/select_algorithm.html)
+- [ROS 2 Control Humble - Wheeled Mobile Robot Kinematics (자전거·Ackermann 모델 포함)](https://control.ros.org/humble/doc/ros2_controllers/doc/mobile_robot_kinematics.html)
 - [MediaMTX 공식 문서](https://mediamtx.org/docs/kickoff/introduction)
 - [MQTT 5.0 OASIS 표준](https://docs.oasis-open.org/mqtt/mqtt/v5.0/mqtt-v5.0.html)
 - [AWS S3 보안 모범 사례](https://docs.aws.amazon.com/AmazonS3/latest/userguide/security-best-practices.html)

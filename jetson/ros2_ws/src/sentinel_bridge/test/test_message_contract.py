@@ -250,6 +250,82 @@ def test_telemetry_with_all_fields_null_passes_schema():
     }
 
 
+def test_recorder_health_maps_status_to_health_fields():
+    """recording_manager의 status를 health 조각으로 옮긴다 (S15P11A301-309)."""
+    from sentinel_bridge.message_mapper import recorder_health  # noqa: E402
+
+    assert recorder_health(
+        {
+            "lastFinalizeOk": False,
+            "lastFailure": "RECORDING_FAILED_PTS_REGRESSION",
+        }
+    ) == {
+        "recorderOk": False,
+        "recorderLastFailure": "RECORDING_FAILED_PTS_REGRESSION",
+    }
+
+
+def test_recorder_health_is_unknown_without_recorder():
+    """recorder가 없는 구성. 「실패한 적 없음」이 아니라 「판정 근거 없음」이다."""
+    from sentinel_bridge.message_mapper import recorder_health  # noqa: E402
+
+    assert recorder_health(None) == {
+        "recorderOk": None,
+        "recorderLastFailure": None,
+    }
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "문자열이다",
+        {"lastFinalizeOk": "false", "lastFailure": 123},
+        {"lastFinalizeOk": 1, "lastFailure": ""},
+        {},
+    ],
+)
+def test_recorder_health_drops_wrong_types(body):
+    """타입이 어긋난 값은 버린다.
+
+    텔레메트리는 2Hz로 계속 나가야 한다. 상태 하나 때문에 봉투가 깨지면 임무
+    궤적에 구멍이 생긴다 (S15P11A301-213의 NaN 처리와 같은 이유다).
+    """
+    from sentinel_bridge.message_mapper import recorder_health  # noqa: E402
+
+    assert recorder_health(body) == {
+        "recorderOk": None,
+        "recorderLastFailure": None,
+    }
+
+
+def test_telemetry_with_recorder_health_passes_schema():
+    """새 필드가 붙어도 계약을 통과해야 한다.
+
+    health는 additionalProperties: false 이므로 스키마를 먼저 고치지 않으면 여기서
+    깨진다. 그 순서를 이 시험이 강제한다.
+    """
+    from sentinel_bridge.message_mapper import recorder_health  # noqa: E402
+
+    message = MessageMapper("SENTINEL-01").telemetry(
+        health={
+            "mcuConnected": True,
+            "lidarOk": True,
+            "cameraOk": True,
+            **recorder_health(
+                {
+                    "lastFinalizeOk": False,
+                    "lastFailure": "RECORDING_FAILED_PTS_REGRESSION",
+                }
+            ),
+        },
+    )
+    _validate(message)
+
+    health = message["data"]["health"]
+    assert health["recorderOk"] is False
+    assert health["recorderLastFailure"] == "RECORDING_FAILED_PTS_REGRESSION"
+
+
 def test_telemetry_with_real_values_passes_schema():
     message = MessageMapper("SENTINEL-01").telemetry(
         compute={

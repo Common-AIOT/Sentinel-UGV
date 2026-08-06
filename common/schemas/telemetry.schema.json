@@ -83,7 +83,15 @@
           "type": ["boolean", "null"]
         },
         "lidarOk": {"type": ["boolean", "null"]},
-        "cameraOk": {"type": ["boolean", "null"]}
+        "cameraOk": {"type": ["boolean", "null"]},
+        "recorderOk": {
+          "description": "마지막으로 마감한 이벤트가 영상을 남겼는가 (S15P11A301-309). null은 이번 기동에서 마감한 이벤트가 없다는 뜻이다. 필수가 아닌 이유는 recorder 없이 도는 구성이 있기 때문이며, 그때는 키 자체가 없다.",
+          "type": ["boolean", "null"]
+        },
+        "recorderLastFailure": {
+          "description": "마지막 마감 실패의 mediaState 값 그대로(예: RECORDING_FAILED_PTS_REGRESSION). recorderOk가 true로 돌아와도 지우지 않는다 — 성공 한 번에 지우면 간헐 실패가 화면에서 사라져 재발을 알아챌 수 없다(S15P11A301-304가 그렇게 19건이 쌓이는 동안 드러나지 않았다).",
+          "type": ["string", "null"]
+        }
       }
     },
     "missionState": {

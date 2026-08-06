@@ -100,6 +100,33 @@ pending/<encounterId>/
 `uploadState`는 `UPLOAD_PENDING`으로 시작합니다. S15P11A301-124가 업로드에
 성공하면 `AVAILABLE`로 바꿉니다. 이 패키지는 그 값을 읽기만 합니다.
 
+## 마감 실패는 관제까지 나갑니다 (S15P11A301-309)
+
+`mediaState`가 `report.json`에만 있던 동안, 마감 실패는 **젯슨 디스크 밖으로 나간
+적이 없었습니다.** 표시가 빠진 것이 아니라 전송이 없었습니다 — `ready_for_upload`가
+`has_media and has_checksum`이라 `event.mp4`가 없는 실패 이벤트는 업로드 경로를
+아예 타지 않습니다. 그래서 관제 화면에는 「영상 없는 발견」으로만 보였고,
+S15P11A301-304의 PTS 동률 결함은 19건이 쌓일 때까지 드러나지 않았습니다.
+
+`~/status`가 마감 결과를 함께 싣습니다. `cloud_bridge`가 이것을 텔레메트리
+`health.recorderOk`·`health.recorderLastFailure`로 옮깁니다.
+
+```json
+{"state": "IDLE", "lastFinalizeOk": false,
+ "lastFailure": "RECORDING_FAILED_PTS_REGRESSION", "at": "..."}
+```
+
+**성공은 `lastFailure`를 지우지 않습니다.** 간헐 실패는 성공 사이에 섞여 들어오므로,
+성공 한 번에 지우면 화면에서 사라집니다. 「지금 정상인가」는 `lastFinalizeOk`가
+답하고 「이번 기동에 실패가 있었나」는 `lastFailure`가 답합니다. 판정 규칙과 그
+근거는 [`recording_health.py`](sentinel_recorder/recording_health.py) 모듈 주석에
+있습니다.
+
+부팅 복구가 찾은 `CORRUPT`는 사유만 남기고 `lastFinalizeOk`는 건드리지 않습니다.
+지난 기동의 잔해이지 이번 기동의 마감 결과가 아니기 때문입니다.
+
+백엔드 적재와 화면 표시는 아직 없습니다(S15P11A301-309에 위임).
+
 ## 영상 내용을 검증하는 방법
 
 **길이와 프레임 수만 보면 안 됩니다.** 실제로 그것 때문에 심각한 결함을 놓쳤습니다.

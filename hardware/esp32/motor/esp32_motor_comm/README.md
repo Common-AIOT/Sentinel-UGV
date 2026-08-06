@@ -93,6 +93,31 @@
 | `GET /manual/stop?sid=&seq=` | 즉시 구동 0. **세션 불일치에도 수락한다** — 누구의 정지든 존중 |
 | `GET /manual/state` | 조회 전용. **부작용이 하나도 없다** |
 
+### 조종 페이지 (`control_page.h`)
+
+**S15P11A301-312**: 5버튼 D-패드를 터치 조이스틱으로 바꿨다(`drive_test` UI 기준). 위·아래가
+전·후진, 좌·우가 조향이며 **누르고 있는 동안만** deadman 이 선다. D-패드에서는 좌/우를
+전·후진 홀드 중에만 눌리게 `disabled` 로 막아야 했지만, 조이스틱은 그 규칙이 기하로
+표현된다 — 스틱을 좌우 수평으로만 밀면 전·후진 성분이 0 이라 애초에 조향 명령이 나가지
+않는다(§34-2).
+
+`ang` 은 **`|lin| >= 100` 일 때만** 싣는다. 100 은 `STEERING_MIN_DRIVE_MMPS(30) /
+MANUAL_MAX_DRIVE_MMPS(300) x 1000` 이다 — 펌웨어가 어차피 거부할 조향을 보내면 그 거부가
+`STEERING_COMMAND_INVALID`(bit 14)로 올라가 그 비트의 의미를 파괴한다. 화면의 「조향 불가」
+표시도 같은 경계를 본다.
+
+속도 슬라이더와 좌우 최대 조향각 슬라이더는 **둘 다 클라이언트 전용**이다. `lin`/`ang` 을
+스케일링할 뿐이며 보드에 별도 엔드포인트가 없다. 조향각 슬라이더 상한은
+`STEERING_MAX_MDEG`(30°)와 같은 값이어야 한다 — 어긋나면 슬라이더 끝이 실제 δ_max 와
+달라지고 그것은 화면에 보이지 않는다. `MANUAL_MAX_DRIVE_MMPS`·`STEERING_MAX_MDEG`·
+`STEERING_MIN_DRIVE_MMPS` 세 상수의 사본이 페이지 JS 상단에 있으니 펌웨어에서 값을 바꾸면
+같이 바꾼다.
+
+멈추는 경로는 그대로다 — pointerup/cancel/lostpointercapture, 긴급 정지 버튼, Space/Escape,
+`blur`·`visibilitychange`·`pagehide`, 50ms 재전송 + 단일 in-flight 가드, 유휴 시
+`/manual/state` 2Hz 폴링. 페이지를 `file:` 로 열면 보드 없이 레이아웃만 보는 오프라인
+미리보기로 뜬다.
+
 > **`/manual/state` 가 `lastManualInputMs` 를 갱신하면 관제의 500ms 신선도 창이 영구히
 > 닫히지 않아 `SET_MODE(AUTO)` 가 항상 거부되고 로봇을 되찾을 수 없다.** 폰이 이 경로를
 > 2Hz 로 폴링하므로 실수하면 즉시 그렇게 된다. HTTP 계층에서 가장 중요한 금지사항이다.

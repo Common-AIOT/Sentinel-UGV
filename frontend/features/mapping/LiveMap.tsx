@@ -7,6 +7,10 @@ import {
 } from "@/lib/foxgloveMapClient";
 import { classifyGridCell, type OccupancyGrid } from "@/lib/occupancyGrid";
 import { worldToPixel } from "@/lib/gridGeometry";
+import {
+  arrowRotationFromMapYaw,
+  mapYawDegrees,
+} from "@/lib/mapHeading";
 import type { RobotPose } from "@/lib/robotPose";
 import { OverlayLine, OverlayStack } from "@/features/telemetry/PanelOverlay";
 import { COLOR_FREE, COLOR_OCCUPIED, COLOR_UNKNOWN } from "./palette";
@@ -117,9 +121,9 @@ function renderGrid(grid: OccupancyGrid): HTMLCanvasElement | null {
 /**
  * 로봇을 화살표로 그린다. 좌표는 이미 화면 픽셀이고 각도는 map 프레임의 yaw 다.
  *
- * **화면 각도는 `-yaw` 다.** map 좌표계는 y 가 위로 증가하고 캔버스는 아래로
- * 증가한다. 부호를 안 뒤집으면 화살표가 거울처럼 돌아 — 로봇이 제자리에서 회전할
- * 때만 눈에 보이는 오류다.
+ * 센서·EKF가 내는 REP-103 yaw 부호를 그대로 전달한다. 실차에서 시계 방향
+ * `-90°` 회전이 화면에서는 반시계 방향으로 보이는 것을 확인해 `-yaw` 중복 반전을
+ * 제거했다. 이 규칙은 `mapHeading.ts`의 각도별 테스트로 고정한다.
  */
 function drawRobot(
   ctx: CanvasRenderingContext2D,
@@ -130,7 +134,7 @@ function drawRobot(
 ) {
   ctx.save();
   ctx.translate(screenX, screenY);
-  ctx.rotate(-yaw);
+  ctx.rotate(arrowRotationFromMapYaw(yaw));
   ctx.globalAlpha = fresh ? 1 : 0.35;
 
   ctx.beginPath();
@@ -192,7 +196,7 @@ export default function LiveMap({
         poseRef.current = { pose, at: Date.now() };
         setPoseText({
           coords: `${pose.x.toFixed(2)}, ${pose.y.toFixed(2)} m`,
-          bearing: `${((pose.yaw * 180) / Math.PI).toFixed(1)}°`,
+          bearing: `${mapYawDegrees(pose.yaw).toFixed(1)}°`,
         });
         draw();
       },

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { ChevronLeft, Play, Film, User, MapPin, Clock, Volume2, VolumeX } from "lucide-react";
+import { ChevronLeft, Play, Archive, User, MapPin, Clock, Volume2, VolumeX } from "lucide-react";
 import {
   api,
   type EncounterDetail,
@@ -324,11 +324,13 @@ export default function MissionHistoryPage() {
       <div className="h-9 flex-shrink-0 flex items-center justify-between px-4 border-b border-border bg-card/60">
         <div className="flex items-center gap-3">
           <Link href="/" className="flex items-center gap-1.5 font-mono text-[10px] text-muted-foreground hover:text-primary transition-colors">
-            <ChevronLeft size={12} /> GCS
+            <ChevronLeft size={12} /> SENTINEL-UGV
           </Link>
           <div className="w-px h-4 bg-border" />
           <div className="flex items-center gap-1.5">
-            <Film size={11} className="text-primary" />
+            {/* 왼쪽 내비의 「이력」과 같은 아이콘을 쓴다 (S15P11A301-303).
+                같은 화면을 두 곳에서 다른 그림으로 가리키고 있었다. */}
+            <Archive size={11} className="text-primary" />
             <span className="font-mono text-[11px] text-primary">임무 이력</span>
           </div>
         </div>
@@ -338,8 +340,10 @@ export default function MissionHistoryPage() {
       <div className="flex-1 flex overflow-hidden">
         {/* 임무 목록 */}
         <div className="w-64 flex-shrink-0 border-r border-border bg-card flex flex-col">
+          {/* 패널 제목 10 → 13px (S15P11A301-303). 목록 항목의 날짜·시각과 같은
+              크기여서 제목으로 읽히지 않았다 — 무엇의 목록인지 알기 어려웠다. */}
           <div className="p-3 border-b border-border">
-            <span className="font-mono text-[10px] text-muted-foreground uppercase tracking-wider">임무 목록</span>
+            <span className="font-mono text-[13px] font-semibold text-foreground tracking-wide">임무 목록</span>
           </div>
           <div className="flex-1 overflow-y-auto p-2 space-y-1">
             {loadError && (

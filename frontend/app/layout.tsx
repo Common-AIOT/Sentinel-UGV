@@ -4,7 +4,7 @@ import "./globals.css";
 import { Providers } from "./providers";
 
 export const metadata: Metadata = {
-  title: "Disaster Robot GCS",
+  title: "SENTINEL-UGV 관제",
   description:
     "Real-time control and monitoring of disaster exploration robots with live maps, video feeds, sensor data, and command interfaces for efficient rescue operations.",
   robots: { index: false, follow: false },

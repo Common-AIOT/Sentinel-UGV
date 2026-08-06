@@ -23,7 +23,10 @@ function Row({ label, value, unit }: { label: string; value: number | null; unit
   return (
     <div className="flex items-baseline justify-between gap-2">
       <span className="text-[11px] text-muted-foreground flex-shrink-0">{label}</span>
-      <span className="font-mono text-xs tabular-nums text-foreground">
+      {/* 값을 12px → 16px 로 키웠다 (S15P11A301-303). 관제 화면은 모니터에서
+          한두 걸음 떨어져 보는 일이 많은데 12px 은 그 거리에서 읽히지 않았다.
+          라벨은 그대로 둔다 — 커지는 것은 읽어야 하는 쪽이다. */}
+      <span className="font-mono text-base font-semibold tabular-nums text-foreground">
         {/* `== null` 은 undefined 도 함께 잡는다. 응답에 키가 없는 경우(구 백엔드)에도
             화면이 죽지 않아야 한다 — 결측 표시는 값이 없다는 뜻이지 오류가 아니다. */}
         {value == null ? "—" : value.toFixed(2)}

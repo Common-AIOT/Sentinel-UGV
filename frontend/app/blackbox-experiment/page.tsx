@@ -278,7 +278,8 @@ export default function MissionHistoryPage() {
                     {MISSION_STATUS_LABEL[m.status] ?? m.status}
                   </span>
                 </div>
-                <div className="flex items-center gap-2 text-muted-foreground/70 text-[9px]">
+                {/* 원본(app/blackbox/page.tsx)과 맞춘다 — S15P11A301-302 */}
+                <div className="flex items-center gap-2 text-muted-foreground/70 text-[9px] tabular-nums">
                   <span><Clock size={8} className="inline mr-0.5" />{fmtDuration(m.durationSec)}</span>
                   <span>{fmtDistance(m.distanceM)}</span>
                   {m.detectionCount !== null && m.detectionCount > 0 && (

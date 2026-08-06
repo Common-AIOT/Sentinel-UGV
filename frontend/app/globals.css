@@ -1,9 +1,65 @@
-@import url("https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css");
-@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap");
 @import "tailwindcss";
 @import "tw-animate-css";
 
 @custom-variant dark (&:is(.dark *));
+
+/*
+ * 글꼴 (S15P11A301-302)
+ *
+ * CDN @import 두 줄(Pretendard, JetBrains Mono)을 걷어내고 자체 호스팅으로
+ * 옮겼다. CSS @import 는 렌더를 막고, 이 GCS 는 외부망이 없는 로컬 시연에서
+ * 도는 화면이다 — 글꼴이 안 오면 그대로 드러난다.
+ *
+ * **D2Coding 에는 한글이 없다. 일부러 뺐다.** 그래서 font-mono 스팬 안의
+ * 한글은 자동으로 Asta Sans 로 폴백한다. "데이터 스트립만 고정폭"이라는
+ * 규칙이 개발자 규율이 아니라 폰트 스택 자체로 강제된다 — font-mono 사용처가
+ * 78곳이라 손으로 지키는 방식은 유지되지 않는다.
+ *
+ * 그 전에는 --font-mono 가 정의조차 안 되어 있어서 JetBrains Mono 를 5굵기
+ * 받아놓고 한 번도 쓰지 않았고, font-mono 는 Tailwind 기본 스택으로 떨어졌다.
+ * 그 스택에 한글이 없어서 한글 16곳이 OS 폰트로 갈렸다(Windows/macOS 불일치).
+ *
+ * 파일은 scripts/build-fonts.sh 가 만든다. 범위를 바꾸려면 거기서.
+ */
+@font-face {
+  font-family: "Asta Sans";
+  src: url("/fonts/AstaSans-latin.woff2") format("woff2");
+  font-weight: 300 800; /* 가변. 정적이면 굵기당 384KB × 4굵기 = 1.5MB */
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0000-00FF, U+0100-024F, U+0300-036F, U+2000-206F,
+    U+2070-209F, U+20A0-20BF, U+2100-214F, U+2190-21FF, U+2200-22FF,
+    U+2460-24FF, U+2500-257F, U+25A0-25FF, U+2600-26FF, U+2700-27BF;
+}
+@font-face {
+  font-family: "Asta Sans";
+  src: url("/fonts/AstaSans-korean.woff2") format("woff2");
+  font-weight: 300 800;
+  font-style: normal;
+  font-display: swap;
+  /* 한자와 조합형 자모(U+1100-11FF)는 Asta 에 없어서 선언하지 않는다. */
+  unicode-range: U+3000-303F, U+3130-318F, U+AC00-D7A3, U+FF00-FFEF;
+}
+@font-face {
+  font-family: "D2Coding";
+  src: url("/fonts/D2Coding-mono.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+  /* 한글 범위를 여기에 추가하지 말 것. 위 주석 참고.
+     기호도 대부분 뺐다 — 고정폭이 값을 갖는 건 자릿수가 맞아야 하는 ASCII
+     뿐이고, 나머지는 스택 다음 자리의 Asta 가 받는다. U+26A0(경고)과
+     U+2715(닫기)만 예외로 남겼다. Asta 에 그 둘이 없어서다. */
+  unicode-range: U+0000-00FF, U+2000-206F, U+2212, U+26A0, U+2715;
+}
+@font-face {
+  font-family: "D2Coding";
+  src: url("/fonts/D2Coding-mono-bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0000-00FF, U+2000-206F, U+2212, U+26A0, U+2715;
+}
 
 /*
  * Sentinel UGV GCS 디자인 토큰
@@ -143,6 +199,15 @@
   --color-sidebar-ring: var(--sidebar-ring);
 }
 
+/* 글꼴 토큰은 리터럴이라 inline 이 아닌 @theme 에 둔다 — :root 에 변수로
+   떨어져야 아래 body 의 var(--font-sans) 가 산다. */
+@theme {
+  --font-sans: "Asta Sans", system-ui, sans-serif;
+  /* Asta 를 D2Coding 뒤에 둔 것이 핵심이다. D2Coding 에 한글이 없으므로
+     mono 스팬의 한글은 여기서 Asta 로 넘어간다. */
+  --font-mono: "D2Coding", "Asta Sans", ui-monospace, monospace;
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
@@ -155,7 +220,7 @@
 
   body {
     @apply bg-background text-foreground;
-    font-family: "Pretendard", system-ui, sans-serif;
+    font-family: var(--font-sans);
   }
 
   html {

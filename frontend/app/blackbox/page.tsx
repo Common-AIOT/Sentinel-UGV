@@ -364,7 +364,10 @@ export default function MissionHistoryPage() {
                     {MISSION_STATUS_LABEL[m.status] ?? m.status}
                   </span>
                 </div>
-                <div className="flex items-center gap-2 text-muted-foreground/70 text-[9px]">
+                {/* 세로로 쌓이는 목록이라 자릿수가 흔들리면 눈이 걸린다.
+                    이 줄은 sans 라 tnum 을 켜야 정렬된다 — 옆의 요약 스트립은
+                    이미 font-mono 라 따로 켜지 않는다 (S15P11A301-302). */}
+                <div className="flex items-center gap-2 text-muted-foreground/70 text-[9px] tabular-nums">
                   <span><Clock size={8} className="inline mr-0.5" />{fmtDuration(m.durationSec)}</span>
                   <span>{fmtDistance(m.distanceM)}</span>
                   {m.detectionCount !== null && m.detectionCount > 0 && (

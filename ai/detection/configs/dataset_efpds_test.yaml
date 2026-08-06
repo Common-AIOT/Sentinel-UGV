@@ -1,9 +1,0 @@
-# E-FPDS test split — 성능 보고 전용
-# 배포 조건: "strictly for reporting of results alone". 학습에 쓰지 않는다.
-# 인용: Fallen People Detection Capabilities Using Assistive Robot.
-#       S. Maldonado-Bascón et al. Electronics 2019.
-path: ../data/efpds_test
-train: images/test
-val: images/test
-names:
-  0: person

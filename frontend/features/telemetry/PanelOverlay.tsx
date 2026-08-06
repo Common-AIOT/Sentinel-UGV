@@ -51,10 +51,12 @@ export function OverlayLine({
     <div className="flex items-center gap-1.5">
       <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${DOT[tone]}`} />
       <span
-        className={`font-mono text-[9px] px-1.5 py-0.5 rounded transition-colors ${
+        /* 배경 대비는 OverlayStack 의 그라디언트가 만든다. 여기서는 옅게만 깔아
+           두 줄이 겹쳤을 때 경계가 보이게 한다 (S15P11A301-303). */
+        className={`font-mono text-[10px] px-1.5 py-0.5 rounded transition-colors ${
           flash
             ? "bg-accent/25 text-accent"
-            : "bg-black/50 text-muted-foreground"
+            : "bg-black/30 text-foreground/80"
         }`}
         title={title}
       >
@@ -65,14 +67,28 @@ export function OverlayLine({
   );
 }
 
-/** 오버레이 줄들을 담는 좌측 상단 컨테이너. */
+/**
+ * 오버레이 줄들을 담는 좌측 상단 컨테이너.
+ *
+ * 상단에 어두운 그라디언트를 깐다 (S15P11A301-303). 종전에는 줄마다 반투명 검정
+ * 배경(`bg-black/50`)만 있었는데, 밝은 천장·형광등이 찍힌 프레임에서는 그 정도로
+ * 글씨가 뜨지 않았다 — **영상이 밝을수록 읽기 어려워지는** 표시였다. 위에서 아래로
+ * 사라지는 그라디언트는 영상 내용을 거의 가리지 않으면서 대비를 만든다.
+ *
+ * 그라디언트는 폭 전체를 덮되 `pointer-events-none` 이라 아래의 영상 조작(우측 상단
+ * 버튼)을 막지 않는다.
+ */
 export function OverlayStack({ children }: { children: React.ReactNode }) {
   return (
-    <div className="absolute top-1.5 left-1.5 flex flex-col gap-1 z-10 pointer-events-none">
-      {/* title 툴팁을 보려면 포인터가 닿아야 하므로 자식만 이벤트를 받는다. */}
-      <div className="flex flex-col gap-1 pointer-events-auto items-start">
-        {children}
+    <>
+      <div className="absolute top-0 left-0 right-0 h-16 z-10 pointer-events-none
+                      bg-gradient-to-b from-black/70 via-black/25 to-transparent" />
+      <div className="absolute top-2 left-2 flex flex-col gap-1 z-10 pointer-events-none">
+        {/* title 툴팁을 보려면 포인터가 닿아야 하므로 자식만 이벤트를 받는다. */}
+        <div className="flex flex-col gap-1 pointer-events-auto items-start">
+          {children}
+        </div>
       </div>
-    </div>
+    </>
   );
 }

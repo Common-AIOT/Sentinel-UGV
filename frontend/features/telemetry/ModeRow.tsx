@@ -9,11 +9,13 @@ import { useRobot } from "@/features/robot/RobotContext";
  *
  * 이전에는 화면 하단 조종 바가 세로 140px을 고정으로 차지했고, `object-cover`인
  * 영상이 남은 공간에 맞춰 잘렸다 — 720p가 깨져 보인 원인이다. 조종 수단이
- * 모바일 앱으로 정해져 관제 웹에 조이스틱 자리가 필요 없으므로, 상태 패널
- * 위 한 줄로 줄인다. **영상 높이를 건드리지 않는다.**
+ * 모바일 앱으로 정해져 관제 웹에 조이스틱 자리가 필요 없으므로 한 줄로 줄였다.
  *
- * 오버레이(영상 위)에 두지 않은 것은 의도다. 그쪽은 관측값 전용이고 여기는
- * 조작이다. 섞으면 "보는 것"과 "누르는 것"의 구분이 사라진다.
+ * **하단 명령 바로 옮겼다 (S15P11A301-303).** 모드 전환은 조작이고, 조작은 이제
+ * 하단 바가 모은다 — 사이드바는 관측값만 남는다. 「지금 자율인가 수동인가」와
+ * 「무엇을 누를 수 있나」가 한 줄에 있어야 판단이 된다.
+ *
+ * 오버레이(영상 위)에 두지 않은 것은 의도다. 그쪽은 관측값 전용이다.
  *
  * ## 이제 명령 하나만 보낸다 (S15P11A301-298)
  *
@@ -91,7 +93,7 @@ export default function ModeRow() {
   };
 
   return (
-    <div className="px-3.5 py-2.5 border-b border-border flex items-center justify-between gap-2">
+    <div className="flex items-center gap-2 flex-shrink-0">
       <span className="text-[11px] font-medium text-muted-foreground flex-shrink-0">
         운행 모드
       </span>

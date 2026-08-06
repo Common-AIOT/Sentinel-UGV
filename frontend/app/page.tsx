@@ -9,23 +9,45 @@ import VideoPanel from "@/features/streaming/VideoPanel";
 import StatusPanel from "@/features/telemetry/StatusPanel";
 import SensorDashboard from "@/features/telemetry/SensorDashboard";
 import MotionPanel from "@/features/telemetry/MotionPanel";
-import ModeRow from "@/features/telemetry/ModeRow";
+import CommandBar from "@/features/telemetry/CommandBar";
 import { useRobot } from "@/features/robot/RobotContext";
 
-function NavLink({ to, children }: { to: string; children: React.ReactNode }) {
+/**
+ * 왼쪽 세로 내비게이션 (S15P11A301-303).
+ *
+ * 임무 이력 링크를 상단 바에서 왼쪽 세로 바로 옮겼다. 상단 바에 있을 때는 로고
+ * 옆에 링크 하나가 붙어 있어 「같은 화면의 일부」로 읽혔는데, 실제로는 **다른
+ * 페이지로 나가는 유일한 출구**다. 세로 바에 두면 그 성격이 드러난다.
+ *
+ * 폭은 좁게 유지한다(56px). 페이지가 둘뿐이라 메뉴를 세로로 늘어놓을 것이 없고,
+ * 넓히면 관제 화면이 그만큼 줄어든다.
+ */
+function SideNav() {
   const pathname = usePathname();
-  const active = pathname === to;
+  const items = [
+    { to: "/", label: "관제", icon: Radio },
+    { to: "/blackbox", label: "이력", icon: Archive },
+  ];
   return (
-    <Link
-      href={to}
-      className={`flex items-center gap-1.5 text-xs font-medium border rounded px-2.5 py-1 transition-colors ${
-        active
-          ? "border-primary/40 bg-primary/10 text-primary"
-          : "border-border text-muted-foreground hover:text-primary hover:border-primary/30"
-      }`}
-    >
-      {children}
-    </Link>
+    <nav className="w-14 flex-shrink-0 flex flex-col items-center gap-1 py-2 border-r border-border bg-card">
+      {items.map(({ to, label, icon: Icon }) => {
+        const active = pathname === to;
+        return (
+          <Link
+            key={to}
+            href={to}
+            className={`w-full flex flex-col items-center gap-1 py-2.5 border-l-2 transition-colors ${
+              active
+                ? "border-primary text-primary bg-primary/10"
+                : "border-transparent text-muted-foreground hover:text-foreground hover:bg-secondary/40"
+            }`}
+          >
+            <Icon size={16} />
+            <span className="text-[10px] font-medium">{label}</span>
+          </Link>
+        );
+      })}
+    </nav>
   );
 }
 
@@ -48,20 +70,27 @@ function TopBar() {
       <div className="flex items-center gap-3">
         <div className="flex items-center gap-2">
           <Radio size={13} className="text-primary" />
-          <span className="font-mono text-sm text-primary font-semibold tracking-wider">GCS</span>
+          <span className="font-mono text-sm text-primary font-semibold tracking-wider">SENTINEL-UGV</span>
         </div>
-        <div className="w-px h-4 bg-border" />
-        {/* 탐지 수는 영상 오버레이로 옮겼다 (S15P11A301-200). 링크와 같은 모양의
-            배지가 나란히 있어서 서로 다른 내용인 것이 읽히지 않았다. */}
-        <NavLink to="/blackbox">
-          <Archive size={11} />
-          임무 이력
-        </NavLink>
+        {/* 임무 이력 링크는 왼쪽 세로 바로 옮겼다 (S15P11A301-303).
+            탐지 수는 영상 오버레이로 옮겼다가 뺐다 (S15P11A301-200·300). */}
       </div>
 
-      {/* 오른쪽: 연결 상태 + 시계 */}
+      {/* 오른쪽: 관제 서버 연결 + 시계.
+          연결 표시는 여기 하나만 둔다 (S15P11A301-303). 종전에는 사이드바에도
+          같은 값이 있었다. 「서버」가 무엇인지 라벨과 툴팁으로 밝힌다 — 관제
+          백엔드와의 실시간 푸시 통로이고 로봇 연결과는 별개다. 끊겨도 화면이
+          죽지는 않는다(폴링이 백업으로 돈다). */}
       <div className="flex items-center gap-3">
-        <div className={`w-2 h-2 rounded-full ${wsConnected ? "bg-primary animate-pulse" : "bg-destructive"}`} />
+        <div
+          className="flex items-center gap-1.5"
+          title="관제 서버와의 실시간 연결. 끊기면 폴링으로 갱신되어 반영이 몇 초 늦어집니다. 로봇 연결과는 별개입니다."
+        >
+          <div className={`w-2 h-2 rounded-full ${wsConnected ? "bg-primary animate-pulse" : "bg-destructive"}`} />
+          <span className="font-mono text-[10px] text-muted-foreground">
+            관제 서버 {wsConnected ? "연결됨" : "오프라인"}
+          </span>
+        </div>
         <span className="font-mono text-xs text-muted-foreground tabular-nums">
           {clock ?? "--:--:--"} UTC+9
         </span>
@@ -143,13 +172,21 @@ export default function GCSPage() {
     <div className="h-screen w-full flex flex-col overflow-hidden bg-background text-foreground">
       <TopBar />
 
-      {/* 두 화면이 같은 기하다 (S15P11A301-259). 메인이 영상이든 지도든 골격은
-          하나이고 내용만 바뀐다 — 전에는 폭·비율·하단 여백·슬롯 높이 네 곳이
-          갈라져서, 확대 대상을 바꾸면 레이아웃 자체가 움직이는 것으로 보였다. */}
-      <div className="flex-1 flex flex-col overflow-hidden">
-        <div className="flex min-h-0 flex-1 overflow-hidden">
+      {/* 사이드바가 화면 아래까지 관통한다 (S15P11A301-303).
+          종전에는 본문(영상+사이드바) 아래에 하단 바가 가로로 깔려서, 사이드바가
+          중간에서 끊기고 하단 바가 그 밑을 지나갔다. 사이드바를 끝까지 내리면
+          **관측(오른쪽 세로)과 조작(아래 가로)이 시각적으로 갈린다** — 지금
+          하단 바에 있는 것은 임무 상태와 명령뿐이라 그 구분이 내용과도 맞는다.
+
+          두 화면이 같은 기하라는 원칙(S15P11A301-259)은 그대로다. 메인이 영상이든
+          지도든 골격은 하나이고 내용만 바뀐다. */}
+      <div className="flex-1 flex min-h-0 overflow-hidden">
+        <SideNav />
+
+        {/* 가운데 — 메인 화면과 그 아래 명령 바. 양옆 바를 뺀 나머지를 쓴다. */}
+        <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
           {/* 메인은 16:9 를 유지하며 남는 공간에 가운데 맞춤한다. */}
-          <div className="flex-1 min-w-0 flex items-center justify-center overflow-hidden">
+          <div className="flex-1 min-h-0 flex items-center justify-center overflow-hidden">
             <div className={`relative overflow-hidden flex flex-col ${MAIN_CLASS}`}>
               {videoMain ? (
                 <VideoPanel isMain onSwap={() => setMainView("map")} />
@@ -163,25 +200,29 @@ export default function GCSPage() {
             </div>
           </div>
 
-          <div
-            className="flex flex-col border-l border-border bg-card overflow-y-auto flex-shrink-0"
-            style={{ width: SIDEBAR_WIDTH }}
-          >
-            {videoMain ? (
-              <MiniMapSlot />
-            ) : (
-              <VideoPanel onSwap={() => setMainView("video")} />
-            )}
-            <ModeRow />
-            <StatusPanel />
-            <SensorDashboard />
-            {/* 센서(ESP32) 아래 — 엔코더도 같은 보드에서 오므로 결측 원인이 같다
-                (S15P11A301-300). */}
-            <MotionPanel />
-          </div>
+          {/* 하단 명령 바 (S15P11A301-303). 종전에는 빈 띠였다 — 16:9 메인 영역이
+              세로를 다 먹지 않게 남긴 자리이자, 조종 바를 뺀 뒤로 비어 있던 곳이다.
+              임무 상태·명령을 사이드바에서 여기로 옮겨 그 자리를 쓴다.
+              사이드바 아래로는 넘어가지 않는다 — 조작 영역은 메인 화면의 몫이다. */}
+          <CommandBar />
         </div>
 
-        <div aria-hidden="true" className="h-10 flex-shrink-0 border-t border-border bg-background" />
+        <div
+          className="flex flex-col border-l border-border bg-card overflow-y-auto flex-shrink-0"
+          style={{ width: SIDEBAR_WIDTH }}
+        >
+          {videoMain ? (
+            <MiniMapSlot />
+          ) : (
+            <VideoPanel onSwap={() => setMainView("video")} />
+          )}
+          {/* 운행 모드는 하단 명령 바로 옮겼다 (S15P11A301-303) — 조작은 그쪽이 모은다. */}
+          <StatusPanel />
+          <SensorDashboard />
+          {/* 센서(ESP32) 아래 — 엔코더도 같은 보드에서 오므로 결측 원인이 같다
+              (S15P11A301-300). */}
+          <MotionPanel />
+        </div>
       </div>
 
       <CommandAlertToast />

@@ -363,3 +363,18 @@ ros2 topic echo /odometry/filtered --once
 장착 후 23.2 「켜기 전 확인」 3단계를 먼저 밟는다.
 
 `odom → base_footprint` 발행자는 항상 정확히 하나다 — 배타표는 23.2.
+
+EKF와 SLAM을 함께 켜면 `fused_pose_publisher`가 관제용 `/pose/fused`를 20 Hz로
+발행한다. 이 값은 최신 `map → odom`(SLAM 장기 보정)과 최신
+`odom → base_footprint`(엔코더 `vx` + IMU `vyaw`)를 합친 `map` 기준 자세다.
+관제 웹은 이 토픽을 우선 사용하고, 1초 동안 들어오지 않으면 기존 SLAM `/pose`로
+자동 복귀한다. `/odometry/filtered`의 `odom` 기준 yaw를 `/pose`의 `map` 기준
+위치와 직접 섞으면 안 된다.
+
+```bash
+ros2 topic hz /pose/fused
+ros2 topic echo /pose/fused --once
+```
+
+`enable_ekf` 기본값은 장착 방향, 정지 표류율, 90도 및 360도 회전 검증을 마칠 때까지
+`false`를 유지한다.

@@ -159,7 +159,7 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument(
             'viz_topic_whitelist',
             default_value=(
-                "['/map','/pose','/scan','/tf','/tf_static','/robot_description']"
+                "['/map','/pose','/pose/fused','/scan','/tf','/tf_static','/robot_description']"
             ),
             description='광고할 토픽 정규식 목록.'),
         # 인증서가 없으면 평문으로 떨어지지 않고 알린다. 조용히 ws로 뜨면 관제

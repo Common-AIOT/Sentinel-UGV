@@ -46,6 +46,14 @@
         "5db": {"cases": 96, "cerMicro": 0.3669, "werMicro": 0.54, "criticalTermRecall": 0.6},
         "0db": {"cases": 96, "cerMicro": 0.4503, "werMicro": 0.6267, "criticalTermRecall": 0.5444}
       },
+      "cerByNoiseAndSnr": {
+        "siren": {"10db": 0.1855, "5db": 0.1855, "0db": 0.1855},
+        "fireburn": {"10db": 0.1774, "5db": 0.2016, "0db": 0.2177},
+        "motor": {"10db": 0.1935, "5db": 0.2258, "0db": 0.2258},
+        "realsounds": {"10db": 0.2097, "5db": 0.2016, "0db": 0.2661},
+        "moto": {"10db": 0.3306, "5db": 0.4435, "0db": 0.75},
+        "realmotor": {"10db": 0.7097, "5db": 0.9435, "0db": 1.0565}
+      },
       "worstConditions": [
         {"condition": "realmotor@0db", "cerMicro": 1.0565, "criticalTermRecall": 0.5},
         {"condition": "realmotor@5db", "cerMicro": 0.9435, "criticalTermRecall": 0.5667},

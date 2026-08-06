@@ -182,3 +182,35 @@ def test_이유에_사람이_읽을_설명이_붙는다():
 
 def test_통과할_때는_이유가_비어_있다():
     assert evaluate(healthy()).reasons == ()
+
+
+# ----------------------------------------------------------------------
+# MANUAL 은 차단 집합에 없다 (S15P11A301-298)
+# ----------------------------------------------------------------------
+
+
+def test_manual은_차단_상태_집합에_없다():
+    """이 집합의 뜻은 "사람이 풀어야 한다" 이고 MANUAL 은 다르다.
+
+    넣으면 mux 가 남긴 `/cmd_vel_manual` 경로를 조용히 영구 봉쇄하고, 정지 사유가
+    한 덩어리로 뭉개져 어느 층이 막았는지 알 수 없게 된다.
+    """
+    from sentinel_safety.gate import BLOCKING_MISSION_STATES
+
+    assert 'MANUAL' not in BLOCKING_MISSION_STATES
+
+
+def test_manual에서는_movement_not_allowed만_뜬다():
+    """MANUAL 에서도 0 이 나가는 것은 같지만 사유가 하나다.
+
+    PAUSED 는 둘(MISSION_STATE_BLOCKED + MOVEMENT_NOT_ALLOWED)이라 운영자가
+    로그에서 두 경우를 구별할 수 있다.
+    """
+    manual = evaluate(healthy(mission_state='MANUAL', movement_allowed=False))
+    paused = evaluate(healthy(mission_state='PAUSED', movement_allowed=False))
+
+    assert manual.linear_mps == 0.0
+    assert manual.angular_radps == 0.0
+    assert len(manual.reasons) == 1
+    assert manual.reasons[0].startswith('MOVEMENT_NOT_ALLOWED')
+    assert len(paused.reasons) > len(manual.reasons)

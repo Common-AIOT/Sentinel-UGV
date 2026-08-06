@@ -26,6 +26,12 @@ public record MessageEnvelope(
 ) {
     public static final String TYPE_TELEMETRY = "ROBOT_TELEMETRY";
     public static final String TYPE_PRESENCE = "ROBOT_PRESENCE";
+    /**
+     * 봉투 enum 중 유일하게 상수가 없던 타입이다 (S15P11A301-298). 상수가 없으니
+     * {@code MqttGateway} 의 switch 에도 없었고, 그래서 서버가 이 messageType 을
+     * 통째로 버리고 있었다.
+     */
+    public static final String TYPE_STATE = "ROBOT_STATE";
     public static final String TYPE_ENCOUNTER = "ENCOUNTER_CONFIRMED";
     public static final String TYPE_INTERACTION_REPORT = "INTERACTION_REPORT";
     public static final String TYPE_MISSION_COMMAND = "MISSION_COMMAND";

@@ -44,10 +44,17 @@ DATA_SCHEMA_BY_TYPE = {
     "COMMAND_ACK": "command-ack.schema.json",
 }
 
-# 아직 봉투만 있고 본문 스키마를 만들지 않은 것. 후속 티켓에서 채운다.
-# 여기 있는 동안은 예제가 없어도 통과시킨다.
+# 본문 스키마가 없는 messageType. 여기 있는 동안은 예제가 없어도 통과시킨다.
+#
+# 항목을 지우면 안 된다 - 위의 "봉투 enum == 대응 표" 동등성 검사가 깨진다.
+# 봉투에서 messageType 자체를 없애는 것은 별개 판단이고, 그때 이 항목도 함께 지운다.
 PENDING_TYPES = {
-    "MANUAL_DRIVE_COMMAND": "31-13 2단계 (ESP32 연동 이후)",
+    # 31-13이 상정한 관제→서버→젯슨→ESP32 수동 조종 경로는 S15P11A301-298에서
+    # 폐기됐다. 확정 토폴로지는 폰 핫스팟 → 모터 ESP32 WiFi 직결이고 젯슨은 폰에
+    # 도달할 수 없으므로 이 messageType은 **구현자가 영구히 없다**. 조종 패킷의
+    # 실제 계약은 모터 ESP32의 HTTP 엔드포인트(docs/05 31-13, /manual/drive의
+    # lin/ang/dm/ttl 밀리 단위 쿼리 파라미터)다.
+    "MANUAL_DRIVE_COMMAND": "구현자 없음 - 폰이 모터 ESP32에 직결한다(S15P11A301-298)",
 }
 
 

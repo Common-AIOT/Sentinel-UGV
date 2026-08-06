@@ -51,6 +51,27 @@ MODE_SAFE_IDLE = 0
 MODE_MANUAL = 1
 MODE_AUTO = 2
 
+
+def mode_byte(control_mode: str | None, *, default: int = MODE_AUTO) -> int:
+    """`state.schema.json` 의 `controlMode` → `DRIVE_COMMAND.mode` 바이트.
+
+    수동 중에 젯슨이 `mode=2`(AUTO)를 20Hz 로 계속 주장하면 래치를 쥔 보드와 초당
+    50회 다툰다. `mode=1` 은 래치와 **합의**하는 값이라 보드가 아무것도 되돌릴
+    필요가 없고, 그 덕에 이 변경을 펌웨어보다 먼저 착지시켜도 안전하다.
+
+    `default` 가 `MODE_SAFE_IDLE` 이 아닌 이유: `controlMode` 가 아직 안 온
+    기동 직후에도 현행 벤치 동작(`mode=2`)을 유지한다. 안전은 이 바이트가 아니라
+    `safety_gate` 가 담당한다 — 임무 상태를 모르면 `MISSION_STALE` 로 속도를 0 으로
+    만든다. 여기서 `SAFE_IDLE` 을 내면 보호가 하나 더 생기는 것이 아니라 기동 직후
+    조향이 중립으로 튀는 부작용만 생긴다.
+    """
+    if control_mode == 'MANUAL':
+        return MODE_MANUAL
+    if control_mode == 'AUTO':
+        return MODE_AUTO
+    return default
+
+
 # 이 이하의 |ω|는 직진 명령으로 본다. v≈0 회두 거부 판정에도 같은 값을 쓴다.
 ANGULAR_EPSILON_RADPS = 1e-3
 

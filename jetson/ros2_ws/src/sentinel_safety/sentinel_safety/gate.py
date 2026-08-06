@@ -53,6 +53,14 @@ DEFAULT_SCAN_TTL_S = 0.5
 
 # 이 상태에서는 어떤 속도도 내보내지 않는다 (26.2 movement_allowed).
 # SAFE_IDLE 은 "명령을 기다리는 중" 이고 PAUSED·ESTOP·ERROR 는 사람이 풀어야 한다.
+#
+# **MANUAL 은 일부러 넣지 않는다** (S15P11A301-298). 이 집합의 뜻은 "사람이 풀어야
+# 한다" 인데 MANUAL 은 다르다 — 젯슨에 권한이 없을 뿐이고, 그 사실은 이미
+# `movement_allowed=false`(`MOVEMENT[MANUAL]`)로 표현돼 같은 0 을 만든다. 넣으면
+# 두 가지를 잃는다. (1) `mux.py` 가 남긴 `/cmd_vel_manual` 경로를 조용히 영구
+# 봉쇄한다 — 언젠가 그 토픽에 발행자가 생겨도 이 층이 무조건 막는다. (2) 정지
+# 사유가 뭉개진다. 두 집합을 구분해 두면 로그에서 `MOVEMENT_NOT_ALLOWED` 만 뜨는
+# MANUAL 과 둘 다 뜨는 PAUSED 가 갈려 운영자가 *어느 층이* 막았는지 알 수 있다.
 BLOCKING_MISSION_STATES = frozenset({
     'SAFE_IDLE',
     'PAUSED',

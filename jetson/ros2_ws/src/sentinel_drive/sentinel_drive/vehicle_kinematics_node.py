@@ -35,6 +35,12 @@ from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
 from geometry_msgs.msg import Twist
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
+from rclpy.qos import (
+    DurabilityPolicy,
+    HistoryPolicy,
+    QoSProfile,
+    ReliabilityPolicy,
+)
 from std_msgs.msg import String
 
 from .kinematics import (
@@ -43,6 +49,7 @@ from .kinematics import (
     VehicleLimits,
     drive_command,
     min_turning_radius_m,
+    mode_byte,
     solve,
     stop_command,
 )
@@ -60,8 +67,13 @@ class VehicleKinematicsNode(Node):
         # 반드시 같아야 한다 — 여기가 더 크면 펌웨어가 조용히 클램프하고
         # STEERING_COMMAND_INVALID 만 올라온다(§34-9 bit 14).
         self.declare_parameter('max_steering_deg', 30.0)
-        # 후륜 상한 잠정값. 보수적으로 수동 상한(24.2, 0.30m/s)에 맞춘다.
+        # 후륜 상한 잠정값. 보수적으로 수동 상한(24.2, 0.30m/s)과 같은 값을 쓴다.
         # RS540 실측(TBD-CAL-001) 전까지 이 위로 못 나가게 막는 물리 한계 역할.
+        #
+        # **이 상한은 자율 체인만 제한한다** (S15P11A301-298). 모바일 수동 조종은
+        # 폰 → 모터 ESP32 직결이라 이 노드를 지나지 않으므로, 같은 0.30m/s 를
+        # 지키는 것은 펌웨어의 MANUAL_MAX_DRIVE_MMPS 다. 두 값이 우연히 같을 뿐
+        # 한쪽을 바꾼다고 다른 쪽이 따라오지 않는다.
         self.declare_parameter('max_drive_mmps', 300)
         # v_min: 이 속도 미만에서는 회두 명령을 거부한다(§34-2). steering.cpp 의
         # STEERING_MIN_DRIVE_MMPS(30)와 같은 값이다.
@@ -73,15 +85,41 @@ class VehicleKinematicsNode(Node):
         self.declare_parameter('cmd_vel_timeout_s', 0.3)
         self.declare_parameter('watchdog_period_s', 0.1)
         self.declare_parameter('diagnostic_period_s', 1.0)
-        # 명세 03-204: SAFE_IDLE=0, MANUAL=1, AUTO=2. 이 노드는 자율 사슬이다.
+        # 명세 03-204: SAFE_IDLE=0, MANUAL=1, AUTO=2. `controlMode` 를 아직 못
+        # 받았을 때 쓸 기본값이며, 받은 뒤에는 `mode_byte()` 가 결정한다.
         self.declare_parameter('mode', MODE_AUTO)
         self.declare_parameter('drive_command_topic', '/esp32_motor_bridge/drive_command')
+        self.declare_parameter('mission_status_topic', '/mission/status')
 
         self._pub = self.create_publisher(
             String, self.get_parameter('drive_command_topic').value, 10
         )
         self._diagnostics_pub = self.create_publisher(DiagnosticArray, '/diagnostics', 10)
         self.create_subscription(Twist, '/cmd_vel', self._on_cmd_vel, 10)
+
+        # `controlMode` 를 따라가기 위한 구독 (S15P11A301-298).
+        #
+        # 수동 래치를 쥔 보드에 대고 `mode=2`(AUTO) 를 20Hz 로 주장하면 초당 50회
+        # 다툰다. `mode=1` 은 래치와 **합의**하는 값이라 보드가 아무것도 되돌릴
+        # 필요가 없다. 스트림 자체는 멈추지 않는다 — 그것이 보드의
+        # `lastValidDriveCommandMs` 를 갱신하는 유일한 것이고, 멈추면 300ms
+        # 워치독이 수동 주행 중에 트립한다.
+        #
+        # TRANSIENT_LOCAL: `/mission/status` 는 상태가 바뀔 때만 발행되므로 늦게 뜬
+        # 이 노드가 다음 전이까지 모드를 모르면 안 된다(`command_mux_node` 와 같은
+        # 근거).
+        self._control_mode: str | None = None
+        self.create_subscription(
+            String,
+            self.get_parameter('mission_status_topic').value,
+            self._on_mission_status,
+            QoSProfile(
+                reliability=ReliabilityPolicy.RELIABLE,
+                durability=DurabilityPolicy.TRANSIENT_LOCAL,
+                history=HistoryPolicy.KEEP_LAST,
+                depth=1,
+            ),
+        )
 
         self._last_cmd_time: float | None = None
         self._stopped = True  # 시작 상태는 정지. 첫 cmd_vel 전에 아무것도 안 보낸다
@@ -111,6 +149,31 @@ class VehicleKinematicsNode(Node):
             max_steering_rad=math.radians(float(self.get_parameter('max_steering_deg').value)),
             max_drive_mps=self.get_parameter('max_drive_mmps').value / 1000.0,
             min_linear_mps=self.get_parameter('min_linear_mmps').value / 1000.0,
+        )
+
+    def _on_mission_status(self, message: String) -> None:
+        """`controlMode` 하나만 읽는다. 판단하지 않고 따라간다."""
+        try:
+            payload = json.loads(message.data)
+        except json.JSONDecodeError as error:
+            self.get_logger().warn(f'mission_status JSON 해석 실패: {error}')
+            return
+        if not isinstance(payload, dict):
+            return
+        raw = payload.get('controlMode')
+        mode = raw if isinstance(raw, str) else None
+        if mode == self._control_mode:
+            return
+        previous = self._control_mode
+        self._control_mode = mode
+        self.get_logger().info(
+            f'controlMode {previous} → {mode}. '
+            f'DRIVE_COMMAND.mode 를 {self._mode_byte()} 로 보낸다'
+        )
+
+    def _mode_byte(self) -> int:
+        return mode_byte(
+            self._control_mode, default=int(self.get_parameter('mode').value)
         )
 
     def _on_cmd_vel(self, message: Twist) -> None:
@@ -146,7 +209,7 @@ class VehicleKinematicsNode(Node):
             drive_command(
                 solution.speed_mps,
                 solution.steering_rad,
-                mode=self.get_parameter('mode').value,
+                mode=self._mode_byte(),
                 max_steering_rate_mdps=self.get_parameter('max_steering_rate_mdps').value,
             )
         )
@@ -169,7 +232,7 @@ class VehicleKinematicsNode(Node):
     def _stop_payload(self) -> dict:
         return stop_command(
             steering_rad=self._steering_rad,
-            mode=self.get_parameter('mode').value,
+            mode=self._mode_byte(),
             max_steering_rate_mdps=self.get_parameter('max_steering_rate_mdps').value,
         )
 

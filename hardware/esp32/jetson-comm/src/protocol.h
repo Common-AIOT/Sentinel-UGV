@@ -83,6 +83,15 @@ constexpr size_t DRIVE_COMMAND_BYTES = 14;
 size_t packDriveCommand(const DriveCommand& in, uint8_t* out);
 bool unpackDriveCommand(const uint8_t* payload, uint16_t len, DriveCommand& out);
 
+// 모드 전환 원샷 명령(0x13). flags는 예약이며 수신 측은 값을 보지 않는다.
+struct SetMode {
+  uint8_t requestedMode;  // SetModeRequest. 1=MANUAL, 2=AUTO. 그 밖은 REJECTED_STATE
+  uint8_t flags;          // 예약, 0
+};
+constexpr size_t SET_MODE_BYTES = 2;
+size_t packSetMode(const SetMode& in, uint8_t* out);
+bool unpackSetMode(const uint8_t* payload, uint16_t len, SetMode& out);
+
 struct DriveState {
   uint16_t appliedSequence;
   uint8_t state;

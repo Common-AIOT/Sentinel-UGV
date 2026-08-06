@@ -28,6 +28,7 @@ from .protocol_constants import (
     STRUCT_HELLO_ACK,
     STRUCT_IMU_STATE,
     STRUCT_PROXIMITY_STATE,
+    STRUCT_SET_MODE,
 )
 
 _HEADER_STRUCT = "<BBHHI"  # protocolVersion u8, messageType u8, sequence u16, payloadLength u16, senderUptimeMs u32
@@ -220,6 +221,30 @@ def pack_drive_command(cmd: DriveCommand) -> bytes:
 
 def unpack_drive_command(payload: bytes) -> DriveCommand:
     return DriveCommand(*struct.unpack(STRUCT_DRIVE_COMMAND, payload))
+
+
+@dataclass
+class SetMode:
+    """모드 전환 원샷 명령(0x13) 페이로드.
+
+    `flags`는 예약이며 수신 측은 값을 보지 않는다. 이 프레임은 재전송하지 않는다 -
+    `STOP_COMMAND`와 달리 멱등이 아니어서 3프레임이면 3ACK·3전이가 된다.
+    """
+
+    requested_mode: int
+    flags: int = 0
+
+
+def pack_set_mode(cmd: SetMode) -> bytes:
+    return struct.pack(STRUCT_SET_MODE, cmd.requested_mode, cmd.flags)
+
+
+def unpack_set_mode(payload: bytes) -> SetMode:
+    """길이가 다르면 `LengthError`를 낸다(`unpack_imu_state`와 같은 근거)."""
+    expected = struct.calcsize(STRUCT_SET_MODE)
+    if len(payload) != expected:
+        raise LengthError(f"SET_MODE payload must be {expected} bytes, got {len(payload)}")
+    return SetMode(*struct.unpack(STRUCT_SET_MODE, payload))
 
 
 @dataclass

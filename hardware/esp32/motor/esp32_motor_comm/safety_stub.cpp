@@ -104,6 +104,16 @@ int16_t mmpsToSignedPwm(int16_t targetMmps, bool reversed) {
 }
 
 void writeDriveNow(int16_t nextLeft, int16_t nextRight) {
+  // **정지 시각은 「굴리다 섰다」에만 찍는다** (S15P11A301-298).
+  //
+  // 종전에는 양측이 0 이기만 하면 매번 갱신했다. control_task 가 100Hz 로
+  // applyDriveTargets(0,0) 을 호출하면 이 타임스탬프가 계속 새로고침되어 아래
+  // "정지 후 역방향" 데드타임이 **영구히 만료되지 않고 역전이 무한 지연**된다.
+  // 젯슨이 0 을 스트리밍할 때마다 50Hz 로 이미 벌어지던 잠재 버그이고, 모든
+  // 액추에이션이 100Hz 루프로 옮겨 오면서 간헐이 확정이 된다. CTRL-35 가 회귀
+  // 가드다(대기 후 역전이 실제로 일어나는지 확인한다).
+  const bool wasDriving = g_appliedPwmLeft != 0 || g_appliedPwmRight != 0;
+
   writeOneMotor(nextLeft, LEFT_RPWM_PIN, LEFT_RPWM_CHANNEL, LEFT_LPWM_PIN, LEFT_LPWM_CHANNEL);
   writeOneMotor(nextRight, RIGHT_RPWM_PIN, RIGHT_RPWM_CHANNEL, RIGHT_LPWM_PIN, RIGHT_LPWM_CHANNEL);
 
@@ -111,7 +121,7 @@ void writeDriveNow(int16_t nextLeft, int16_t nextRight) {
   g_appliedPwmRight = nextRight;
   if (nextLeft != 0) g_lastDrivenPwmLeft = nextLeft;
   if (nextRight != 0) g_lastDrivenPwmRight = nextRight;
-  if (nextLeft == 0 && nextRight == 0) g_driveStoppedAtMs = millis();
+  if (nextLeft == 0 && nextRight == 0 && wasDriving) g_driveStoppedAtMs = millis();
   g_driverEnabled = (nextLeft != 0 || nextRight != 0);
   digitalWrite(MOTOR_EN_PIN, g_driverEnabled ? HIGH : LOW);
 }
@@ -225,6 +235,10 @@ void driveUpdate(uint32_t nowMs) {
   g_pendingPwmLeft = 0;
   g_pendingPwmRight = 0;
   writeDriveNow(nextLeft, nextRight);
+}
+
+bool driveDirectionChangePending() {
+  return g_directionChangePending;
 }
 
 bool motorDriverEnabled() {

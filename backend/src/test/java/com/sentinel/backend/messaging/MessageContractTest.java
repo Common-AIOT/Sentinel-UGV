@@ -19,6 +19,7 @@ import com.sentinel.backend.messaging.dto.InteractionReportData;
 import com.sentinel.backend.messaging.dto.MessageEnvelope;
 import com.sentinel.backend.messaging.dto.MissionCommandData;
 import com.sentinel.backend.messaging.dto.PresenceData;
+import com.sentinel.backend.messaging.dto.RobotStateData;
 import com.sentinel.backend.messaging.dto.TelemetryData;
 
 import tools.jackson.databind.DeserializationFeature;
@@ -165,6 +166,38 @@ class MessageContractTest {
                 envelope("command-ack-rejected.json").data(), CommandAckData.class);
         assertEquals("REJECTED", rejected.status());
         assertEquals("ESTOP_ACTIVE", rejected.reasonCode());
+
+        // 「자율」 거부의 유일한 정상 사유. 관제가 이 코드로 "조종을 멈추고 다시
+        // 시도하세요" 를 띄운다 (S15P11A301-298).
+        CommandAckData manualActive = mapper.treeToValue(
+                envelope("command-ack-rejected-manual-active.json").data(), CommandAckData.class);
+        assertEquals("REJECTED", manualActive.status());
+        assertEquals("MANUAL_INPUT_ACTIVE", manualActive.reasonCode());
+    }
+
+    @Test
+    void modeCommandSampleParsesIntoMissionCommandData() throws Exception {
+        MessageEnvelope envelope = envelope("mission-command-auto.json");
+        MissionCommandData data = mapper.treeToValue(envelope.data(), MissionCommandData.class);
+
+        assertEquals(MissionCommandData.TYPE_AUTO, data.type());
+        assertNotNull(data.commandId());
+    }
+
+    @Test
+    void robotStateSampleParsesIntoRobotStateData() throws Exception {
+        // 종전에는 서버가 이 messageType 을 유일하게 버렸다(MqttGateway default 분기).
+        // 이제 RobotStateWriter 가 읽으므로 역직렬화가 실제로 되는지 고정한다
+        // (S15P11A301-298).
+        MessageEnvelope envelope = envelope("state.json");
+        RobotStateData data = mapper.treeToValue(envelope.data(), RobotStateData.class);
+
+        assertEquals(MessageEnvelope.TYPE_STATE, envelope.messageType());
+        assertEquals("SAFE_IDLE", data.missionState());
+        // 임무 밖이라 둘 다 null 이다. RobotStateWriter 는 여기서 아무것도 하지 않는다.
+        assertNull(data.controlMode());
+        assertNull(data.activeMissionId());
+        assertNotNull(data.components());
     }
 
     @Test

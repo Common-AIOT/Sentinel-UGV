@@ -28,8 +28,10 @@ import com.sentinel.backend.messaging.dto.EncounterData;
 import com.sentinel.backend.messaging.dto.InteractionReportData;
 import com.sentinel.backend.messaging.dto.MessageEnvelope;
 import com.sentinel.backend.messaging.dto.PresenceData;
+import com.sentinel.backend.messaging.dto.RobotStateData;
 import com.sentinel.backend.messaging.dto.TelemetryData;
 import com.sentinel.backend.robot.RobotPresenceWriter;
+import com.sentinel.backend.robot.RobotStateWriter;
 import com.sentinel.backend.telemetry.TelemetryWriter;
 
 import jakarta.annotation.PostConstruct;
@@ -66,6 +68,7 @@ public class MqttGateway implements MqttCallback {
     private final ObjectMapper objectMapper;
     private final TelemetryWriter telemetryWriter;
     private final RobotPresenceWriter presenceWriter;
+    private final RobotStateWriter stateWriter;
     private final EncounterWriter encounterWriter;
     private final InteractionReportWriter interactionReportWriter;
     private final CommandAckWriter commandAckWriter;
@@ -79,6 +82,7 @@ public class MqttGateway implements MqttCallback {
                        ObjectMapper objectMapper,
                        TelemetryWriter telemetryWriter,
                        RobotPresenceWriter presenceWriter,
+                       RobotStateWriter stateWriter,
                        EncounterWriter encounterWriter,
                        InteractionReportWriter interactionReportWriter,
                        CommandAckWriter commandAckWriter) {
@@ -86,6 +90,7 @@ public class MqttGateway implements MqttCallback {
         this.objectMapper = objectMapper;
         this.telemetryWriter = telemetryWriter;
         this.presenceWriter = presenceWriter;
+        this.stateWriter = stateWriter;
         this.encounterWriter = encounterWriter;
         this.interactionReportWriter = interactionReportWriter;
         this.commandAckWriter = commandAckWriter;
@@ -199,6 +204,11 @@ public class MqttGateway implements MqttCallback {
                         envelope, objectMapper.treeToValue(envelope.data(), TelemetryData.class));
                 case MessageEnvelope.TYPE_PRESENCE -> presenceWriter.write(
                         envelope, objectMapper.treeToValue(envelope.data(), PresenceData.class));
+                // 종전에는 이 타입이 유일하게 default 로 빠져 통째로 버려졌다
+                // (S15P11A301-298). 그래서 명령 없이 일어나는 수동 승격이 관제에
+                // 전혀 보이지 않았다.
+                case MessageEnvelope.TYPE_STATE -> stateWriter.write(
+                        envelope, objectMapper.treeToValue(envelope.data(), RobotStateData.class));
                 case MessageEnvelope.TYPE_ENCOUNTER -> encounterWriter.write(
                         envelope, objectMapper.treeToValue(envelope.data(), EncounterData.class));
                 case MessageEnvelope.TYPE_INTERACTION_REPORT -> interactionReportWriter.write(

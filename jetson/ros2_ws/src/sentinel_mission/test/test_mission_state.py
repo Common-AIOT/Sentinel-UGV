@@ -1347,3 +1347,184 @@ def test_센서_실패도_encounter가_없으면_phase를_안_낸다():
 
     assert machine.state is MissionState.PAUSED
     assert result.phase is None
+
+
+# ----------------------------------------------------------------------
+# 모드 전환 (S15P11A301-298)
+#
+# 젯슨은 모드를 **판단하지 않고 따라간다**. 액추에이션 중재자는 모터 ESP32 이고,
+# 여기 오는 `*_ENGAGED` 는 보드가 이미 그렇게 됐다는 사실이다.
+# ----------------------------------------------------------------------
+
+
+def test_탐사_중_수동_진입은_paused를_경유해_두_전이를_낸다():
+    """26.3·14.2 가 정한 2단 전이. 한 전이로 합치면 관제가 PAUSED 를 못 본다."""
+    machine = exploring()
+
+    first = machine.handle_signal(Signal.MANUAL_ENGAGED, now=at(5))
+
+    assert first.changed
+    assert first.state is MissionState.PAUSED
+    assert first.previous is MissionState.EXPLORING
+    assert machine.pending_step, '2단이 남아 있어야 한다'
+
+    second = machine.tick(at(5))
+
+    assert second.changed
+    assert second.state is MissionState.MANUAL
+    assert second.previous is MissionState.PAUSED
+    assert not machine.pending_step
+    assert machine.control_mode == 'MANUAL'
+    assert machine.movement_allowed is False
+
+
+def test_대기_상태에서는_경유_없이_한_전이로_수동에_간다():
+    machine = MissionStateMachine()
+
+    result = machine.handle_signal(Signal.MANUAL_ENGAGED, now=T0)
+
+    assert result.state is MissionState.MANUAL
+    assert result.previous is MissionState.SAFE_IDLE
+    assert not machine.pending_step, 'SAFE_IDLE 은 경유할 것이 없다'
+
+
+def test_일시정지에서도_경유_없이_수동에_간다():
+    machine = exploring()
+    machine.handle_signal(Signal.PAUSE_REQUESTED, now=at(2))
+
+    result = machine.handle_signal(Signal.MANUAL_ENGAGED, now=at(3))
+
+    assert result.state is MissionState.MANUAL
+    assert result.previous is MissionState.PAUSED
+    assert not machine.pending_step
+
+
+def test_수동_진입이_진행_중_encounter를_ended로_끊는다():
+    """끊지 않으면 녹화가 5분 상한까지 돈다(S15P11A301-276 과 같은 이유)."""
+    machine = exploring()
+    confirm(machine)
+
+    first = machine.handle_signal(Signal.MANUAL_ENGAGED, now=at(10))
+
+    assert first.phase is Phase.ENDED
+    assert first.encounter is not None, '발행에 필요한 encounter 를 실어야 한다'
+
+    machine.tick(at(10))
+
+    assert machine.encounter is None, '수동 중에 스테일 encounter 를 끌고 가면 안 된다'
+    assert machine.encounter_id is None
+
+
+def test_paused에서_수동으로_들어갈_때도_스테일_encounter를_버린다():
+    """PAUSED 는 encounter 를 끊되 버리지 않는다.
+
+    남겨 두면 `_merge_into_encounter` 가 수동 조종 중에도 CONFIRMED 를 계속 낸다.
+    `control_mode` docstring 이 이미 닫혔다고 주장하던 구멍이다.
+    """
+    machine = exploring()
+    confirm(machine)
+    machine.handle_signal(Signal.PAUSE_REQUESTED, now=at(10))
+    assert machine.encounter is not None
+
+    machine.handle_signal(Signal.MANUAL_ENGAGED, now=at(11))
+
+    assert machine.encounter is None
+
+
+def test_이미_수동이면_거부가_아니다():
+    """원하는 상태에 이미 있다. 조작자에게는 성공이므로 reason_code 가 없다."""
+    machine = MissionStateMachine()
+    machine.handle_signal(Signal.MANUAL_ENGAGED, now=T0)
+
+    result = machine.handle_signal(Signal.MANUAL_ENGAGED, now=at(1))
+
+    assert not result.changed
+    assert result.reason_code is None
+    assert result.ignored_reason
+
+
+def test_자율_복귀는_paused에_착지하고_절대_탐사로_가지_않는다():
+    """SR-008·30.5. 사람이 로봇 옆에 선 채로 탐사가 재개되면 안 된다."""
+    machine = exploring()
+    machine.handle_signal(Signal.MANUAL_ENGAGED, now=at(5))
+    machine.tick(at(5))
+    assert machine.state is MissionState.MANUAL
+
+    result = machine.handle_signal(Signal.AUTO_ENGAGED, now=at(30))
+
+    assert result.changed
+    assert result.state is MissionState.PAUSED
+    assert result.previous is MissionState.MANUAL
+    assert machine.control_mode == 'AUTO'
+
+
+def test_수동이_아닐_때의_자율_복귀는_거부가_아니다():
+    machine = exploring()
+
+    result = machine.handle_signal(Signal.AUTO_ENGAGED, now=at(5))
+
+    assert not result.changed
+    assert result.reason_code is None
+    assert machine.state is MissionState.EXPLORING
+
+
+def test_자율_복귀가_남은_수동_2단을_취소한다():
+    """1단만 끝난 사이에 「자율」이 오면 다음 tick 이 MANUAL 로 되돌리면 안 된다."""
+    machine = exploring()
+    machine.handle_signal(Signal.MANUAL_ENGAGED, now=at(5))
+    assert machine.pending_step
+
+    machine.handle_signal(Signal.AUTO_ENGAGED, now=at(6))
+
+    assert not machine.pending_step
+    assert machine.state is MissionState.PAUSED
+    assert not machine.tick(at(7)).changed
+
+
+def test_전이_중_estop이_끼면_남은_수동_단을_버린다():
+    """ESTOP 은 사람이 풀어야 하는 상태다. 수동으로 끌고 가지 않는다(26.5)."""
+    machine = exploring()
+    machine.handle_signal(Signal.MANUAL_ENGAGED, now=at(5))
+    machine.handle_signal(Signal.ESTOP, now=at(5.1), detail='물리 버튼')
+    assert machine.state is MissionState.ESTOP
+
+    result = machine.tick(at(5.2))
+
+    assert not result.changed
+    assert machine.state is MissionState.ESTOP
+    assert not machine.pending_step
+    assert '버렸다' in result.ignored_reason
+
+
+def test_요청_신호가_상태기계에_닿으면_시끄럽게_거부한다():
+    """`mode_gateway` 가 가로채야 하는 둘이다. 조용히 무시하면 못 찾는다."""
+    for signal in (Signal.MANUAL_REQUESTED, Signal.AUTO_REQUESTED):
+        machine = exploring()
+
+        result = machine.handle_signal(signal, now=at(5))
+
+        assert not result.changed
+        assert result.reason_code == 'INVALID_STATE'
+        assert 'mode_gateway' in result.ignored_reason
+
+
+def test_manual은_더_이상_미구현이_아니다():
+    """`UNIMPLEMENTED` 에 있으면 노드가 전이마다 경고를 낸다."""
+    from sentinel_mission.mission_state import UNIMPLEMENTED
+
+    assert MissionState.MANUAL not in UNIMPLEMENTED
+    assert UNIMPLEMENTED == frozenset({MissionState.RETURNING})
+
+
+def test_수동_중에는_새_encounter를_만들지_않는다():
+    """`observe_candidates` 가 EXPLORING 만 받는다. 그 불변식을 고정한다."""
+    machine = MissionStateMachine()
+    machine.handle_signal(Signal.MANUAL_ENGAGED, now=T0)
+
+    result = machine.observe_candidates(
+        now=at(5), track_ids={7}, confidence=0.9, new_encounter_id=EID
+    )
+
+    assert not result.changed
+    assert machine.encounter is None
+    assert machine.state is MissionState.MANUAL

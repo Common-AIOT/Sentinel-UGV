@@ -1,0 +1,13 @@
+{
+  "schemaVersion": "1.0",
+  "messageId": "9d2f6b31-7a05-4c18-8e44-1b0c37f9a2de",
+  "messageType": "MISSION_COMMAND",
+  "robotId": "SENTINEL-01",
+  "missionId": "4a43f45c-779f-4df5-ac04-1695724829a4",
+  "sequence": 1753760420000,
+  "sentAt": "2026-07-29T05:20:20.000Z",
+  "data": {
+    "commandId": "7c31a8de-2f64-4b90-9a17-c5e0d8b41f26",
+    "type": "AUTO"
+  }
+}

@@ -121,6 +121,21 @@ public class CommandAckWriter {
                         command.missionId(), command.missionId(), command.missionId());
                 yield "COMPLETED";
             }
+            // 모드 전환 둘은 **라이프사이클 이벤트가 아니다** (S15P11A301-298).
+            // started_at·ended_at·end_reason·mission_results 를 건드리지 않는다 —
+            // 수동으로 옮겼다고 임무가 시작되거나 끝난 것이 아니다.
+            case MissionCommandData.TYPE_MANUAL -> {
+                jdbc.update("UPDATE missions SET status = 'MANUAL' WHERE id = ?", command.missionId());
+                yield "MANUAL";
+            }
+            // **PAUSED 이며 EXPLORING 이 아니다.** SR-008·30.5 가 자동 재개를 금지했고
+            // 14.2 가 수동 종료를 PAUSED 복귀로 정했다. 「자율」은 권한을 되찾는
+            // 것이고 다시 움직이는 것은 운영자의 별도 RESUME 이다. 여기서
+            // EXPLORING 으로 보내면 사람이 로봇 옆에 선 채로 탐사가 재개된다.
+            case MissionCommandData.TYPE_AUTO -> {
+                jdbc.update("UPDATE missions SET status = 'PAUSED' WHERE id = ?", command.missionId());
+                yield "PAUSED";
+            }
             default -> {
                 log.warn("알 수 없는 명령 type 의 ACK: {}", command.type());
                 yield null;
@@ -132,6 +147,7 @@ public class CommandAckWriter {
         }
     }
 
-    private record CommandRow(UUID missionId, String type) {
+    /** package-private: 같은 패키지의 시험이 JdbcTemplate 대역에서 직접 만든다. */
+    record CommandRow(UUID missionId, String type) {
     }
 }

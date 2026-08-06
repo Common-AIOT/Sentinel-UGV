@@ -21,16 +21,32 @@
 
 ## 입력은 사실만 받는다
 
-    /perception/person_candidates   탐지 노드가 확정한 사람 후보 (25.2)
-    /mission/signal                 주행·음성·관제·안전이 알리는 사건 (26.1)
+    /perception/person_candidates       탐지 노드가 확정한 사람 후보 (25.2)
+    /mission/signal                     주행·음성·관제·안전이 알리는 사건 (26.1)
+    /esp32_motor_bridge/drive_state     모터 보드의 현재 상태 (S15P11A301-298)
+    /esp32_motor_bridge/command_ack     모터 보드의 명령 응답 (S15P11A301-298)
 
 보내는 쪽은 "무슨 일이 있었는지"만 적고 "어떤 상태로 가야 하는지"는 적지 않는다.
 그 판단이 이 노드에 있어야 26.1이 성립한다.
 
+## 왜 이 노드가 모터 보드를 직접 보는가 (S15P11A301-298)
+
+수동/자율 모드에서 **바퀴 소유자를 정하는 것은 모터 ESP32**다. 폰이 자기 핫스팟
+위에서 그 보드에 직결하므로 젯슨은 조종 패킷을 볼 수도 막을 수도 없다. 즉
+`DRIVE_STATE.state == MANUAL_ACTIVE` 는 이 노드가 **따라가야 할 사실**이고,
+26.1 이 이 노드를 「사실 → 전이」 변환기로 정의했으므로 관측자도 여기다.
+
+50Hz 사실을 디바운스해 신호로 바꾸는 것은 `/perception/person_candidates` 와 같은
+구조이고, 판정은 전부 `mode_gateway`(순수 모듈)가 한다. 별도 `mode_arbiter` 노드를
+두지 않은 이유는 `CommandRelay`·`cloud_bridge` 가 두 번째 라우팅 대상·생존 확인·
+launch 항목·새 실패 모드를 배워야 하기 때문이다 — 기존 경로는 dict 항목 두 개로
+끝난다.
+
 ## 출력
 
-    /perception/encounter   녹화 트리거 (32-5). 발행자는 이 노드뿐이다
-    /mission/status         임무 상태 (26.2). 주행 노드가 movementAllowed를 본다
+    /perception/encounter           녹화 트리거 (32-5). 발행자는 이 노드뿐이다
+    /mission/status                 임무 상태 (26.2). 주행 노드가 movementAllowed를 본다
+    /esp32_motor_bridge/set_mode    모드 전환 요청 (S15P11A301-298). 브리지가 중계만 한다
 
 ## 이 노드가 죽으면
 
@@ -43,6 +59,7 @@ NO_RESPONSE_TIMEOUT, MAX_EVENT). 조각은 이미 모았으므로 영상은 남�
 from __future__ import annotations
 
 import json
+import time
 import uuid
 from datetime import datetime, timezone
 
@@ -68,8 +85,16 @@ from .mission_state import (
     Signal,
     format_utc,
 )
+from .mode_gateway import MODE_AUTO, MODE_MANUAL, ModeGateway
 
 SCHEMA_VERSION = '1.0'
+
+# `MANUAL_REQUESTED`/`AUTO_REQUESTED` 는 상태기계에 닿기 전에 여기서 가로챈다.
+# 그 둘은 **의도**이고, 상태기계는 **사실**(`*_ENGAGED`)만 다룬다.
+_MODE_REQUEST_SIGNALS = {
+    Signal.MANUAL_REQUESTED: MODE_MANUAL,
+    Signal.AUTO_REQUESTED: MODE_AUTO,
+}
 
 
 class MissionManagerNode(Node):
@@ -103,10 +128,27 @@ class MissionManagerNode(Node):
         )
         self.declare_parameter('base_frame', 'base_footprint')
 
+        # 모드 전환 (S15P11A301-298). 토픽은 esp32_motor_bridge 의 것과 같아야 한다.
+        self.declare_parameter(
+            'drive_state_topic', '/esp32_motor_bridge/drive_state'
+        )
+        self.declare_parameter(
+            'command_ack_topic', '/esp32_motor_bridge/command_ack'
+        )
+        self.declare_parameter('set_mode_topic', '/esp32_motor_bridge/set_mode')
+        self.declare_parameter('manual_confirm_seconds', 0.10)
+        self.declare_parameter('set_mode_ack_timeout_seconds', 0.5)
+        self.declare_parameter('drive_state_ttl_seconds', 0.5)
+
         self.machine = MissionStateMachine(
             post_recording_seconds=int(self._param('post_recording_seconds')),
             max_interaction_seconds=int(self._param('max_interaction_seconds')),
             person_lost_seconds=float(self._param('person_lost_seconds')),
+        )
+        self.gateway = ModeGateway(
+            manual_confirm_seconds=float(self._param('manual_confirm_seconds')),
+            drive_state_ttl_seconds=float(self._param('drive_state_ttl_seconds')),
+            ack_timeout_seconds=float(self._param('set_mode_ack_timeout_seconds')),
         )
 
         # encounter는 잃으면 이벤트가 사라지므로 RELIABLE이다. 녹화 노드가 기본
@@ -178,6 +220,37 @@ class MissionManagerNode(Node):
             status_qos,
         )
 
+        # ---- 모드 전환 (S15P11A301-298) ----
+        #
+        # 요청은 RELIABLE 이다. 잃으면 관제가 500ms 뒤 MOTOR_BOARD_NO_ACK 를 보고
+        # "보드가 죽었다"로 읽는데, 실제로는 프레임이 나가지도 않은 것이다.
+        self.set_mode_pub = self.create_publisher(
+            String, self._param('set_mode_topic'), reliable
+        )
+        # DRIVE_STATE 는 50Hz 사실 스트림이다. **백로그를 쌓으면 안 된다** —
+        # depth 1 BEST_EFFORT 로 최신 한 건만 본다. 여기서 읽는 것은 `state`
+        # 하나뿐이고, 늦게 도착한 옛 프레임은 판단을 흐릴 뿐이다.
+        # (mission_manager 는 이미 CPU 포화가 보고된 노드다 — S15P11A301-249.)
+        drive_state_qos = QoSProfile(
+            reliability=QoSReliabilityPolicy.BEST_EFFORT,
+            history=QoSHistoryPolicy.KEEP_LAST,
+            depth=1,
+        )
+        self.create_subscription(
+            String,
+            self._param('drive_state_topic'),
+            self._on_drive_state,
+            drive_state_qos,
+        )
+        # ACK 는 RELIABLE 이다. 잃으면 거부가 타임아웃으로 오표기되어 운영자가
+        # 「모터 보드 무응답」을 보는데 실제로는 「조종 중이라 거부」였다.
+        self.create_subscription(
+            String,
+            self._param('command_ack_topic'),
+            self._on_command_ack,
+            reliable,
+        )
+
         # TF는 encounter 위치 스탬프에만 쓴다 (S15P11A301-170). SLAM이 없으면
         # 조회가 실패하고 pose는 null이 된다 — 값을 지어내지 않는다. 관제가
         # "위치 모름"과 "원점"을 구별해야 한다(cloud_bridge와 같은 원칙).
@@ -221,6 +294,15 @@ class MissionManagerNode(Node):
 
     def _now(self) -> datetime:
         return datetime.now(timezone.utc)
+
+    @staticmethod
+    def _monotonic() -> float:
+        """`mode_gateway` 전용 시계 (S15P11A301-298).
+
+        벽시계를 쓰면 NTP 보정 한 번에 500ms 창이 뒤틀린다. `sentinel_safety/gate.py`
+        와 같은 규약이고, 상태기계에 넘기는 `_now()` 와는 **다른 시계다** — 섞지 않는다.
+        """
+        return time.monotonic()
 
     # ------------------------------------------------------------------
     # 입력
@@ -304,6 +386,13 @@ class MissionManagerNode(Node):
             )
             return
 
+        # 모드 요청은 상태기계에 닿기 전에 가로챈다 (S15P11A301-298). 보드가
+        # 거부할 수 있으므로 의도를 바로 전이로 바꿀 수 없다.
+        requested_mode = _MODE_REQUEST_SIGNALS.get(signal)
+        if requested_mode is not None:
+            self._on_mode_request(requested_mode, payload)
+            return
+
         sent_at = self._parse_time(payload.get('sentAt')) or self._now()
         transition = self.machine.handle_signal(
             signal,
@@ -344,6 +433,102 @@ class MissionManagerNode(Node):
 
     def _on_tick(self) -> None:
         self._apply(self.machine.tick(self._now()))
+        # ACK 타임아웃과 DRIVE_STATE 스테일 판정 (S15P11A301-298).
+        self._apply_outcome(self.gateway.tick(self._monotonic()))
+
+    # ------------------------------------------------------------------
+    # 모드 전환 (S15P11A301-298)
+    # ------------------------------------------------------------------
+
+    def _on_mode_request(self, mode: str, payload: dict) -> None:
+        """관제 「수동」·「자율」. 보드에 물어보고 답이 온 뒤에야 상태를 바꾼다."""
+        command_id = payload.get('commandId')
+        outcome = self.gateway.request(
+            mode,
+            command_id=str(command_id) if command_id else None,
+            now=self._monotonic(),
+            mission_state=self.machine.state.value,
+            # 구독자가 0명이면 프레임이 어디에도 가지 않는다. 500ms 를 기다려
+            # 타임아웃을 내는 것보다 즉시 사실대로 거부하는 편이 낫다.
+            bridge_alive=self.set_mode_pub.get_subscription_count() > 0,
+        )
+        self._apply_outcome(outcome)
+
+    def _on_drive_state(self, message: String) -> None:
+        """50Hz `DRIVE_STATE`. `state` 하나만 읽는다.
+
+        나머지 필드(PWM·fault·조향)는 이 노드의 관심사가 아니다 — 진단은
+        `esp32_motor_bridge` 가 `/diagnostics` 로 낸다.
+        """
+        try:
+            payload = json.loads(message.data)
+        except json.JSONDecodeError:
+            # 50Hz 스트림이라 로그를 남기면 그 소리로 가득 찬다. 브리지 쪽이
+            # 이미 파싱 오류를 카운트한다.
+            return
+        if not isinstance(payload, dict):
+            return
+        board_state = payload.get('state')
+        if not isinstance(board_state, str):
+            return
+        self._apply_outcome(
+            self.gateway.observe_drive_state(board_state, now=self._monotonic())
+        )
+
+    def _on_command_ack(self, message: String) -> None:
+        """`COMMAND_ACK`. `SET_MODE` 에 대한 것만 게이트웨이가 본다."""
+        try:
+            payload = json.loads(message.data)
+        except json.JSONDecodeError as error:
+            self.get_logger().warn(f'command_ack JSON 해석 실패: {error}')
+            return
+        if not isinstance(payload, dict):
+            return
+        self._apply_outcome(
+            self.gateway.observe_ack(
+                acked_message_name=str(payload.get('acked_message_type_name') or ''),
+                result_name=str(payload.get('result_name') or ''),
+                # `board_state` 는 브리지가 이미 이름으로 바꿔 실어 준다.
+                board_state=str(payload.get('board_state') or ''),
+                now=self._monotonic(),
+            )
+        )
+
+    def _apply_outcome(self, outcome) -> None:
+        """`ModeOutcome` 하나를 집행한다. 넷이 독립이라 순서만 맞추면 된다.
+
+        프레임 → 전이 → ACK 순이다. ACK 를 먼저 내면 관제가 「됐다」를 본 뒤에
+        `/mission/status` 가 따라오고, 그 사이에 화면이 옛 상태로 한 번 깜박인다.
+        """
+        if outcome.empty:
+            return
+
+        if outcome.set_mode is not None:
+            self.set_mode_pub.publish(
+                String(data=json.dumps({'mode': outcome.set_mode}, ensure_ascii=False))
+            )
+
+        if outcome.signal is not None:
+            self._engage(outcome.signal)
+
+        if outcome.ack is not None:
+            self._publish_ack_body(outcome.ack)
+
+        if outcome.note:
+            if outcome.stale:
+                self.get_logger().warn(outcome.note)
+            else:
+                self.get_logger().info(outcome.note)
+
+    def _engage(self, signal: Signal) -> None:
+        """보드가 알린 사실을 상태기계에 넣는다.
+
+        `commandId` 를 넘기지 않는다. ACK 는 `ModeOutcome.ack` 가 이미 들고 있고,
+        여기서 또 넘기면 `_publish_command_result` 가 두 번째 답을 내 백엔드가
+        앞의 것을 덮는다.
+        """
+        moment = self._now()
+        self._apply(self.machine.handle_signal(signal, now=moment), at=moment)
 
     # ------------------------------------------------------------------
     # 관제 명령 결과 (S15P11A301-143)
@@ -375,9 +560,7 @@ class MissionManagerNode(Node):
                 or None
             ) or None,
         }
-        self.command_result_pub.publish(
-            String(data=json.dumps(body, ensure_ascii=False))
-        )
+        self._publish_ack_body(body)
         if rejected:
             self.get_logger().warn(
                 f'명령 거부 {command_id[:8]} {transition.reason_code}: '
@@ -387,6 +570,16 @@ class MissionManagerNode(Node):
             self.get_logger().info(
                 f'명령 처리 {command_id[:8]} EXECUTED → {transition.state.value}'
             )
+
+    def _publish_ack_body(self, body: dict) -> None:
+        """`command-ack.schema.json` 본문 하나를 발행한다.
+
+        상태기계 경로와 `mode_gateway` 경로가 같은 꼬리를 쓴다. 두 곳에서 각자
+        직렬화하면 한쪽만 필드를 고치는 일이 생긴다.
+        """
+        self.command_result_pub.publish(
+            String(data=json.dumps(body, ensure_ascii=False))
+        )
 
     @staticmethod
     def _parse_time(raw) -> datetime | None:
@@ -422,9 +615,13 @@ class MissionManagerNode(Node):
                 )
             )
             if transition.state in UNIMPLEMENTED:
+                # 지금은 RETURNING 하나이며 여전히 도달 불가다 —
+                # `COMMAND_TO_SIGNAL` 에 RETURN 이 없어 신호 자체가 만들어지지
+                # 않는다. 그래도 경고를 남기는 이유는, 도달했다면 그 자체가
+                # 계약 어딘가가 깨졌다는 뜻이기 때문이다.
                 self.get_logger().warn(
-                    f'{transition.state.value}는 이 티켓에서 구현하지 않은 '
-                    '상태다. 전이 트리거가 없어야 한다.'
+                    f'{transition.state.value}는 아직 구현하지 않은 상태다. '
+                    '전이 트리거가 없어야 하는데 도달했다.'
                 )
             self._publish_status(
                 reason=transition.reason, previous=transition.previous, at=moment
@@ -432,6 +629,16 @@ class MissionManagerNode(Node):
         elif transition.reason:
             # 상태는 그대로인데 personCount 같은 값이 바뀐 경우다.
             self._publish_status(reason=transition.reason, at=moment)
+
+        # 수동 진입 2단 전이의 남은 단을 **같은 콜백에서** 밀어낸다
+        # (S15P11A301-298). 주기 타이머를 기다리면 관제가 최대 250ms 동안
+        # 「일시정지」로 보이고, 그 화면은 사실과 다르다 - 보드는 이미 사람에게
+        # 바퀴를 넘긴 뒤다.
+        #
+        # 재귀 깊이는 1 이다. `tick()` 이 pending 을 먼저 내리므로 두 번째 호출에서
+        # `pending_step` 은 반드시 거짓이다.
+        if self.machine.pending_step:
+            self._apply(self.machine.tick(moment), at=moment)
 
     def _publish_encounter(
         self, phase: Phase, moment: datetime, encounter=None

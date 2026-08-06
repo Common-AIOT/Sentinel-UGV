@@ -29,20 +29,50 @@ export const USE_MOCK = true;
 /** 확정 로봇 이름 (mqtt-setup·mvp-week-plan). */
 const ROBOT_ID = "SENTINEL-01";
 
-/** 명령 거부 사유 → 관제 표현 (#207). 모르는 코드는 원문 그대로 보여준다. */
+/**
+ * 명령 거부 사유 → 관제 표현 (#207). 모르는 코드는 원문 그대로 보여준다.
+ *
+ * **젯슨이 실제로 낼 수 있는 코드를 전부 적는다** (S15P11A301-298). 종전에는 둘뿐이었고
+ * 그중 `ROBOT_BUSY` 는 젯슨이 내지 않는 코드였다 — 즉 실제로 오는 거부는 거의 다
+ * 원문 코드가 그대로 화면에 찍혔다. 운영자에게 `MANUAL_INPUT_ACTIVE` 는 아무 뜻이
+ * 없고, 필요한 것은 **무엇을 하면 되는지**다.
+ *
+ * 출처는 `sentinel_mission/mission_state.py` 의 REASON_* 블록이다.
+ */
 const REASON_LABEL: Record<string, string> = {
   ROBOT_BUSY: "로봇이 다른 동작을 처리 중",
   NOT_IMPLEMENTED: "로봇이 지원하지 않는 명령",
+  // 「자율」이 거부되는 유일한 정상 사유. 재시도가 답이다.
+  MANUAL_INPUT_ACTIVE:
+    "모바일 조종 입력이 계속 들어오는 중 — 조종을 멈춘 뒤 다시 시도하세요",
+  MOTOR_BOARD_NO_ACK: "모터 보드가 응답하지 않음 — 로봇 전원·USB 연결을 확인하세요",
+  MOTOR_BOARD_REJECTED: "모터 보드가 명령을 거부함",
+  ESTOP_ACTIVE: "비상 정지 상태 — 물리 버튼을 확인하고 해제한 뒤 다시 시도하세요",
+  ERROR_LATCHED: "결함 정지 상태 — 원인을 확인해야 합니다",
+  INVALID_STATE: "지금 상태에서는 할 수 없는 명령",
+  DUPLICATE_COMMAND: "이미 처리한 명령",
+  MISSION_MANAGER_DOWN: "로봇의 임무 관리 노드가 떠 있지 않음",
+  MALFORMED_COMMAND: "명령 형식 오류",
 };
 const COMMAND_LABEL: Record<string, string> = {
   START: "시작", PAUSE: "일시정지", RESUME: "재개", RETURN: "복귀", STOP: "정지",
+  MANUAL: "수동 전환", AUTO: "자율 전환",
 };
 
-/** 서버 missions.status → 관제 화면 MissionState. 서버는 5개 상태만 가진다. */
+/**
+ * 서버 missions.status → 관제 화면 MissionState.
+ *
+ * `MANUAL` 은 S15P11A301-298 에서 추가됐다. 종전에는 서버가 MANUAL 을 몰라
+ * (그리고 이 표에도 없어) 3초 폴링이 수동 표시를 즉시 EXPLORING 으로 덮었고,
+ * 그 결과 `controlMode` 만 MANUAL 로 남아 두 값이 어긋났다. 이제 서버가
+ * `missions.status = 'MANUAL'` 을 실제로 갖고(`RobotStateWriter`·
+ * `CommandAckWriter`) 이 표가 그것을 받는다 — 근원에서 해결된다.
+ */
 const SERVER_MISSION_STATE: Record<string, MissionState> = {
   CREATED: "SAFE_IDLE",
   EXPLORING: "EXPLORING",
   PAUSED: "PAUSED",
+  MANUAL: "MANUAL",
   RETURNING: "RETURNING",
   COMPLETED: "COMPLETED",
 };
@@ -287,7 +317,10 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
    * RETURN 은 젯슨이 NOT_IMPLEMENTED 로 거부하므로 데모에선 STOP 으로 대체한다(계획 결정).
    */
   const sendCommand = useCallback(async (type: string) => {
-    if (type === "explore" || type === "return" || type === "pause") {
+    if (
+      type === "explore" || type === "return" || type === "pause" ||
+      type === "manual" || type === "auto"
+    ) {
       let mid = missionIdRef.current;
       const resuming = type === "explore" && mockMission.current === "PAUSED";
 
@@ -308,10 +341,22 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
         setMissionId(mid);
       }
 
+      // **manual/auto 는 임무를 만들지 않는다** (S15P11A301-298). 위 생성 분기가
+      // `type === "explore"` 로 게이트돼 있으므로, 진행 중 임무가 없으면 여기서
+      // 명령이 나가지 않는다. 조용히 넘기면 조작자가 「수동」을 눌렀는데 아무 일도
+      // 일어나지 않고 이유도 알 수 없으므로, 던져서 호출부가 설명하게 한다.
+      if (!mid) {
+        if (type === "manual" || type === "auto") {
+          throw new Error("진행 중인 임무가 없습니다");
+        }
+      }
+
       if (mid) {
         const cmd: CommandType =
           type === "return" ? "STOP"
           : type === "pause" ? "PAUSE"
+          : type === "manual" ? "MANUAL"
+          : type === "auto" ? "AUTO"
           : resuming ? "RESUME"
           : "START";
         pendingCommand.current = { before: mockMission.current, at: Date.now() };
@@ -354,28 +399,31 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
           }
           break;
 
-        // manual/auto 는 controlMode 만 바꾼다. missionState 는 건드리지 않는다
-        // (S15P11A301-200).
+        // 이제 둘 다 **실제 명령을 보내고 missionState 도 함께 바꾼다**
+        // (S15P11A301-298). 서버가 `missions.status = 'MANUAL'` 을 갖게 됐고
+        // SERVER_MISSION_STATE 가 그것을 받으므로, 종전에 3초 폴링이 수동 표시를
+        // 즉시 덮던 문제가 근원에서 사라졌다.
         //
-        // 이전에는 manual 이 missionState 를 "MANUAL" 로 세웠는데, 서버는 MANUAL 을
-        // 모르므로(SERVER_MISSION_STATE 5종) 3초 폴링이 즉시 EXPLORING 으로
-        // 덮었다. 그러면 controlMode 만 MANUAL 로 남아 두 값이 어긋나고, auto 의
-        // 조건(from === "MANUAL")이 영원히 거짓이 되어 **자율 버튼이 눌리지
-        // 않았다.** 실기기에서 "탐사 중 + 수동"으로 굳은 상태가 그것이다.
-        //
-        // missionState 의 단일 출처는 서버다. 서버가 모르는 상태를 화면이
-        // 지어내면 폴링이 바로 지운다 — 지어내지 않는 것이 맞다.
-        //
-        // 26.3의 "MANUAL 종료는 PAUSED로 복귀"는 실제 제어 세션이 붙을 때
-        // 지켜야 한다(S15P11A301-39). 지금 이 토글은 로봇에 아무것도 보내지
-        // 않으므로 되돌릴 주행 상태도 없고, 표시만 바꾸는 조작이 실제 임무를
-        // 일시정지시키면 그쪽이 더 위험하다.
+        // 이 전이는 `pendingCommand` 를 거쳐 10초 grace 를 받는다 — 서버 왕복이
+        // 끝나기 전의 폴링이 낙관적 표시를 되돌리지 않게 한다.
         case "manual":
-          if (from !== "ESTOP" && from !== "ERROR") controlMode = "MANUAL";
+          if (from !== "ESTOP" && from !== "ERROR") {
+            missionState = "MANUAL";
+            controlMode = "MANUAL";
+          }
           break;
 
+        // **PAUSED 이며 EXPLORING 이 아니다.** SR-008·26.3 이 자동 재개를 금지했다 —
+        // 토글을 되돌렸다는 이유로 로봇이 갑자기 움직이면 그것이 사고다. 재개는
+        // 상태 패널의 「탐사 재개」로 한다.
+        //
+        // 수동이 아니었으면 아무것도 바꾸지 않는다. 자율에서 「자율」을 다시 누른
+        // 것이므로 임무를 일시정지시킬 이유가 없다.
         case "auto":
-          controlMode = "AUTO";
+          if (from === "MANUAL") {
+            missionState = "PAUSED";
+            controlMode = "AUTO";
+          }
           break;
 
         case "pause":
@@ -405,7 +453,15 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
     if (!mapped) return;
     pendingCommand.current = null;
     mockMission.current = mapped;
-    setStatus(s => ({ ...s, missionState: mapped }));
+    // `controlMode` 도 서버 값에서 파생한다 (S15P11A301-298). 이것이 있어야
+    // **새로고침 후에도 수동 표시가 유지된다** — 종전에는 낙관적 전이만 있어
+    // 페이지를 다시 열면 자율로 보였다. 파생 규칙은 젯슨
+    // `mission_state.control_mode` 와 같다(MANUAL 이 아니면 AUTO).
+    setStatus(s => ({
+      ...s,
+      missionState: mapped,
+      controlMode: mapped === "MANUAL" ? "MANUAL" : "AUTO",
+    }));
     if (serverStatus === "COMPLETED") {
       // 다음 explore 가 새 임무를 만들 수 있게 활성 임무를 비운다.
       missionIdRef.current = null;

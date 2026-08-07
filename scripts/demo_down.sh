@@ -183,6 +183,14 @@ if [[ "${dry_run}" -eq 1 ]]; then
   for pid in "${targets[@]}"; do
     printf '  %7d %s\n' "${pid}" "$(describe "${pid}")"
   done
+  # 잔여 DDS 세그먼트도 함께 보여준다(S15P11A301-338). 실제 정리는 4단계이고
+  # 스택이 다 내려간 뒤에만 한다 — 여기서는 몇 개인지만 센다.
+  shopt -s nullglob
+  shm_seen=(/dev/shm/fastrtps_* /dev/shm/sem.fastrtps_*)
+  shopt -u nullglob
+  if [[ "${#shm_seen[@]}" -gt 0 ]]; then
+    echo "  DDS 공유메모리 세그먼트 ${#shm_seen[@]}개 — 내린 뒤 사용자가 없는 것만 정리합니다."
+  fi
   exit 0
 fi
 
@@ -270,6 +278,53 @@ echo "모두 내려갔습니다."
 if [[ "${freed}" -gt 0 ]]; then
   # 젯슨은 CPU·GPU 가 메모리를 공유하므로 free 가 GPU 회수까지 보여준다.
   echo "  회수된 메모리: ${freed}MB (사용 ${before_mb}MB → ${after_mb}MB)"
+fi
+
+# ----------------------------------------------------------------------
+# 4단계. 잔여 Fast DDS 공유메모리 세그먼트 정리 (S15P11A301-338)
+#
+# 프로세스가 강제 종료되면 /dev/shm 의 fastrtps 세그먼트가 남는다. 2026-08-07 에
+# 스택 두 벌이 겹친 뒤 194개가 남았고, 그 상태에서 **새 참가자가 DDS 그래프에
+# 붙지 못했다** — 노드는 다 살아 있는데 `ros2 node list` 가 0개였다. 용량 문제가
+# 아니다(3.8G 중 20M). 남은 세그먼트가 포트를 잡고 있는 것이 원인이다.
+#
+# **`/dev/shm` 을 통째로 지우면 안 된다.** 이 기기에는 Tegra IPC 세그먼트가
+# 함께 있다(nvsci*, nvmap_sciipc*, ipc_test*, itc_test* — 부팅 시 Tegra 스택이
+# 만든다). 지우면 카메라·GPU 경로가 깨진다. 그래서 이름으로 fastrtps 만 고른다.
+#
+# 3단계를 통과한 뒤에만 온다 — 스택이 다 내려갔다는 것이 확인된 지점이다.
+# 그래도 `fuser` 로 한 번 더 확인한다. 이 도메인 밖에서 누군가 `ros2 topic echo`
+# 같은 것을 돌리고 있을 수 있고, **살아 있는 참가자의 세그먼트를 지우면 그
+# 노드가 깨진다.** 사용자가 있는 것은 건드리지 않고 몇 개를 남겼는지 적는다.
+# ----------------------------------------------------------------------
+shopt -s nullglob
+shm_stale=(/dev/shm/fastrtps_* /dev/shm/sem.fastrtps_*)
+shopt -u nullglob
+
+if [[ "${#shm_stale[@]}" -gt 0 ]]; then
+  if ! command -v fuser >/dev/null 2>&1; then
+    echo "  잔여 DDS 세그먼트 ${#shm_stale[@]}개를 두었습니다 — fuser 가 없어" \
+         "사용 중인지 확인할 수 없습니다(psmisc)."
+    echo "  새 스택이 그래프에 못 붙으면 스택을 모두 내린 뒤" \
+         "rm -f /dev/shm/fastrtps_* /dev/shm/sem.fastrtps_* 하십시오."
+  else
+    removed=0
+    inuse=0
+    for seg in "${shm_stale[@]}"; do
+      if fuser -s "${seg}" 2>/dev/null; then
+        inuse=$((inuse + 1))
+      elif rm -f "${seg}" 2>/dev/null; then
+        removed=$((removed + 1))
+      fi
+    done
+    if [[ "${removed}" -gt 0 ]]; then
+      echo "  잔여 DDS 세그먼트 ${removed}개 정리(Tegra IPC 세그먼트는 그대로)."
+    fi
+    if [[ "${inuse}" -gt 0 ]]; then
+      echo "  사용 중인 세그먼트 ${inuse}개는 남겼습니다 — 다른 ROS 프로세스가" \
+           "있는지 확인하십시오."
+    fi
+  fi
 fi
 
 # 꺼진 채로 유지되는 범위를 분명히 한다. 서비스가 enabled 인 동안 "내렸다"는

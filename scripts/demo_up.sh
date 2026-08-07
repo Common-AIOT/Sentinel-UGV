@@ -39,6 +39,84 @@ if [[ -z "${INVOCATION_ID:-}" ]] \
 fi
 
 # ----------------------------------------------------------------------
+# 수동 대 수동 중복 기동 거부 (S15P11A301-338)
+#
+# 위 검사는 「서비스 대 수동」만 막는다. **손으로 두 번 부르면 둘 다 서비스가
+# 아니므로 둘 다 통과한다.** 2026-08-07 주행 시험에서 20초 간격으로 두 번 불러
+# 두 벌이 7분 10초 겹쳤고, 증상이 「주행이 안 된다」로 나타나 원인 조사에
+# 리허설 하나를 버렸다. 겹칠 때 실제로 깨지는 것:
+#
+#   esp32_motor_bridge 2개가 같은 /dev/sentinel_mcu_motor 를 읽어 서로 바이트를
+#   훔친다 → DRIVE_STATE 가 0.5~0.8초씩 끊기고 주행 명령이 보드에 온전히 안 간다
+#   /mission/status 발행자가 2개 → 하나는 임무를 들고 하나는 SAFE_IDLE 이라
+#   진단하는 쪽이 어느 값을 읽을지 정해지지 않는다(missionId: null 로 보인다)
+#   cloud_bridge 2개가 같은 MQTT client id 로 붙어 서로를 끊는다
+#   (mqtt_client.py 의 f"{robot_id}-bridge") → 2.6초 주기 재연결, 명령 ACK 유실
+#
+# 잠금 방식을 쓰는 이유: PID 파일은 낡는다(강제 종료되면 남아서 다음 기동을
+# 잘못 막는다). flock 은 fd 의 수명이 곧 잠금의 수명이고, 프로세스가 어떻게
+# 죽든 커널이 놓는다. `exec 9>` 로 연 fd 는 CLOEXEC 가 아니라 아래
+# `exec ros2 launch` 이후에도 살아 있으므로 **스택이 도는 동안 계속 잠긴다.**
+#
+# 잠금만으로는 부족하다 — 이 스크립트를 거치지 않고 `ros2 launch` 를 직접 부른
+# 스택은 잠금을 잡지 않는다. 그래서 실제로 도는 프로세스도 함께 본다.
+#
+# 특정 노드 하나를 기준으로 삼지 않는다. **전부 enable_* 인자로 끌 수 있다**
+# (`enable_mission` 을 포함해 15개가 있다). 그래서 두 갈래로 본다.
+#
+#   launch 부모     어떤 인자로 띄웠든 스택마다 정확히 하나 있다. 정상 경로는
+#                   이것으로 다 걸린다.
+#   sentinel_* 노드 launch 부모가 죽고 노드만 남은 상태를 덮는다. 2026-08-07 에
+#                   실제로 그 상태를 만났다. 패키지를 하나로 특정하지 않고
+#                   install/sentinel_*/lib/ 경로로 잡으므로 어떤 조합으로 띄워도
+#                   최소 하나는 걸린다.
+#
+# 패턴을 **파이썬 인터프리터에 앵커한다.** `pgrep -f` 는 명령줄 전체를 보므로 앵커가
+# 없으면 이 문자열을 인자로 가진 아무 셸이나 grep 이 함께 잡힌다(검증 중 실제로
+# 자기 자신을 잡았다). 노드와 launch 부모의 명령줄은 항상 파이썬으로 시작한다.
+#
+# 경로로 잡으므로 **다른 워크스페이스 사본에서 띄운 스택도 걸린다** — 같은 시리얼
+# 포트와 같은 DDS 도메인을 쓰는 한 그것도 중복이다.
+# ----------------------------------------------------------------------
+LOCK_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+[[ -d "${LOCK_DIR}" ]] || LOCK_DIR=/tmp
+LOCK_FILE="${LOCK_DIR}/sentinel-demo.lock"
+
+if [[ -n "${SENTINEL_ALLOW_MULTIPLE:-}" ]]; then
+  # 두 벌을 일부러 띄워 위 사고를 재현하는 것도 정당한 사용이다. 다만 조용히
+  # 넘어가지 않는다 — 나중에 로그만 보고 원인을 찾을 사람이 있다.
+  echo "경고: SENTINEL_ALLOW_MULTIPLE 이 설정돼 중복 기동 검사를 건너뜁니다." >&2
+  echo "      두 벌이 겹치면 모터 시리얼과 /mission/status 가 서로를 방해합니다" \
+       "(S15P11A301-338)." >&2
+else
+  py='^[^[:space:]]*python[0-9.]*[[:space:]]+[^[:space:]]*'
+  running_stack="$(pgrep -f "${py}/ros2[[:space:]]+launch[[:space:]]+sentinel_bringup" 2>/dev/null || true)"
+  running_nodes="$(pgrep -f "${py}/install/sentinel_[a-z_]+/lib/" 2>/dev/null || true)"
+  running_stack="$(printf '%s\n%s\n' "${running_stack}" "${running_nodes}" | sed '/^$/d' | sort -un)"
+  if [[ -n "${running_stack}" ]]; then
+    # PID 를 전부 늘어놓으면 13줄이 되어 정작 아래 안내가 묻힌다. 개수와 앞
+    # 몇 개만 보인다 — 전체 목록은 demo_down.sh --dry-run 이 낸다.
+    mapfile -t running_pids <<<"${running_stack}"
+    echo "거부: 데모 스택이 이미 돌고 있습니다" \
+         "(프로세스 ${#running_pids[@]}개, 예: ${running_pids[*]:0:4})." >&2
+    echo "  두 벌이 겹치면 esp32_motor_bridge 둘이 같은 시리얼을 읽어 주행 명령이" >&2
+    echo "  끊기고, /mission/status 발행자가 둘이 되어 missionId 가 null 로 보입니다." >&2
+    echo "  무엇이 도는지  : ./scripts/demo_down.sh --dry-run" >&2
+    echo "  내리려면      : ./scripts/demo_down.sh   (두 벌 이상이어도 전부 내린다)" >&2
+    echo "  일부러 겹치려면: SENTINEL_ALLOW_MULTIPLE=1 ./scripts/demo_up.sh" >&2
+    exit 1
+  fi
+
+  exec 9>"${LOCK_FILE}"
+  if ! flock -n 9; then
+    echo "거부: 다른 demo_up.sh 가 이미 기동 중입니다 (${LOCK_FILE})." >&2
+    echo "  노드가 다 뜨기 전이라 프로세스 검사로는 안 보이는 구간입니다." >&2
+    echo "  그 기동이 끝나기를 기다리거나, 잘못 떴으면 ./scripts/demo_down.sh 로 내리십시오." >&2
+    exit 1
+  fi
+fi
+
+# ----------------------------------------------------------------------
 # 어느 코드로 뜨는지 남긴다 (S15P11A301-294)
 #
 # 이 워크스페이스는 symlink(egg-link) 설치라 `install/` 이 소스를 직접 가리킨다.

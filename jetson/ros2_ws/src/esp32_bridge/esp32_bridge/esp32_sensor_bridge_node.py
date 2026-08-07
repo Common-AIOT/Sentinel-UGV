@@ -81,6 +81,7 @@ from std_msgs.msg import Bool
 from tf2_ros import TransformBroadcaster
 
 from .diagnostics import RebootDetector, build_array, build_status
+from .link_health import ERROR, OK, WARN, environment_verdict
 from .imu_clock import BoardClockOffset
 from .packet_codec import (
     CobsError,
@@ -143,6 +144,13 @@ _PROXIMITY_FRONT_MASK_BIT = 0x01
 
 # `sensor_task.cpp`의 ENV_STATUS_VALID.
 _ENVIRONMENT_STATUS_VALID = 0
+
+# link_health 는 ROS 타입을 모른다(CI 에서 돌아야 한다). 매핑은 여기 둔다.
+_DIAGNOSTIC_LEVELS = {
+    OK: DiagnosticStatus.OK,
+    WARN: DiagnosticStatus.WARN,
+    ERROR: DiagnosticStatus.ERROR,
+}
 
 # sensor_msgs/Imu 관례: orientation_covariance[0] = -1 은 "자세 추정값 없음"을 뜻한다
 # (REP-145). MPU6050 원시 출력에는 융합이 없으므로 이 값을 쓴다.
@@ -275,6 +283,15 @@ class Esp32SensorBridgeNode(Node):
         self._imu_last_sample_time_us: int | None = None
         self._imu_last_status_flags = 0
         self._imu_last_temperature_centi_c = IMU_TEMPERATURE_INVALID
+
+        # 환경 프레임 계측 (S15P11A301-323). IMU 는 「미수신 / BUS_ERROR / 중복」을
+        # 구분해 왔는데 환경만 없었다 — 그래서 「센서가 죽었다」와 「간헐 실패라
+        # 유효 프레임만 버려진다」가 ROS 에서 같아 보였고, 정상 동작이 「펌웨어가
+        # 소스와 다르다」로 오진됐다(2026-08-07).
+        self._environment_received_count = 0
+        self._environment_published_count = 0
+        self._environment_dropped_by_flag: dict[int, int] = {}
+        self._environment_last_status_flags: int | None = None
 
         self._odometry = WheelOdometry(
             WheelOdometryConfig(
@@ -523,10 +540,18 @@ class Esp32SensorBridgeNode(Node):
 
     def _handle_environment_state(self, payload: bytes) -> None:
         state = unpack_environment_state(payload)
+        self._environment_received_count += 1
+        self._environment_last_status_flags = state.status_flags
         if state.status_flags != _ENVIRONMENT_STATUS_VALID:
             # 보드가 마지막 정상값을 그대로 들고 있어, 실패 상태에서 발행하면
-            # 오래된 값이 새 측정처럼 보인다. 실패는 /diagnostics의
-            # ENVIRONMENT_SENSOR_FAULT로만 드러낸다.
+            # 오래된 값이 새 측정처럼 보인다. 그 판단은 그대로 두되 **버린 사실을
+            # 남긴다**(S15P11A301-323) — 종전에는 보드의 ENVIRONMENT_SENSOR_FAULT
+            # 로만 드러났는데, 그 비트는 **연속 3회** 실패에만 뜨고 성공 한 번이면
+            # 리셋되므로(펌웨어 `sensor_task.cpp`) 간헐 실패는 fault 0 인 채로 값만
+            # 사라졌다. 그 조합이 「센서가 죽었다」로 읽혔다.
+            self._environment_dropped_by_flag[state.status_flags] = (
+                self._environment_dropped_by_flag.get(state.status_flags, 0) + 1
+            )
             return
 
         stamp = self._sample_stamp(state.sample_age_ms)
@@ -545,6 +570,7 @@ class Esp32SensorBridgeNode(Node):
         humidity.relative_humidity = state.humidity_deci_pct / 1000.0
         humidity.variance = 0.0
         self._relative_humidity_pub.publish(humidity)
+        self._environment_published_count += 1
 
     def _handle_proximity_state(self, payload: bytes) -> None:
         state = unpack_proximity_state(payload)
@@ -589,7 +615,12 @@ class Esp32SensorBridgeNode(Node):
         self._diagnostics_pub.publish(
             build_array(
                 self.get_clock().now().to_msg(),
-                [board_status, self._build_odometry_status(), self._build_imu_status()],
+                [
+                    board_status,
+                    self._build_odometry_status(),
+                    self._build_imu_status(),
+                    self._build_environment_status(),
+                ],
             )
         )
 
@@ -716,6 +747,32 @@ class Esp32SensorBridgeNode(Node):
                 KeyValue(key="temperature_c", value=temperature_text),
                 KeyValue(key="malformed_payload_count", value=str(self._malformed_payload_count)),
             ],
+        )
+
+    def _build_environment_status(self) -> DiagnosticStatus:
+        """`/environment/*` 가 조용할 때 왜 조용한지 여기서 읽는다 (S15P11A301-323).
+
+        IMU 와 같은 이유이고 같은 모양이다. 이것이 없어서 **정상 동작이 「펌웨어가
+        소스와 다르다」로 오진**됐다(2026-08-07): DHT 가 간헐 실패하면 브리지가 그
+        프레임을 버리는데, 보드의 `ENVIRONMENT_SENSOR_FAULT` 는 연속 3회에만 뜨므로
+        「fault 0 · state STREAMING · 그런데 값이 없다」가 성립한다. 그 조합이 어디에도
+        설명되지 않았다.
+
+        판정은 `link_health.environment_verdict` 가 갖는다 — 시험이 지킨다.
+        """
+        verdict = environment_verdict(
+            received_count=self._environment_received_count,
+            published_count=self._environment_published_count,
+            dropped_by_flag=dict(self._environment_dropped_by_flag),
+            last_status_flags=self._environment_last_status_flags,
+            valid_flags=_ENVIRONMENT_STATUS_VALID,
+        )
+        return DiagnosticStatus(
+            level=_DIAGNOSTIC_LEVELS[verdict.level],
+            name="esp32_bridge: ENVIRONMENT",
+            message=verdict.message,
+            hardware_id=str(self.get_parameter("port").value),
+            values=[KeyValue(key=k, value=v) for k, v in verdict.values.items()],
         )
 
     def _log_malformed_payload(self, message_type: int, exc: Exception) -> None:

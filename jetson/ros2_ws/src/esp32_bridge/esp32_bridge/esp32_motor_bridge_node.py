@@ -39,9 +39,10 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 
 import rclpy
-from diagnostic_msgs.msg import DiagnosticArray
+from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
 from rclpy.node import Node
 from rclpy.qos import (DurabilityPolicy, HistoryPolicy, QoSProfile,
                        ReliabilityPolicy)
@@ -49,6 +50,7 @@ from std_msgs.msg import Bool, String
 from std_srvs.srv import Trigger
 
 from .diagnostics import RebootDetector, build_array, build_status
+from .link_health import ERROR, OK, WARN, motor_link_verdict
 from .protective_relay import ProtectiveStopRelay
 from .packet_codec import (
     CobsError,
@@ -99,6 +101,13 @@ _MOTOR_STATE_NAMES = [
 
 _FRAME_PARSE_ERRORS = (CobsError, LengthError, VersionError, UnknownMessageTypeError, CrcError)
 
+# `link_health` 는 ROS 타입을 모른다(CI 에서 돌아야 한다). 매핑은 여기 둔다.
+_DIAGNOSTIC_LEVELS = {
+    OK: DiagnosticStatus.OK,
+    WARN: DiagnosticStatus.WARN,
+    ERROR: DiagnosticStatus.ERROR,
+}
+
 
 def _state_name(value: int) -> str:
     if 0 <= value < len(_MOTOR_STATE_NAMES):
@@ -113,6 +122,12 @@ class Esp32MotorBridgeNode(Node):
         self.declare_parameter("port", "/dev/sentinel_mcu_motor")
         self.declare_parameter("baudrate", 921600)
         self.declare_parameter("handshake_retry_period_s", 1.0)
+        # 링크 진단 발행 주기 (S15P11A301-323). 보드 DIAGNOSTIC(5Hz)과 달리 **보드가
+        # 죽어 있을 때도** 나가야 하는 값이라 이쪽 시계로 낸다.
+        self.declare_parameter("link_report_period_s", 1.0)
+        # 이 횟수만큼 HELLO 를 보내고도 ACK 이 없으면 경고한다. 기본 5회(5초)는
+        # 부팅 순서상 브리지가 보드보다 먼저 뜨는 정상 구간을 넘긴 값이다.
+        self.declare_parameter("handshake_warn_after_attempts", 5)
         # 초음파 보호정지 중계 (S15P11A301-237, 명세 03-276). 근거와 왜 게이트가
         # 아니라 여기인지는 protective_relay 모듈 docstring 에 있다.
         self.declare_parameter("protective_stop_topic", "/proximity/protective_stop")
@@ -133,6 +148,14 @@ class Esp32MotorBridgeNode(Node):
         self._last_steering_rate_mdps = 0
         self._reboot_detector = RebootDetector()
         self._handshake_ok = False
+        # 링크 계측 (S15P11A301-323). 보드가 죽어도 이 노드는 살아 있으므로,
+        # **무엇을 못 받고 있는지**를 이 값들이 말한다.
+        self._rx_frame_count = 0
+        self._parse_error_count = 0
+        self._parse_errors_by_type: dict[str, int] = {}
+        self._hello_sent_count = 0
+        self._last_rx_monotonic: float | None = None
+        self._handshake_warned = False
 
         self._transport = SerialTransport(port, baudrate, logger=self.get_logger())
         self._transport.open()
@@ -191,6 +214,12 @@ class Esp32MotorBridgeNode(Node):
 
         retry_period = self.get_parameter("handshake_retry_period_s").value
         self._handshake_timer = self.create_timer(retry_period, self._handshake_timer_cb)
+        # **보드가 죽어도 링크 상태를 계속 낸다** (S15P11A301-323). 종전에는 보드의
+        # DIAGNOSTIC 프레임을 받았을 때만 발행해서, 보드가 무응답이면 /diagnostics 에
+        # MOTOR 항목이 아예 없었다 — 「항목 없음」은 화면에서 「정상」과 구별되지 않는다.
+        self._link_timer = self.create_timer(
+            float(self.get_parameter("link_report_period_s").value), self._publish_link_status
+        )
         self._send_hello()
 
     def destroy_node(self) -> bool:
@@ -217,11 +246,56 @@ class Esp32MotorBridgeNode(Node):
             )
 
     def _send_hello(self) -> None:
+        self._hello_sent_count += 1
         self._send_frame(MSG_HELLO)
 
     def _handshake_timer_cb(self) -> None:
-        if not self._handshake_ok:
-            self._send_hello()
+        if self._handshake_ok:
+            return
+        self._send_hello()
+        # **한 번은 크게 말한다** (S15P11A301-323). 종전에는 HELLO 를 영원히 다시
+        # 보내면서 로그가 조용했고, 증상은 관제의 MOTOR_BOARD_NO_ACK 하나뿐이었다.
+        attempts = int(self.get_parameter("handshake_warn_after_attempts").value)
+        if not self._handshake_warned and self._hello_sent_count >= attempts:
+            self._handshake_warned = True
+            port = self.get_parameter("port").value
+            if self._rx_frame_count == 0:
+                self.get_logger().error(
+                    f"모터 ESP32 무응답: HELLO {self._hello_sent_count}회에 답이 없고 "
+                    f"{port} 에서 프레임을 한 번도 받지 못했다. "
+                    "보드 전원·펌웨어·USB 를 확인하라"
+                )
+            else:
+                self.get_logger().error(
+                    f"모터 ESP32 핸드셰이크 실패: 프레임 {self._rx_frame_count}건은 받았으나 "
+                    f"HELLO_ACK 이 없다(해석 실패 {self._parse_error_count}건). "
+                    "보레이트·프로토콜 버전·보드 역할을 확인하라"
+                )
+
+    def _publish_link_status(self) -> None:
+        """링크 상태를 주기적으로 낸다. 판정은 `link_health` 가 갖는다 — 시험이 지킨다."""
+        since = (
+            None if self._last_rx_monotonic is None
+            else time.monotonic() - self._last_rx_monotonic
+        )
+        verdict = motor_link_verdict(
+            handshake_ok=self._handshake_ok,
+            rx_frame_count=self._rx_frame_count,
+            parse_error_count=self._parse_error_count,
+            parse_errors_by_type=dict(self._parse_errors_by_type),
+            hello_sent_count=self._hello_sent_count,
+            since_last_rx_s=since,
+        )
+        status = DiagnosticStatus(
+            level=_DIAGNOSTIC_LEVELS[verdict.level],
+            name="esp32_bridge: MOTOR_LINK",
+            message=verdict.message,
+            hardware_id=str(self.get_parameter("port").value),
+            values=[KeyValue(key=k, value=v) for k, v in verdict.values.items()],
+        )
+        self._diagnostics_pub.publish(
+            build_array(self.get_clock().now().to_msg(), [status])
+        )
 
     def _on_drive_command(self, msg: String) -> None:
         try:
@@ -302,10 +376,25 @@ class Esp32MotorBridgeNode(Node):
             raw = self._transport.read_frame(timeout=0.5)
             if raw is None:
                 continue
+            # **프레임이 선 것과 해석된 것을 따로 센다** (S15P11A301-323). 이 값이
+            # 0 인가 아닌가가 「바이트가 안 온다」와 「보레이트가 어긋나 쓰레기가
+            # 온다」를 가른다 — 종전에는 둘 다 침묵이라 구별할 수 없었다.
+            self._rx_frame_count += 1
+            self._last_rx_monotonic = time.monotonic()
             try:
                 frame = parse_frame(raw)
-            except _FRAME_PARSE_ERRORS:
-                continue  # 조용히 드롭 - 실행하지 않는다(§34-5)
+            except _FRAME_PARSE_ERRORS as error:
+                # 실행하지는 않는다(§34-5). 다만 **버린 사실은 남긴다** — 카운터가
+                # 없어서 진단이 한 바퀴 돌았다(S15P11A301-317).
+                name = type(error).__name__
+                self._parse_error_count += 1
+                self._parse_errors_by_type[name] = self._parse_errors_by_type.get(name, 0) + 1
+                self.get_logger().warning(
+                    f"프레임 해석 실패({name}) — 누적 {self._parse_error_count}건. "
+                    "보레이트·프로토콜 버전을 확인하라",
+                    throttle_duration_sec=10.0,
+                )
+                continue
 
             if self._reboot_detector.observe(frame.sender_uptime_ms):
                 self.get_logger().warn("모터 ESP32 재부팅 감지, 재핸드셰이크")

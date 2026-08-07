@@ -92,6 +92,88 @@
 | `GET /manual/drive?sid=&seq=&dm=&lin=&ang=&ttl=` | `lin`/`ang` 은 −1000..1000 정규화 밀리 단위(보드에서 float 파싱 없음). `ang` 은 CCW=+ (REP-103). 200/400/403/409/423 |
 | `GET /manual/stop?sid=&seq=` | 즉시 구동 0. **세션 불일치에도 수락한다** — 누구의 정지든 존중 |
 | `GET /manual/state` | 조회 전용. **부작용이 하나도 없다** |
+| `GET /manual/speed?percent=` | 수동 주행 상한 0~100%. 게이트 없음 — 속도를 낮추는 건 늘 안전한 방향이다 |
+| `GET /manual/servo/arm` · `disarm` | 서보 PWM 출력. `disarm` 은 듀티 0 이라 서보가 free 가 된다 |
+| `GET /manual/servo/center?deg=` | 서보 중립 60~210° (기본 145°) |
+| `GET /manual/servo/limit?deg=` | 좌우 최대 조향각 0~60° (기본 30°) |
+| `GET /manual/servo/angle?deg=` | 서보 각도 직접 지정(조그). 중립±오프셋 범위 |
+| `GET /manual/servo/recenter` | 조향 중립 복귀 |
+
+`/manual/servo/*` 다섯 개는 전부 **캘리브레이션 게이트**(`calibrationAllowed`)를 통과해야 하며
+실패하면 409 `CAL_BLOCKED` 이다. 거부 조건은 `AUTO_ACTIVE`·`ESTOP_LATCHED`·`FAULT_LATCHED`·
+deadman 눌림·`manualDriveMmps != 0`·실제 PWM 이 아직 살아 있음이다. 폰은 응답의 `cal` 필드를
+보고 입력칸을 잠근다.
+
+### 조종 페이지 (`control_page.h`)
+
+**S15P11A301-312**: 5버튼 D-패드를 터치 조이스틱으로 바꿨다(`drive_test` UI 기준). 위·아래가
+전·후진, 좌·우가 조향이며 **누르고 있는 동안만** deadman 이 선다. D-패드에서는 좌/우를
+전·후진 홀드 중에만 눌리게 `disabled` 로 막아야 했지만, 조이스틱은 그 규칙이 기하로
+표현된다 — 스틱을 좌우 수평으로만 밀면 전·후진 성분이 0 이라 애초에 조향 명령이 나가지
+않는다(§34-2).
+
+`ang` 은 **`|lin| >= 100` 일 때만** 싣는다. 100 은 `STEERING_MIN_DRIVE_MMPS(30) /
+MANUAL_MAX_DRIVE_MMPS(300) x 1000` 이다 — 펌웨어가 어차피 거부할 조향을 보내면 그 거부가
+`STEERING_COMMAND_INVALID`(bit 14)로 올라가 그 비트의 의미를 파괴한다. 화면의 「조향 불가」
+표시도 같은 경계를 본다.
+
+**속도 상한은 보드가 갖는다.** `lin` 은 순수 정규화 스로틀이고 `%` 스케일링은
+`ingestManualPacket` 이 한다 — 폰이 새로고침되거나 다른 조종자가 붙어도 상한이 유지되어야
+하는 값이라 클라이언트에 두지 않았다. 기본 100 이면 그 곱셈은 항등이라 기존 동작과
+`test_mode_arbiter` 가 그대로다. 조향 가능 판정은 **실효 `lin`**(상한을 곱한 뒤)을 봐야 하며,
+페이지도 그렇게 계산한다.
+
+`MANUAL_MAX_DRIVE_MMPS`·`STEERING_MAX_MDEG`·`STEERING_MIN_DRIVE_MMPS` 세 상수의 사본이 페이지
+JS 상단에 있으니 펌웨어에서 값을 바꾸면 같이 바꾼다.
+
+### 조향 캘리브레이션 (S15P11A301-312)
+
+`drive_test.ino` 벤치 스케치의 중립·엔드포인트·출력 on/off 를 펌웨어로 옮긴 것이다. §35-3
+실측이 TBD-HW-008 이라 세 값이 전부 임시값이고, 벤치에서 폰으로 돌려 보고 확정하기 위한
+창구다. **확정되면 `steering.cpp` 상수로 굳힌다.**
+
+| 항목 | 기본 | 범위 | 비고 |
+|---|---|---|---|
+| 서보 중립 | 145° | 60~210° | `SERVO_CENTER_DEG` |
+| 좌우 최대 조향각 | 30° | 0~60° | δ_max 가 몇 도의 서보 회전으로 나가는지를 정한다 |
+| 서보 PWM 출력 | 켬 | — | 끄면 듀티 0, 서보 free |
+
+지켜야 하는 것 넷:
+
+1. **`STEERING_MAX_MDEG` 는 바뀌지 않는다.** 오프셋을 줄이면 δ_max 가 덜 꺾이게 될 뿐
+   프로토콜 상한은 그대로다. 젯슨 `vehicle_kinematics` 의 `max_steering_rad` 와 맞춰 둔
+   값을 폰에서 흔들면 안 된다. **그래서 자율 주행 중 캘리브레이션은 무조건 거부다** —
+   오프셋을 줄여 둔 채 자율로 넘기면 젯슨은 30° 로 계산하는데 실물은 덜 꺾이고, 개루프라
+   아무도 그것을 감지하지 못한다. 캘리브레이션 후 자율로 넘기기 전에 오프셋을 30° 로
+   되돌렸는지 반드시 확인할 것.
+2. **부팅 시 armed 다.** `drive_test` 의 `SERVO_START_ARMED=false` 를 가져오지 않았다.
+   §34-6 이 부팅 직후 중립(δ=0) 초기화를 요구하는데 출력이 꺼져 있으면 그 초기화가
+   물리적으로 일어나지 않는다.
+3. **영속화하지 않는다.** 재부팅하면 145°/30°/armed 로 돌아온다. 잘못 맞춘 중립이 플래시에
+   남아 다음 부팅의 §34-6 초기화를 오염시키면 아무도 원인을 찾지 못한다.
+4. **조그(`/manual/servo/angle`)는 §34-2 를 의도적으로 우회한다.** 정지 중 조향 금지를
+   건너뛰는 유일한 경로이며 용도는 바퀴를 띄운 벤치 실측뿐이다. 슬루레이트와 ±δ_max
+   클램프는 그대로 걸린다. `steeringSetTarget` 이 아니라 `steeringJogToMdeg` 를 쓰는 이유가
+   이것 하나다.
+
+쓰기는 HTTP 계층이 게이팅하고, 실제 반영은 언제나 `control_task` 의 10ms 틱 하나다 —
+`control_task.cpp` 13-20 이 없앤 세 번째 writer 를 되살리지 않기 위해서다.
+
+### mDNS 생명주기
+
+종전 코드는 연결 **전이**에서만 `MDNS.begin()` 을 불렀고 끊길 때 `MDNS.end()` 를 부르지
+않았다. 그래서 (a) 첫 등록이 실패하면 재시도가 영원히 없고, (b) WiFi 가 한 번이라도 끊기면
+`g_mdnsStarted` 가 true 로 남아 재연결 후 재등록을 건너뛰었다. 둘 다 **HTTP 는 IP 로 멀쩡히
+되는데 `sentinel-manual.local` 만 죽는** 증상으로 나타난다. 지금은 연결돼 있고 미등록이면
+3초마다 재시도하고, 끊길 때 `MDNS.end()` 로 내린다.
+
+안드로이드는 그와 별개로 `.local` 해석을 잘 못한다. 안 되면 핫스팟 클라이언트 목록에서 IP 를
+직접 확인해 쓴다.
+
+멈추는 경로는 그대로다 — pointerup/cancel/lostpointercapture, 긴급 정지 버튼, Space/Escape,
+`blur`·`visibilitychange`·`pagehide`, 50ms 재전송 + 단일 in-flight 가드, 유휴 시
+`/manual/state` 2Hz 폴링. 페이지를 `file:` 로 열면 보드 없이 레이아웃만 보는 오프라인
+미리보기로 뜬다.
 
 ### 조종 페이지 (`control_page.h`)
 
@@ -148,6 +230,18 @@ TTL(250ms) 만료, WiFi 끊김, `STOP_COMMAND`(추가로 re-arm 요구), 젯슨 
 구동 PWM(20kHz)과 서보 PWM(50Hz)은 **LEDC 타이머를 공유하지 않는다.** 공유하면 한쪽
 주파수를 바꿀 때 다른 쪽이 함께 흔들린다(§34-1). Core 2.x에서는 구동이 채널 0~3
 (타이머 0·1), 서보가 채널 4(타이머 2)다.
+
+## 부팅 상태 표시 (S15P11A301-312)
+
+부팅 후 5초간 폰 핫스팟 접속 상태와 접속 주소(IP·mDNS)를 `boot_status.h/.cpp` 가
+**Serial2**(GPIO16=RX2·GPIO17=TX2, 115200)로 보여준다. Jetson 전용 UART(Serial,
+921600)는 건드리지 않으며, comm_task 의 시작도 지연시키지 않는다 — 두 채널은 다른
+물리 UART라 시간적으로 완전히 독립이다. Jetson 핸드셰이크는 이 창과 무관하게
+언제나 부팅과 동시에 즉시 시작한다(아래 「디버그 주의」와 같은 이유).
+
+**WROOM-32 온보드 USB 브리지는 UART0(Jetson용) 하나뿐이다.** 이 표시를 보려면
+GPIO16·GPIO17·GND 에 별도 USB-UART 어댑터를 물려야 한다. 컴파일 타임에 끄려면
+빌드 정의에 `ENABLE_BOOT_STATUS_SERIAL2=0` 을 추가한다.
 
 ## 디버그 주의
 

@@ -31,8 +31,25 @@ void controlTaskFn(void* pvParameters) {
     const uint32_t now = millis();
 
     DriveDecision decision{};
-    motorSharedStateUpdate([now, &decision](MotorSharedState& s) {
+    // 캘리브레이션 의도는 뮤텍스 안에서 읽어 오고, steering.* 호출은 뮤텍스 밖에서
+    // 한다. HTTP 태스크는 필드만 쓰고 액추에이터는 끝까지 이 태스크 하나다.
+    uint8_t centerDeg = 0;
+    uint8_t maxOffsetDeg = 0;
+    bool armed = false;
+    bool jogPending = false;
+    int16_t jogMdeg = 0;
+
+    motorSharedStateUpdate([now, &decision, &centerDeg, &maxOffsetDeg, &armed,
+                            &jogPending, &jogMdeg](MotorSharedState& s) {
       decision = arbitrateDrive(s, now);
+
+      centerDeg = s.servoCenterDeg;
+      maxOffsetDeg = s.servoMaxOffsetDeg;
+      armed = s.servoArmed;
+      // 1회성 요청이므로 여기서 소비한다. 다음 틱에 또 걸리면 안 된다.
+      jogPending = s.servoJogPending;
+      jogMdeg = s.servoJogMdeg;
+      s.servoJogPending = false;
 
       if (decision.applyNextState) {
         s.state = decision.nextState;
@@ -55,6 +72,10 @@ void controlTaskFn(void* pvParameters) {
         s.targetDriveRightMmps = 0;
       }
     });
+
+    // 매핑을 먼저 갱신한다. 아래 steeringSetTarget·steeringUpdate 가 새 중립과
+    // 새 게인으로 계산하도록 순서를 지킨다.
+    steeringApplyCalibration(centerDeg, maxOffsetDeg, armed);
 
     if (decision.owner == DriveOwner::NONE) {
       // 구동만 끊는다. 조향 목표는 그대로 두고 steeringUpdate() 가 계속 마지막
@@ -86,6 +107,13 @@ void controlTaskFn(void* pvParameters) {
         }
       }
       applyDriveTargets(decision.driveLeftMmps, decision.driveRightMmps);
+    }
+
+    // 조그는 **주행 목표를 반영한 뒤**에 건다. 순서가 반대면 정지 상태에서
+    // applySteering=false 로 걸러진 조향이 조그를 덮어써 아무 일도 일어나지 않는다.
+    // manual_web 이 구동 0 일 때만 요청을 받으므로 여기서 다시 검사하지 않는다.
+    if (jogPending) {
+      steeringJogToMdeg(jogMdeg);
     }
 
     // 방향 전환 데드타임 해제와 조향 슬루레이트는 통신과 무관하게 계속 돌아야

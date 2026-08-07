@@ -90,6 +90,31 @@ struct MotorSharedState {
   uint8_t manualRunPackets = 0;
   uint32_t manualRunStartedMs = 0;
 
+  // ---- 조향 캘리브레이션 (S15P11A301-312, drive_test 벤치 기능 이식) ----
+  //
+  // §35-3 「조향 중립·각도 매핑」 실측이 아직 TBD-HW-008 이라 세 값이 전부 임시값이다.
+  // 벤치에서 폰 UI 로 돌려 보고 확정하기 위한 런타임 창구이며, **확정되면
+  // steering.cpp 의 상수로 굳히고 이 경로는 조정용으로만 남는다.**
+  //
+  // **재부팅하면 전부 기본값으로 돌아간다.** 영속화하지 않는 것은 의도다 - 잘못
+  // 맞춘 중립이 플래시에 남아 다음 부팅의 §34-6 중립 초기화를 오염시키면, 그때는
+  // 아무도 그것이 왜 틀어졌는지 찾지 못한다.
+  //
+  // 쓰기는 manual_web 이 게이팅한다(자율 주행 중·바퀴 구동 중·래치 중 거부).
+  // 실제 반영은 언제나 control_task 의 10ms 틱 하나뿐이다.
+  bool servoArmed = true;          // 서보 PWM 출력. false 면 펄스를 끊어 서보가 free 가 된다
+  uint8_t servoCenterDeg = 145;    // 서보 중립 각도. steering.cpp SERVO_CENTER_DEG 와 같은 기본값
+  uint8_t servoMaxOffsetDeg = 30;  // 좌우 최대 오프셋. δ_max 가 이 각도로 매핑된다
+
+  // 캘리브레이션 조그 1회 요청. control_task 가 소비하며 §34-2 정지 중 조향 금지를
+  // 의도적으로 우회한다 - 바퀴를 띄운 벤치에서 엔드포인트를 재는 것이 유일한 용도다.
+  bool servoJogPending = false;
+  int16_t servoJogMdeg = 0;
+
+  // 수동 주행 최대 속도(%). 보드가 최종 권한을 갖는다 - 폰이 새로고침되거나 다른
+  // 조종자가 붙어도 이 상한은 유지된다. 100 이면 MANUAL_MAX_DRIVE_MMPS 그대로다.
+  uint8_t manualSpeedLimitPercent = 100;
+
   // 수동 래치 중 거부한 젯슨 명령 수. 진단용이며 CTRL-29 가 증가를 확인한다.
   uint32_t jetsonRefusedCount = 0;
   // 거부 ACK 엣지 게이팅. 50Hz REJECTED 홍수를 막는다.

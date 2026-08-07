@@ -39,3 +39,24 @@ int16_t steeringActuatorCmdUs();
 
 // ±δ_max(밀리도). 상위 계층 클램프와 값을 맞추기 위해 노출한다.
 int16_t steeringMaxMdeg();
+
+// ---- 런타임 캘리브레이션 (S15P11A301-312) ----
+//
+// §35-3 실측이 TBD-HW-008 이라 중립·엔드포인트가 임시값이다. 벤치에서 폰 UI 로
+// 맞춰 보기 위한 창구이며, **모두 control_task 에서만 호출한다** - HTTP 계층이
+// 직접 부르면 control_task.cpp 13-20 이 없앤 세 번째 writer 가 되살아난다.
+
+// 하드 한계. 어떤 경로로 들어와도 서보가 기구 범위를 벗어나지 못한다.
+constexpr uint8_t STEERING_CENTER_HARD_MIN_DEG = 60;
+constexpr uint8_t STEERING_CENTER_HARD_MAX_DEG = 210;
+constexpr uint8_t STEERING_OFFSET_HARD_MAX_DEG = 60;
+
+// 중립·오프셋·출력 활성을 한 번에 반영한다. 매 틱 호출해도 되도록 값이 같으면
+// 아무 일도 하지 않는다. 범위를 벗어난 인자는 여기서도 다시 클램프한다(§21.6).
+void steeringApplyCalibration(uint8_t centerDeg, uint8_t maxOffsetDeg, bool armed);
+
+// 캘리브레이션 조그. **§34-2 의 정지 중 조향 금지를 의도적으로 우회한다** — 바퀴를
+// 띄운 벤치에서 중립과 엔드포인트를 실측하는 것이 이 함수의 유일한 용도다.
+// 호출 조건(자율 아님·구동 0·armed)은 manual_web 이 강제한다. 슬루레이트는 그대로
+// 적용되므로 서보가 계단 입력으로 튀지는 않는다.
+void steeringJogToMdeg(int16_t mdeg);

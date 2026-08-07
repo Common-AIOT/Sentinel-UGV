@@ -19,6 +19,7 @@
 #include <freertos/task.h>
 
 #include "board_state.h"
+#include "boot_status.h"
 #include "comm_task.h"
 #include "control_task.h"
 #include "manual_web.h"
@@ -44,6 +45,11 @@ constexpr UBaseType_t CONTROL_TASK_PRIORITY = 3;
 constexpr UBaseType_t MANUAL_WEB_TASK_PRIORITY = 1;
 
 void setup() {
+  // 5초 창의 시작을 실제 전원 인가 시점에 최대한 맞추기 위해 다른 초기화보다
+  // 먼저 부른다. **별도 UART(Serial2)에만 쓴다** - comm_task 의 Serial(921600,
+  // Jetson 전용)에는 손대지 않으므로 그 태스크의 시작 시각과 완전히 무관하다.
+  bootStatusInit();
+
   // §34-6: 전원 인가 직후 PWM=0·driver enable=LOW·조향 중립(δ=0)을 태스크 생성보다
   // 먼저 보장한다. 조향만 중립으로 시작하는 것은 재부팅 직후에 믿을 수 있는 마지막
   // 각도가 없기 때문이며(RAM이 지워졌고 실제 바퀴 각도를 읽을 수단이 없다), 이후

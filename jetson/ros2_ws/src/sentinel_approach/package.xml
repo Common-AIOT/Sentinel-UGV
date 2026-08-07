@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>sentinel_approach</name>
+  <version>0.1.0</version>
+  <description>PERSON_APPROACHING 접근 주행 (S15P11A301-247). 탐지 노드가 position 을 채우지 못하므로 방위각+LiDAR 거리만 쓰는 bearing-only 경로다. 판단은 rclpy 없는 approach.py 에 있고 노드는 배선만 한다.</description>
+  <maintainer email="team@example.com">Sentinel Team</maintainer>
+  <license>Apache-2.0</license>
+
+  <depend>rclpy</depend>
+  <depend>sensor_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>std_msgs</depend>
+
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

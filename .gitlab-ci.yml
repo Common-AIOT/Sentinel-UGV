@@ -310,7 +310,7 @@ test:backend-dockerfile:
 # ROS가 source돼 있어 rclpy가 보이고 시스템 파이썬에 requests도 깔려 있는데, CI
 # 컨테이너에는 둘 다 없습니다. 위 스크립트가 전용 venv와 `env -i`로 그 차이를
 # 없애 줍니다.
-# 탐사 순수 모듈 시험 (S15P11A301-172). numpy 가 필요해서 contract 잡(alpine —
+# 탐사·접근 순수 모듈 시험 (S15P11A301-172·247). numpy 가 필요해서 contract 잡(alpine —
 # musl 이라 numpy 휠이 없다)에 넣지 못하고 slim 이미지로 따로 돈다.
 # sentinel_perception 이 같은 이유로 빠져 있는 것과 같은 제약이다.
 test:exploration:
@@ -319,11 +319,15 @@ test:exploration:
   rules:
     - changes:
         - jetson/ros2_ws/src/sentinel_exploration/**/*
+        # 접근(S15P11A301-247)도 여기서 돈다. numpy 는 안 쓰지만 순수 모듈 시험이라
+        # 성격이 같고, job 을 하나 더 만들면 같은 이미지를 두 번 받는다.
+        - jetson/ros2_ws/src/sentinel_approach/**/*
     - if: '$CI_PIPELINE_SOURCE == "web"'
   before_script:
     - pip install --quiet numpy pytest
   script:
     - python -m pytest jetson/ros2_ws/src/sentinel_exploration/test -q
+    - python -m pytest jetson/ros2_ws/src/sentinel_approach/test -q
 
 test:message-contract:
   stage: test

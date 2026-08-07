@@ -15,6 +15,10 @@ import { missionStateFromServer } from "./missionStatus";
 import { api, ApiError, type CommandType } from "@/lib/api";
 import { motionFromLatest } from "@/features/telemetry/motionReading";
 import {
+  sensorsFromLatest,
+  sensorsFromMissionPoint,
+} from "@/features/telemetry/sensorReading";
+import {
   createStompClient,
   missionEventsTopic,
   missionEncountersTopic,
@@ -248,16 +252,17 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  // ── 센서 실측 폴링 (S15P11A301-205·255) ──────────────────────────────────
+  // ── 센서 실측 폴링 (S15P11A301-205·255·322) ──────────────────────────────
   // 임무 중에는 임무 텔레메트리의 마지막 버킷을, 대기 중에는 임무 무관 최신값
   // (/telemetry/latest)을 쓴다 — 차량이 임무 없이 켜져 있는 시간이 길어서다.
+  // **임무 버킷이 비면 최신값으로 내려간다**(S15P11A301-322) — 임무가 열려 있다는
+  // 이유만으로 살아 있는 값을 감추지 않는다.
   // 어느 쪽이든 60초 넘게 오래된 값은 결측으로 보여준다 — 죽은 센서를 살아 있는
   // 것처럼 보여주지 않는다(젯슨 6초 null 규칙과 같은 원칙). 대기 값은 시각이
-  // 그룹별(온습도·MCU)로 따로 오므로 각각 판정한다.
+  // 그룹별(온습도·MCU)로 따로 오므로 각각 판정하며, 그 판정은 sensorReading 이 갖는다.
   useEffect(() => {
     let cancelled = false;
     const FRESH_MS = 60_000;
-    const fresh = (iso: string | null) => iso !== null && Date.now() - Date.parse(iso) <= FRESH_MS;
 
     const poll = async () => {
       try {
@@ -265,44 +270,41 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
           const from = new Date(Date.now() - FRESH_MS).toISOString();
           const points = await api.missionTelemetry(missionId, 10, from);
           if (cancelled) return;
-          if (points.length === 0) {
-            setSensors(INITIAL_SENSORS);
-            setMotion(INITIAL_MOTION);
-            setStatus(s => ({ ...s, health: { ...s.health, mcuConnected: null } }));
+          const last = points.length > 0 ? points[points.length - 1] : null;
+          if (last) {
+            setSensors(sensorsFromMissionPoint(last));
+            // 주행 지표는 임무 중에도 같은 응답에 이미 들어 있다(#205).
+            setMotion({
+              linearVelocity: last.linearVelocity,
+              angularVelocity: last.angularVelocity,
+              updatedAt: Date.parse(last.time),
+            });
+            // MCU 연결은 상태판 건강 표시와도 같은 사실이어야 한다.
+            setStatus(s => ({ ...s, health: { ...s.health, mcuConnected: last.mcuConnected } }));
             return;
           }
-          const last = points[points.length - 1];
-          setSensors({
-            temperature: last.temperature,
-            humidity: last.humidity,
-            mcuConnected: last.mcuConnected,
-            updatedAt: Date.parse(last.time),
-          });
-          // 주행 지표는 임무 중에도 같은 응답에 이미 들어 있다(#205).
-          setMotion({
-            linearVelocity: last.linearVelocity,
-            angularVelocity: last.angularVelocity,
-            updatedAt: Date.parse(last.time),
-          });
-          // MCU 연결은 상태판 건강 표시와도 같은 사실이어야 한다.
-          setStatus(s => ({ ...s, health: { ...s.health, mcuConnected: last.mcuConnected } }));
-          return;
+          // **비었으면 결측을 세우지 않고 최신값으로 내려간다** (S15P11A301-322).
+          //
+          // 종전에는 여기서 INITIAL_SENSORS 를 세우고 끝냈다. 그래서 **살아 있는
+          // 값이 화면에서 사라졌다** — 젯슨이 재시작하면 missionId 를 잃고 이후
+          // telemetry 가 그 임무에 붙지 않는데, 프런트는 여전히 그 임무(닫히지
+          // 않은 채 남은)의 telemetry 만 보고 있었다. 실측(2026-08-07): 임무
+          // 버킷 0건, `/telemetry/latest` 는 24.7℃/60.0% 를 현재 시각으로 주고
+          // 있었고 ROS 토픽도 흐르고 있었다. 증상은 「센서가 죽었다」로 읽혔다.
+          //
+          // 온습도·MCU·주행 지표는 **임무 귀속과 무관한 관측값**이라 이 폴백이
+          // 값을 왜곡하지 않는다. 고장을 감추지도 않는다 — 로봇이 실제로 죽으면
+          // 최신값도 60초 신선도에 걸려 결측이 된다.
         }
 
         const d = await api.telemetryLatest();
         if (cancelled) return;
-        const envFresh = fresh(d.environmentTime);
-        const mcuFresh = fresh(d.mcuTime);
-        const mcu = mcuFresh ? d.mcuConnected : null;
-        setSensors({
-          temperature: envFresh ? d.temperature : null,
-          humidity: envFresh ? d.humidity : null,
-          mcuConnected: mcu,
-          updatedAt: envFresh && d.environmentTime !== null ? Date.parse(d.environmentTime) : null,
-        });
-        // 신선도 판정과 결측 처리는 motionFromLatest 가 갖는다 — 시험이 지킨다(#300).
+        // 신선도 판정과 결측 처리는 sensorReading·motionFromLatest 가 갖는다 —
+        // 시험이 지킨다(#300·#322).
+        const sensors = sensorsFromLatest(d, Date.now());
+        setSensors(sensors);
         setMotion(motionFromLatest(d, Date.now()));
-        setStatus(s => ({ ...s, health: { ...s.health, mcuConnected: mcu } }));
+        setStatus(s => ({ ...s, health: { ...s.health, mcuConnected: sensors.mcuConnected } }));
       } catch {
         // 일시적 오류는 다음 폴링에 맡긴다. 마지막 표시값은 유지된다.
       }

@@ -196,6 +196,11 @@ def generate_launch_description():
         # 아래에서 _effective_exploration 으로 AND 를 걸어 구조로 묶는다 —
         # enable_nav2 없이 탐사만 켜면 「탐사가 도는데 제자리」가 된다.
         DeclareLaunchArgument('enable_exploration', default_value='false'),
+        # 사람 접근 주행 (S15P11A301-247). exploration 과 달리 **Nav2 가 필요 없다** —
+        # bearing-only 라 카메라 방위각과 LiDAR 거리만 쓴다. 그래서 AND 로 묶는 조건도
+        # nav2 가 아니라 탐지(enable_detector)다. 기본은 꺼짐이며 모터를 돌리는
+        # 스위치(enable_safety)는 사람이 따로 켠다.
+        DeclareLaunchArgument('enable_approach', default_value='false'),
         # 안전 체인 (S15P11A301-237). Nav2 와 같은 이유로 기본 꺼짐이며, 추가로
         # **켜는 순간 바퀴가 돌 수 있는 상태가 된다.** 지금까지 데모 스택은
         # /cmd_vel 발행자가 없어서 구조적으로 못 움직였는데, 이 체인이 그 연결을
@@ -237,6 +242,16 @@ def generate_launch_description():
             AndSubstitution(
                 LaunchConfiguration('enable_exploration'),
                 LaunchConfiguration('enable_nav2'),
+            ),
+        ),
+        # 접근 실효 조건 = enable_approach AND enable_detector. **Nav2 를 요구하지
+        # 않는다** — bearing-only 는 지도 좌표 목표 없이 방위각과 LiDAR 거리로 간다
+        # (S15P11A301-247). 대신 사람 후보가 없으면 접근할 대상이 없다.
+        SetLaunchConfiguration(
+            '_effective_approach',
+            AndSubstitution(
+                LaunchConfiguration('enable_approach'),
+                LaunchConfiguration('enable_detector'),
             ),
         ),
         # 데모 기본은 TLS다. 관제 웹(HTTPS)이 평문 WHEP를 혼합 콘텐츠로
@@ -315,6 +330,10 @@ def generate_launch_description():
         # Nav2 를 안전 체인 앞에 두지 않는 것과 같은 이유다.
         _include('sentinel_bringup', 'exploration.launch.py',
                  '_effective_exploration', 12.0),
+        # 접근도 안전 체인 뒤다 — /cmd_vel_nav 를 내는 것은 같으므로 먼저 뜨면
+        # 첫 명령이 아무도 안 듣는 토픽으로 사라진다.
+        _include('sentinel_bringup', 'approach.launch.py',
+                 '_effective_approach', 12.0),
         _include('sentinel_streaming', 'streaming.launch.py',
                  'enable_streaming', 4.0,
                  {'webrtc_encryption': LaunchConfiguration('webrtc_encryption')}),

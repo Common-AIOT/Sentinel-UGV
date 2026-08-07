@@ -151,6 +151,8 @@ export interface TelemetryPoint {
   angularVelocity: number | null;
   /** 구간 bool_and — 한 번이라도 끊겼으면 false, 보고가 없었으면 null. */
   mcuConnected: boolean | null;
+  /** 모터 보드 링크 (#317). mcuConnected 는 센서 보드다 — 보드가 둘이다. */
+  motorLinkOk: boolean | null;
   /**
    * 녹화기 상태 (#310). recorderOk 도 구간 bool_and — 한 번이라도 실패했으면 false,
    * 보고가 없었으면 null 이며 그것은 「정상」이 아니라 「판정 근거 없음」이다.
@@ -170,6 +172,8 @@ export interface TelemetryLatest {
   humidity: number | null;
   mcuTime: string | null;
   mcuConnected: boolean | null;
+  /** 모터 보드 링크 (#317). mcuTime 과 같은 행에서 온다 — 신선도도 그것을 쓴다. */
+  motorLinkOk: boolean | null;
   /** 녹화기 상태 (#310). mcuTime 과 같은 행에서 온다 — 신선도도 그것으로 본다. */
   recorderOk: boolean | null;
   recorderLastFailure: string | null;

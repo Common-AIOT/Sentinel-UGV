@@ -55,6 +55,7 @@ from std_msgs.msg import String
 
 from .command_relay import CommandRelay
 from .message_mapper import (
+    link_state,
     SAFETY_STATE_BY_MISSION_STATE,
     active_mission_id,
     environment_payload,
@@ -113,6 +114,10 @@ class CloudBridgeNode(Node):
         self.declare_parameter('telemetry_period_seconds', 0.5)
         self.declare_parameter('camera_topic', '/camera/image_raw/compressed')
         self.declare_parameter('scan_topic', '/scan')
+        # 모터 보드 링크 (S15P11A301-317). 보드가 DRIVE_STATE 를 50Hz 로 보내므로
+        # 이 토픽의 신선도가 곧 링크 상태다 — mcuConnected 가 엔코더 토픽으로 센서
+        # 보드를 보는 것과 같은 방식이고, **보드가 둘이라 값도 둘이어야 한다.**
+        self.declare_parameter('drive_state_topic', '/esp32_motor_bridge/drive_state')
         # ESP32 실측값 (S15P11A301-213). 기본값은 esp32_bridge.yaml의
         # 발행 토픽과 같아야 한다 — 다르면 구독이 조용히 비어 있고
         # environment/motion이 계속 null이라 미구현과 구분되지 않는다.
@@ -186,6 +191,7 @@ class CloudBridgeNode(Node):
         self._camera_last_seen: float | None = None
         self._scan_last_seen: float | None = None
         self._candidates_last_seen: float | None = None
+        self._drive_state_last_seen: float | None = None
 
         # ESP32 실측값 (S15P11A301-213). 여기는 생존이 아니라 값을 쓰므로
         # 마지막 값과 수신 시각을 함께 들고 있는다.
@@ -245,6 +251,13 @@ class CloudBridgeNode(Node):
         self.create_subscription(
             String, self._param('candidates_topic'),
             self._on_candidates, sensor_qos,
+        )
+
+        # 모터 보드 링크 (S15P11A301-317). 값을 쓰지 않고 **도착 시각만** 본다 —
+        # 판정은 신선도이고, 페이로드는 esp32_motor_bridge 가 이미 다룬다.
+        self.create_subscription(
+            String, self._param('drive_state_topic'),
+            self._on_drive_state, sensor_qos,
         )
 
         # ESP32 실측값 (S15P11A301-213).
@@ -415,6 +428,14 @@ class CloudBridgeNode(Node):
 
     def _on_scan(self, _message: LaserScan) -> None:
         self._scan_last_seen = self._now()
+
+    def _on_drive_state(self, _message: String) -> None:
+        """모터 보드 링크 생존 판정 (S15P11A301-317). 도착 시각만 본다.
+
+        `_on_candidates` 와 같은 구조다. 보드가 살아 있으면 이 토픽이 50Hz 로
+        오고, 보드가 죽거나 USB 가 빠지면 `esp32_motor_bridge` 가 발행을 멈춘다.
+        """
+        self._drive_state_last_seen = self._now()
 
     def _on_candidates(self, _message: String) -> None:
         """탐지 노드 생존 판정 (S15P11A301-192). 도착 시각만 본다.
@@ -694,11 +715,28 @@ class CloudBridgeNode(Node):
             'mcuConnected': self._fresh(self._odometry_last_seen),
             'lidarOk': self._fresh(self._scan_last_seen),
             'cameraOk': self._fresh(self._camera_last_seen),
+            # 모터 보드 (S15P11A301-317). mcuConnected 와 **다른 보드**다 — 그쪽은
+            # 엔코더를 내는 센서 보드이고 이쪽은 바퀴를 돌리는 모터 보드다. 2026-08-06
+            # 실기동에서 모터 보드만 죽었는데 화면에는 아무 표시가 없어, 조작자가
+            # 명령을 눌러 6초쯤 기다린 뒤 거부 알림으로만 알 수 있었다.
+            'motorLinkOk': self._motor_link_ok(),
             # 위 셋과 달리 토픽 신선도가 아니라 마감 결과다 (S15P11A301-309).
             # recorder는 이벤트가 끝날 때만 발행하므로 신선도로 판단하면 조용한
             # 정상 상태가 장애로 보인다.
             **self._recorder_health,
         }
+
+    def _motor_link_ok(self) -> bool | None:
+        """모터 보드 링크. 판정은 `link_state` 가 갖는다 — 시험이 지킨다.
+
+        **「한 번도 못 받음」을 그대로 null 로 두지 않는다** (S15P11A301-317). 그러면
+        부팅부터 죽어 있던 보드가 화면에서 조용해지는데, 2026-08-06 실기동이 정확히
+        그 경우였다. 자세한 근거는 `link_state` 의 docstring 에 있다.
+        """
+        return link_state(
+            self._fresh(self._drive_state_last_seen),
+            self.count_publishers(self._param('drive_state_topic')),
+        )
 
     def _environment(self) -> dict[str, float] | None:
         """DHT11 온습도. 오래되면 null이다 (S15P11A301-213)."""
@@ -934,6 +972,8 @@ class CloudBridgeNode(Node):
                 # null인 이유가 설명된다 — 값이 없는 것과 보드가 빠진 것을
                 # 관제가 구분할 수 있어야 한다.
                 'mcu': bool(self._fresh(self._odometry_last_seen)),
+                # 모터 보드는 따로 본다 (S15P11A301-317). 'mcu' 는 센서 보드다.
+                'motor': bool(self._motor_link_ok()),
                 # 관제가 "임무 상태가 왜 비어 있나"를 구분할 수 있게 한다.
                 'missionManager': alive,
             },

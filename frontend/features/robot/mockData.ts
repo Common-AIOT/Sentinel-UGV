@@ -90,9 +90,16 @@ export type SafetyState =
  * false와 null을 같이 표시하면 "연동 전"과 "고장"을 구분할 수 없다.
  */
 export interface ComponentHealth {
+  /** 센서 ESP32(엔코더 발행자). 모터 보드와 **다른 보드**다. */
   mcuConnected: boolean | null;
   lidarOk: boolean | null;
   cameraOk: boolean | null;
+  /**
+   * 모터 ESP32 링크 (S15P11A301-317). 보드가 둘이라 값도 둘이다 — 2026-08-06
+   * 실기동에서 모터 보드만 죽었을 때 화면이 그것을 말할 값이 없었고, 조작자는
+   * 명령을 눌러 거부 알림을 받고서야 알았다.
+   */
+  motorLinkOk: boolean | null;
 }
 
 export interface RobotStatus {

@@ -133,6 +133,7 @@ const TELEMETRY: TelemetryPoint[] = Array.from({ length: 40 }, (_, i) => ({
   linearVelocity: null,
   angularVelocity: null,
   mcuConnected: null,
+  motorLinkOk: null,
   // #310 추가 필드. null 은 「정상」이 아니라 「판정 근거 없음」이며, 실험판에는
   // 녹화기 보고가 없으므로 그것이 맞다.
   recorderOk: null,

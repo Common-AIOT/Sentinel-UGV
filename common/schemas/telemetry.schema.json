@@ -84,6 +84,10 @@
         },
         "lidarOk": {"type": ["boolean", "null"]},
         "cameraOk": {"type": ["boolean", "null"]},
+        "motorLinkOk": {
+          "description": "모터 ESP32 링크 상태 (S15P11A301-317). `~/drive_state` 신선도로 판단한다 — 보드가 50Hz로 보내므로 조용하면 링크가 끊긴 것이다. null은 「확인할 수단이 없음」이고 false는 「확인했고 끊김」이다(mcuConnected의 3값 원칙과 같다). mcuConnected와 별개인 이유는 **보드가 둘**이기 때문이다 — mcuConnected는 센서 보드(엔코더 발행자), 이 값은 모터 보드다. 필수가 아닌 이유는 recorderOk와 같다: 모터 보드 없이 도는 구성이 있고 그때는 키 자체가 없다.",
+          "type": ["boolean", "null"]
+        },
         "recorderOk": {
           "description": "마지막으로 마감한 이벤트가 영상을 남겼는가 (S15P11A301-309). null은 이번 기동에서 마감한 이벤트가 없다는 뜻이다. 필수가 아닌 이유는 recorder 없이 도는 구성이 있기 때문이며, 그때는 키 자체가 없다.",
           "type": ["boolean", "null"]

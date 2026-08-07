@@ -22,6 +22,10 @@ public record TelemetryLatestResponse(
         Double humidity,
         Instant mcuTime,
         Boolean mcuConnected,
+        // 모터 보드 링크 (S15P11A301-317). mcuConnected 는 **센서 보드**(엔코더 발행자)이고
+        // 이 값은 **모터 보드**다. 보드가 둘인데 값이 하나뿐이라 모터 보드만 죽었을 때
+        // 화면이 그것을 말할 방법이 없었다. 같은 행에서 오므로 mcuTime 을 함께 쓴다.
+        Boolean motorLinkOk,
         // 녹화기 상태 (S15P11A301-310). mcuTime 과 같은 행에서 온다 — 신선도도 그것을 쓴다.
         // 두 필드는 독립이며 합치지 않는다: recorderOk=true 와 사유가 함께 오는 것이
         // 「지금은 정상이지만 이번 기동에 실패가 있었다」는 정상 조합이다.

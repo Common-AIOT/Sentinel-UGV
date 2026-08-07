@@ -250,6 +250,35 @@ def test_telemetry_with_all_fields_null_passes_schema():
     }
 
 
+def test_telemetry_carries_motor_link_separately_from_mcu():
+    """모터 보드 링크는 mcuConnected 와 **다른 값**이다 (S15P11A301-317).
+
+    보드가 둘이다 — mcuConnected 는 엔코더를 내는 센서 보드, motorLinkOk 는 바퀴를
+    돌리는 모터 보드다. 2026-08-06 실기동에서 모터 보드만 죽었는데 telemetry 에 그것을
+    말하는 값이 없어 관제 화면이 침묵했다. 한 메시지에서 두 값이 달라질 수 있어야 한다.
+    """
+    message = MessageMapper("SENTINEL-01").telemetry(
+        health={
+            "mcuConnected": True,
+            "lidarOk": True,
+            "cameraOk": True,
+            "motorLinkOk": False,
+        }
+    )
+    _validate(message)
+    assert message["data"]["health"]["mcuConnected"] is True
+    assert message["data"]["health"]["motorLinkOk"] is False
+
+
+def test_telemetry_without_motor_link_still_passes_schema():
+    """옛 젯슨은 이 키를 보내지 않는다. 스키마가 그것을 막으면 수집이 통째로 멈춘다."""
+    message = MessageMapper("SENTINEL-01").telemetry(
+        health={"mcuConnected": True, "lidarOk": True, "cameraOk": True}
+    )
+    _validate(message)
+    assert "motorLinkOk" not in message["data"]["health"]
+
+
 def test_recorder_health_maps_status_to_health_fields():
     """recording_manager의 status를 health 조각으로 옮긴다 (S15P11A301-309)."""
     from sentinel_bridge.message_mapper import recorder_health  # noqa: E402
@@ -1463,3 +1492,32 @@ def test_components는_불리언_맵이라_스키마_변경이_필요없다():
     schema = _load_schema('state.schema.json')
     components = schema['properties']['components']
     assert components['additionalProperties'] == {'type': 'boolean'}
+
+
+def test_link_state_reports_board_that_never_answered():
+    """부팅부터 죽어 있던 보드를 **경고로** 낸다 (S15P11A301-317).
+
+    2026-08-06 실기동이 이 경우였다 — 모터 보드가 HELLO 에 한 번도 답하지 않았다.
+    `_fresh` 규칙(한 번도 못 받음 = None)을 그대로 쓰면 화면이 조용해서, 정작 알려야
+    할 상황에서 아무 말도 하지 않는다.
+    """
+    from sentinel_bridge.message_mapper import link_state  # noqa: E402
+
+    # 브리지는 떠 있는데(발행자 1) 프레임이 한 번도 없다 → 보드 문제
+    assert link_state(None, 1) is False
+
+
+def test_link_state_stays_unknown_without_the_board():
+    """모터 보드 없는 구성은 경고가 아니다 — 상시 빨간불이 되면 아무도 안 본다."""
+    from sentinel_bridge.message_mapper import link_state  # noqa: E402
+
+    assert link_state(None, 0) is None
+
+
+@pytest.mark.parametrize("fresh", [True, False])
+def test_link_state_keeps_known_freshness(fresh):
+    """받은 적이 있으면 신선도 판정이 그대로 이긴다 — 발행자 수를 보지 않는다."""
+    from sentinel_bridge.message_mapper import link_state  # noqa: E402
+
+    assert link_state(fresh, 0) is fresh
+    assert link_state(fresh, 1) is fresh

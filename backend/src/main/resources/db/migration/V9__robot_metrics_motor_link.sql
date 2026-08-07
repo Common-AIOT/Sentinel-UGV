@@ -1,0 +1,11 @@
+-- 모터 보드 링크 상태 (S15P11A301-317).
+--
+-- `mcu_connected` 와 **다른 보드**다. 그쪽은 엔코더를 내는 센서 ESP32 이고 이 값은
+-- 바퀴를 돌리는 모터 ESP32 다. 2026-08-06 실기동에서 모터 보드만 죽었는데 관제
+-- 화면에는 그것을 말하는 값이 하나도 없었다 — 조작자는 명령을 눌러 6초쯤 기다린 뒤
+-- 거부 알림(`MOTOR_BOARD_NO_ACK`)으로만 알 수 있었다.
+--
+-- NULL 을 허용하는 것은 의도다. 3값이 필요하다 — true(연결됨) / false(확인했고 끊김)
+-- / NULL(확인할 수단이 없음: 모터 보드 없이 도는 구성, 또는 젯슨 재빌드 전 스택이
+-- 이 필드를 보내지 않는 구간). `recorder_ok`(V8)와 같은 규칙이다.
+ALTER TABLE robot_metrics ADD COLUMN IF NOT EXISTS motor_link_ok BOOLEAN;

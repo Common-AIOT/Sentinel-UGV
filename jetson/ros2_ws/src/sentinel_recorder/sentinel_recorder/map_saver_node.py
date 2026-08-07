@@ -102,10 +102,14 @@ class MapSaverNode(Node):
 
         # 이 프로세스에서 이미 저장한 missionId.
         #
-        # /mission/status는 heartbeat 없이 전이 때만 오지만, TRANSIENT_LOCAL이라
-        # 늦게 뜬 구독자가 마지막 값을 즉시 받는다. 그 값이 이미 COMPLETED면
-        # 재기동마다 같은 임무의 지도를 다시 저장한다 — 그때 SLAM은 새 지도를
-        # 만들고 있으므로 이전 임무 디렉터리에 엉뚱한 지도를 덮어쓴다.
+        # /mission/status는 TRANSIENT_LOCAL이라 늦게 뜬 구독자가 마지막 값을 즉시
+        # 받는다. 그 값이 이미 COMPLETED면 재기동마다 같은 임무의 지도를 다시
+        # 저장한다 — 그때 SLAM은 새 지도를 만들고 있으므로 이전 임무 디렉터리에
+        # 엉뚱한 지도를 덮어쓴다.
+        #
+        # **같은 COMPLETED가 1Hz로 계속 온다**(S15P11A301-320의 heartbeat). 이 집합이
+        # 그때도 임무당 한 번을 보장한다 — heartbeat 때문에 생긴 규칙은 아니고, 위
+        # TRANSIENT_LOCAL 경로 때문에 이미 필요했던 것이다.
         self._saved_missions: set[str] = set()
         # 진행 중인 저장. 서비스 응답을 기다리는 동안 같은 전이가 또 오면 무시한다.
         self._in_flight: str | None = None

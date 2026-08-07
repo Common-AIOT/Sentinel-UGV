@@ -113,6 +113,19 @@ class MissionManagerNode(Node):
         self.declare_parameter('max_interaction_seconds', 300)
         self.declare_parameter('person_lost_seconds', 3.0)
         self.declare_parameter('tick_period_seconds', 0.25)
+        # `/mission/status` 재발행 주기 (S15P11A301-320).
+        #
+        # **소비자들이 이 토픽의 신선도로 정지를 판정한다.** 전이 때만 발행하면
+        # 상태가 안 바뀌는 정상 주행이 곧 차단 조건이 된다 — 실측에서 「탐사 시작」
+        # 10초 뒤 `safety_gate` 가 `MISSION_STALE` 로 속도를 0 으로 만들었고,
+        # `exploration` 은 3초에 목표 선택을 멈췄다.
+        #
+        # 그쪽 판정을 무르게 하는 대신 여기서 heartbeat 를 낸다. 두 소비자가 그
+        # 판정을 갖는 근거가 정당하기 때문이다 — latched 값을 무한 신뢰하면
+        # 이 노드가 죽어도 아무도 로봇을 세우지 않는다(`gate.py`).
+        #
+        # 1Hz 는 가장 촘촘한 소비자(`exploration` 3초)에 3번의 여유를 준다.
+        self.declare_parameter('status_heartbeat_seconds', 1.0)
         # 부팅 직후 자동으로 탐사를 시작하지 않는다. 26.4가 "재시작 후 진행 중이던
         # 임무를 자동 주행으로 복구하지 않는다"고 정했다. 개발 중 편의를 위한
         # 파라미터이며 운영에서는 false로 둔다.
@@ -269,6 +282,14 @@ class MissionManagerNode(Node):
         self._map_id: str | None = None
 
         self.create_timer(float(self._param('tick_period_seconds')), self._on_tick)
+        # 마지막으로 발행한 상태 페이로드. heartbeat 가 **그대로** 다시 낸다
+        # (S15P11A301-320). 새로 만들지 않는 이유는 `changedAt`·`previousState`·
+        # `reason` 이 전이의 사실이기 때문이다 — heartbeat 가 그것을 지금 시각으로
+        # 덮으면 「방금 상태가 바뀌었다」는 거짓말이 매초 나간다.
+        self._last_status_json: str | None = None
+        self.create_timer(
+            float(self._param('status_heartbeat_seconds')), self._republish_status
+        )
 
         self._published_status = False
         self.get_logger().info(
@@ -767,7 +788,27 @@ class MissionManagerNode(Node):
         message = String()
         message.data = json.dumps(body, ensure_ascii=False)
         self.status_pub.publish(message)
+        self._last_status_json = message.data
         self._published_status = True
+
+    def _republish_status(self) -> None:
+        """마지막 상태를 그대로 다시 낸다 (S15P11A301-320).
+
+        전이가 아니라 **생존 신호**다. 그래서 페이로드를 다시 만들지 않는다 —
+        구독자가 받는 것은 직전 전이와 바이트까지 같은 메시지이고, 달라지는 것은
+        받은 시각뿐이다. 그 시각이 `safety_gate`·`exploration` 의 stale 판정이
+        보는 값이다.
+
+        `map_saver` 처럼 특정 상태를 **사건으로** 읽는 소비자가 있으므로 같은
+        메시지가 반복돼도 안전해야 한다. 그쪽은 `_saved_missions` 로 임무당 한 번을
+        보장한다 — 이 heartbeat 때문에 생긴 규칙이 아니라, TRANSIENT_LOCAL 로 늦게
+        뜬 구독자가 마지막 값을 받는 경로 때문에 이미 있던 것이다.
+        """
+        if self._last_status_json is None:
+            return
+        message = String()
+        message.data = self._last_status_json
+        self.status_pub.publish(message)
 
 
 def main(args=None) -> None:

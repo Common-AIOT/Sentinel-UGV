@@ -6,9 +6,12 @@
 
 ## 주행은 Navigator 인터페이스 뒤에 있다
 
-Nav2 연결(S15P11A301-235)이 아직 없으므로 기본은 `NullNavigator` 다 — 목표를
-`~/goal` 로 발행하고 로그만 남긴다. 235 가 `Nav2Navigator` 를 꽂으면 이 노드는
-바뀌지 않는다. 축소판(순찰 시퀀스)도 같은 자리(`select_goal`)에서 갈아끼운다.
+`navigator` 파라미터가 고른다 — `nav2` 는 `NavigateToPose` 로 실제 주행하고,
+기본값 `null` 은 목표를 `~/goal` 로 발행하고 로그만 남긴다. **기본이 null 인 것은
+이 노드가 launch 밖에서 켜졌을 때 모터를 돌리지 않게 하려는 것**이며, 「아직
+구현되지 않았다」는 뜻이 아니다(S15P11A301-172 에서 연결됐다. 종전 이 문단은
+「235 가 꽂으면」이라고 적혀 있었고 그것은 낡은 서술이었다). 축소판(순찰 시퀀스)도
+같은 자리(`select_goal`)에서 갈아끼운다.
 
 ## 상태 게이트
 
@@ -16,6 +19,11 @@ Nav2 연결(S15P11A301-235)이 아직 없으므로 기본은 `NullNavigator` 다
 않는다(26.2) — PAUSED·ESTOP·MANUAL 에서 멈추는 근거를 두 곳에 두면 언젠가
 한쪽만 바뀐다. 상태 토픽이 `status_stale_s` 동안 없으면 **멈춘다.** 마지막
 값을 믿고 계속 달리면 mission_manager 가 죽었을 때 아무도 로봇을 세우지 않는다.
+
+`status_stale_s` 3초는 `mission_manager` 의 **1Hz heartbeat 를 세 번 놓친 것**이다
+(S15P11A301-320). 그 heartbeat 가 없던 동안에는 전이가 없는 정상 주행에서 3초마다
+HOLD 로 떨어져 목표 선택이 6·20·8초 간격으로 들쭉날쭉했다 — 두 값은 한 쌍이므로
+한쪽을 바꾸면 다른 쪽을 함께 본다.
 """
 
 from __future__ import annotations

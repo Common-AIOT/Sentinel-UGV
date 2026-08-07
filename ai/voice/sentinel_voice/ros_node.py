@@ -102,6 +102,8 @@ class VoiceSessionNode(Node):
         self._abort_state: SessionState | None = None
         self._worker: threading.Thread | None = None
         self._mission_state: str | None = None
+        # 중단 배수 중 도착한 문맥 (S15P11A301-334). 슬롯 하나면 된다.
+        self._pending_context: EncounterContext | None = None
         self.get_logger().info(
             "voice_session 시작. APPROACHED 대기, 보고는 /interaction/report로 인계"
         )
@@ -177,17 +179,79 @@ class VoiceSessionNode(Node):
             )
 
     def _start_worker(self, context: EncounterContext) -> None:
-        if self._worker is not None and self._worker.is_alive():
-            self.get_logger().error("음성 작업이 이미 실행 중이라 중복 시작을 거부했다")
+        """콜백에서 부르는 진입점. 작업이 돌고 있으면 **버리지 않고 큐에 넣는다.**
+
+        종전에는 거부하고 문맥을 버렸다(S15P11A301-334). 중단은 `_abort_state`를
+        세우는 것으로 끝나고 작업 스레드는 진행 중인 녹음·STT 주기를 마친 뒤에야
+        그것을 확인하므로, 배수에 4~10초가 걸린다. 그 사이에 사람이 돌아오면
+        새 encounter 의 `APPROACHED` 가 바로 그 창에 떨어진다 — 사람이 돌아오는
+        것이 곧 새 encounter 를 만드는 사건이기 때문이다.
+
+        `APPROACHED` 는 encounter 당 한 번뿐이므로(명세 9.1) 버리면 그 사람과는
+        영구히 대화하지 못한다. 실측에서 encounter 하나가 **45초 동안 INTERACTING
+        상태로 한마디도 하지 않았다.**
+
+        큐는 슬롯 하나다. 진행 중 encounter 는 하나뿐이고(코디네이터가 보장한다)
+        늦게 온 것이 이긴다.
+        """
+        with self._lock:
+            busy = self._worker is not None and self._worker.is_alive()
+            if busy:
+                self._pending_context = context
+        if busy:
+            self.get_logger().warn(
+                f"이전 세션 배수 중이라 큐에 넣었다: "
+                f"encounter={context.encounter_id[:8]} — 배수가 끝나면 시작한다"
+            )
             return
-        self._abort_state = None
-        self._worker = threading.Thread(
-            target=self._run_session,
-            args=(context,),
-            name=f"voice-{context.encounter_id[:8]}",
-            daemon=True,
+        self._spawn(context)
+
+    def _spawn(self, context: EncounterContext) -> None:
+        with self._lock:
+            self._abort_state = None
+            self._worker = threading.Thread(
+                target=self._session_worker,
+                args=(context,),
+                name=f"voice-{context.encounter_id[:8]}",
+                daemon=True,
+            )
+            worker = self._worker
+        worker.start()
+
+    def _session_worker(self, context: EncounterContext) -> None:
+        """작업 스레드 본체. 끝나면 큐를 비운다.
+
+        ROS 콜백 스레드에서 `join` 하지 않는다 — 무거운 작업을 작업 스레드로 뺀
+        이유가 콜백을 막지 않는 것이다(이 파일 상단 참고). 그래서 배수 완료를
+        아는 쪽, 즉 스레드 자신이 다음 세션을 띄운다.
+        """
+        try:
+            self._run_session(context)
+        finally:
+            self._drain_pending()
+
+    def _drain_pending(self) -> None:
+        with self._lock:
+            pending = self._pending_context
+            self._pending_context = None
+            startable = pending is not None and self._coordinator.startable(
+                pending.encounter_id
+            )
+        if pending is None:
+            return
+        if not startable:
+            # 배수 중에 그 encounter 가 다시 유실·종료됐다. 이미 떠난 사람에게
+            # 말을 걸지 않는다. 조용히 넘기지 않는 이유는 아래 로그와 같다.
+            self.get_logger().warn(
+                f"큐에 있던 세션을 시작하지 않는다: "
+                f"encounter={pending.encounter_id[:8]} 가 더 이상 진행 중이 아니다"
+            )
+            return
+        self.get_logger().info(
+            f"배수 완료, 큐에 있던 세션을 시작한다: "
+            f"encounter={pending.encounter_id[:8]}"
         )
-        self._worker.start()
+        self._spawn(pending)
 
     def _requested_abort(self) -> SessionState | None:
         with self._lock:

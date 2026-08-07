@@ -309,3 +309,53 @@ class LostGraceTest(unittest.TestCase):
         out = c.handle(parse_encounter_message(body("LOST")))
         self.assertTrue(out.accepted)
         self.assertIs(c.state, EncounterSessionState.LOST)
+
+
+class QueuedSessionTest(unittest.TestCase):
+    """배수 완료 뒤 큐에 담아 둔 세션을 시작해도 되는지 (S15P11A301-334).
+
+    중단은 비동기다 — `_abort_state`만 세워지고 작업 스레드는 진행 중인 녹음·STT
+    주기를 마친 뒤에야 확인하므로 배수에 4~10초가 걸린다. 그 사이에 도착한 문맥을
+    버려서 encounter 하나가 45초 동안 한마디도 하지 않았다.
+    """
+
+    def _active(self):
+        c = EncounterSessionCoordinator()
+        c.handle(parse_encounter_message(body("CONFIRMED")))
+        c.handle(parse_encounter_message(body("APPROACHED")))
+        return c
+
+    def test_진행_중인_encounter는_시작할_수_있다(self):
+        c = self._active()
+        self.assertTrue(c.startable(EID))
+
+    def test_다른_encounter는_시작하지_않는다(self):
+        c = self._active()
+        self.assertFalse(c.startable(OTHER_EID))
+
+    def test_배수_중_종료된_encounter는_시작하지_않는다(self):
+        # 배수가 10초 걸리는 동안 대화가 완료되고 ENDED 까지 온 경우.
+        c = self._active()
+        c.conversation_finished(termination_reason="COMPLETED")
+        c.handle(parse_encounter_message(body("ENDED")))
+        self.assertFalse(c.startable(EID))
+
+    def test_유예_만료로_종결된_encounter는_시작하지_않는다(self):
+        c = self._active()
+        c.handle(parse_encounter_message(body("LOST")))
+        c.lost_grace_closed()
+        self.assertFalse(c.startable(EID))
+
+    def test_유예_중에는_아직_시작하지_않는다(self):
+        # 유예는 대화가 살아 있는 상태다. 새로 띄우면 두 세션이 겹친다.
+        c = self._active()
+        c.handle(parse_encounter_message(body("LOST")))
+        self.assertFalse(c.startable(EID))
+
+    def test_접근_대기_중에는_시작하지_않는다(self):
+        c = EncounterSessionCoordinator()
+        c.handle(parse_encounter_message(body("CONFIRMED")))
+        self.assertFalse(c.startable(EID))
+
+    def test_아무것도_진행하지_않으면_시작하지_않는다(self):
+        self.assertFalse(EncounterSessionCoordinator().startable(EID))

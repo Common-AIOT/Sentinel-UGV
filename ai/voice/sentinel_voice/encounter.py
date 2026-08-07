@@ -376,6 +376,20 @@ class EncounterSessionCoordinator:
 
         return self._outcome(False, detail="REDETECTED는 새 음성 세션을 만들지 않음")
 
+    def startable(self, encounter_id: str) -> bool:
+        """그 encounter 로 지금 세션을 시작해도 되는지 (S15P11A301-334).
+
+        중단 배수가 끝난 뒤 큐에 담아 둔 문맥을 꺼낼 때 쓴다. 배수는 진행 중인
+        녹음·STT 주기를 마쳐야 끝나므로 최대 10초가 걸리고, 그 사이에 그
+        encounter 가 다시 유실되거나 종료됐을 수 있다. 확인 없이 시작하면 이미
+        떠난 사람에게 말을 건다.
+        """
+        return (
+            self.state is EncounterSessionState.INTERACTION_ACTIVE
+            and self.context is not None
+            and self.context.encounter_id == encounter_id
+        )
+
     def lost_grace_closed(self) -> EncounterSessionOutcome:
         """유예 창이 닫혔다 — mission 이 사후 녹화 상태를 벗어났다.
 

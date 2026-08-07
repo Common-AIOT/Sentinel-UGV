@@ -86,28 +86,35 @@ def _engine_env() -> dict:
 def _resolve_model(context, detection_dir: str):
     """쓸 Detect 모델 경로를 정한다 (S15P11A301-225).
 
-    `model` 인자가 비어 있으면 `models/yolo26n.engine`을 찾는다. 있으면 그것을
-    쓰고, 없으면 **아무것도 넘기지 않아** `src.ros_main`이 설정 파일의 기본값
-    (`models/yolo26n.pt`, PyTorch)을 쓴다.
+    `model` 인자가 비어 있으면 **아무것도 넘기지 않는다.** 설정 파일이 두 모델을
+    모두 `.engine`으로 지정하고 `require_engine: true`로 강제하기 때문이다
+    (S15P11A301-329). 여기서 할 일은 엔진 임포트 환경을 붙이고, 엔진이 없으면
+    무엇을 해야 하는지 미리 알려주는 것뿐이다.
 
     반환값은 (cmd 에 붙일 인자 목록, 로그 액션 목록, 추가 환경변수)이다.
 
     ## 왜 이 함수가 있는가
 
-    이 launch 가 `--model` 을 넘기지 않아 **데모가 계속 PyTorch 로 돌고 있었다.**
-    `configs/pipeline.jetson.yaml` 이 "엔진은 --model 인자로 넘긴다"고 적어
-    두었는데 넘기는 곳이 없었다. S15P11A301-186 이 TensorRT 기준으로 측정한
-    detect_ms 51 대신 PyTorch 의 74 로 돌던 것이다.
+    이 launch 가 `--model` 을 넘기지 않아 **데모가 계속 PyTorch 로 돌고 있었다**
+    (S15P11A301-225). 설정 파일이 "엔진은 --model 인자로 넘긴다"고 적어 두었는데
+    넘기는 곳이 없었다. S15P11A301-186 이 TensorRT 기준으로 측정한 detect_ms 51
+    대신 PyTorch 의 74 로 돌던 것이다.
 
-    엔진을 config 기본값으로 박지 않는 이유는 그 파일의 주석에 있다 — 기기·드라이버
-    종속이라 커밋되지 않으므로, 박아 두면 엔진을 굽지 않은 기기에서 clone 직후
-    실행이 깨진다.
+    그때는 여기서 엔진을 찾아 인자로 넘기는 방식으로 고쳤다. 329 에서 원인 자체를
+    없앴다 — **설정이 엔진을 가리키고, 아니면 기동을 거부한다.** 넘길 인자가 없어야
+    정상이며, 이 함수는 환경변수 담당으로 남는다.
 
-    ## 없을 때 조용히 넘어가지 않는다
+    ## 엔진이 없으면 탐지 노드는 죽는다
 
-    지금 문제의 정체가 정확히 "조용한 PyTorch 폴백"이다. 없으면 경고를 남기고
-    무엇을 해야 하는지 적는다. 죽이지는 않는다 — 엔진이 없는 기기에서도 데모는
-    돌아야 한다(32장 장애 격리).
+    이전 판본은 여기서 "죽이지 않는다 — 엔진이 없는 기기에서도 데모는 돌아야
+    한다(32장 장애 격리)"를 근거로 PyTorch 폴백을 허용했다. 329 는 그 폴백을
+    없앴다. 조용히 43% 느려진 채 도는 것이 측정과 판단을 망가뜨린 실적이 있기
+    때문이다(그 함정에 실제로 빠졌다).
+
+    **장애 격리는 그대로 유지된다.** 죽는 것은 탐지 노드 하나이고 스택 28 개 노드는
+    계속 돈다 — S15P11A301-172 가 `respawn_limit` 스코프를 고쳐 확보한 성질이다.
+    재기동 3 회 뒤 탐지 없이 나머지가 돌며, 노드는 죽을 때 굽는 명령을 로그에
+    남긴다(`model_backend.py`).
     """
     override = LaunchConfiguration('model').perform(context).strip()
     if override:
@@ -119,25 +126,25 @@ def _resolve_model(context, detection_dir: str):
             _engine_env() if override.endswith('.engine') else {},
         )
 
-    engine_rel = os.path.join('models', 'yolo26n.engine')
-    if os.path.isfile(os.path.join(detection_dir, engine_rel)):
-        return (
-            ['--model', engine_rel],
-            [LogInfo(msg=(
-                f'[detection] TensorRT 엔진을 쓴다: {engine_rel} '
-                f'(PYTHONPATH 에 {SYSTEM_DIST_PACKAGES} 추가)'
-            ))],
-            _engine_env(),
+    missing = [
+        rel for rel in (
+            os.path.join('models', 'yolo26n.engine'),
+            os.path.join('models', 'yolo26n-pose.engine'),
         )
+        if not os.path.isfile(os.path.join(detection_dir, rel))
+    ]
+    if missing:
+        return [], [LogInfo(msg=(
+            f'[detection] TensorRT 엔진이 없다: {", ".join(missing)}. '
+            'require_engine: true 이므로 탐지 노드가 기동을 거부한다 '
+            '(스택의 나머지는 계속 돈다). 굽는 명령은 노드 로그와 '
+            'configs/pipeline.jetson.yaml 주석에 있다.'
+        ))], _engine_env()
 
     return [], [LogInfo(msg=(
-        '[detection] TensorRT 엔진이 없어 설정 파일 기본값(PyTorch)으로 돈다. '
-        'S15P11A301-186 실측에서 detect_ms 가 51 대신 74 였다(약 45% 느림). '
-        '엔진을 구우려면 ai/detection 에서: '
-        'PYTHONPATH=/usr/lib/python3.10/dist-packages '
-        '../../.venv/bin/yolo export model=models/yolo26n.pt format=engine '
-        'half=True device=0'
-    ))], {}
+        f'[detection] 설정의 TensorRT 엔진을 쓴다 '
+        f'(PYTHONPATH 에 {SYSTEM_DIST_PACKAGES} 추가)'
+    ))], _engine_env()
 
 
 def generate_launch_description() -> LaunchDescription:

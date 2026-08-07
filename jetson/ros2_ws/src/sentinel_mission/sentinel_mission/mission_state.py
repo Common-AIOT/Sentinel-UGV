@@ -551,9 +551,24 @@ class MissionStateMachine:
         encounter.person_count = max(encounter.person_count, len(track_ids))
 
         # 사후 3초 안에 다시 보이면 상호작용으로 되돌린다(32-5 REDETECTED).
+        #
+        # **상호작용 시계를 되돌리지 않는다**(S15P11A301-332). 되돌리면
+        # `max_interaction_seconds`(300초, 32-5 MAX_EVENT_SECONDS와 같은 값)가
+        # 영원히 도달 불가능해진다 — 사람이 화면에 남아 있으면 사후 3초마다
+        # 재감지가 와서 경과 시간이 계속 0으로 초기화되기 때문이다. 재시도마다
+        # 타임아웃을 초기화하는 결함이다.
+        #
+        # 실측(2026-08-07): 대화가 끝난 뒤에도 재감지 루프가 이어져 녹화가
+        # 105초까지 갔다. 상한이 듣지 않았고, 링 버퍼가 8초뿐이라 결과 영상이
+        # 오염됐다. 상한이 살아 있으면 최악이 300초로 묶인다.
+        #
+        # 첫 진입 시각을 유지하는 것이 그 상한의 뜻이다 — "최대 상호작용 시간"은
+        # 한 encounter 를 붙잡고 있을 수 있는 총 시간이고, 중간에 사람을 잠깐
+        # 놓쳤다고 예산이 새로 생기지는 않는다.
         if self.state == MissionState.POST_RECORDING:
             encounter.post_recording_started_at = None
-            encounter.interaction_started_at = now
+            if encounter.interaction_started_at is None:
+                encounter.interaction_started_at = now
             return self._to(
                 MissionState.INTERACTING,
                 'redetected within post recording',

@@ -17,6 +17,18 @@ import type { TelemetryLatest, TelemetryPoint } from "@/lib/api";
 const NOW = Date.parse("2026-08-07T00:40:00.000Z");
 const iso = (msAgo: number) => new Date(NOW - msAgo).toISOString();
 
+/**
+ * 녹화기 두 필드는 S15P11A301-311 이 **필수**로 더했다(`boolean | null`, 옵셔널이
+ * 아니다). 이 시험은 그 전에 갈라져 나와 두 칸이 빈 채로 있었고, 각 브랜치의
+ * 파이프라인에서는 서로를 보지 못해 둘 다 통과했다 — develop 에서 만나서야
+ * `tsc` 가 막았다(S15P11A301-325).
+ *
+ * 값은 null 이다. 이 시험이 지키는 것은 센서 신선도이지 녹화기가 아니고, null 은
+ * 「판정 근거 없음」이라 어느 쪽으로도 결론을 밀지 않는다. 녹화기 판정은
+ * recorderStatus 시험이 따로 갖는다.
+ */
+const NO_RECORDER = { recorderOk: null, recorderLastFailure: null };
+
 function latest(over: Partial<TelemetryLatest> = {}): TelemetryLatest {
   return {
     environmentTime: iso(1_000),
@@ -24,6 +36,7 @@ function latest(over: Partial<TelemetryLatest> = {}): TelemetryLatest {
     humidity: 60.0,
     mcuTime: iso(1_000),
     mcuConnected: true,
+    ...NO_RECORDER,
     poseTime: iso(1_000),
     linearVelocity: 0,
     angularVelocity: 0,
@@ -40,6 +53,7 @@ function point(over: Partial<TelemetryPoint> = {}): TelemetryPoint {
     linearVelocity: 0.1,
     angularVelocity: 0,
     mcuConnected: true,
+    ...NO_RECORDER,
     ...over,
   };
 }

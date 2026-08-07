@@ -1,0 +1,60 @@
+
+<!--
+  This Behavior Tree replans the global path periodically at 1 Hz and it also has
+  recovery actions specific to planning / control as well as general system issues.
+  This will be continuous if a kinematically valid planner is selected.
+-->
+<!--
+  전륜 조향용 복구 트리 (S15P11A301-172).
+
+  기본 트리(navigate_to_pose_w_replanning_and_recovery.xml)에서 **Spin 만 뺐다.**
+  나머지는 손대지 않는다 — 업스트림이 고치는 부분을 우리가 들고 있으면 다음
+  업그레이드에서 조용히 낡는다.
+
+  ## 왜 빼는가
+
+  전륜 서보 조향 차량은 제자리 회전을 못 한다(34-2). nav2.yaml 의 behavior_plugins
+  에서 spin 을 뺀 것이 그 이유인데, **기본 트리는 여전히 Spin 을 호출하므로
+  bt_navigator 가 활성화에 실패한다** —
+
+      [ERROR] [bt_navigator]: Exception when loading BT: Action server spin not available
+      [ERROR] [lifecycle_manager_navigation]: Failed to bring up all requested nodes
+
+  그 결과 Nav2 전체가 inactive 로 남았다(2026-08-07 무부하 검증에서 발견).
+  플러그인만 빼고 트리를 그대로 두면 이렇게 된다 — 두 곳이 한 쌍이다.
+
+  ## 남은 복구 행동
+
+  ClearCostmap → Wait → BackUp 셋이 RoundRobin 으로 돈다. **BackUp 은 후방 센서가
+  없는 상태에서 도는 유일한 이동 복구다**(초음파는 전방 전용, 03-352). 후면 초음파
+  (S15P11A301-324)가 붙으면 그때 다시 본다.
+-->
+<root main_tree_to_execute="MainTree">
+  <BehaviorTree ID="MainTree">
+    <RecoveryNode number_of_retries="6" name="NavigateRecovery">
+      <PipelineSequence name="NavigateWithReplanning">
+        <RateController hz="1.0">
+          <RecoveryNode number_of_retries="1" name="ComputePathToPose">
+            <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
+            <ClearEntireCostmap name="ClearGlobalCostmap-Context" service_name="global_costmap/clear_entirely_global_costmap"/>
+          </RecoveryNode>
+        </RateController>
+        <RecoveryNode number_of_retries="1" name="FollowPath">
+          <FollowPath path="{path}" controller_id="FollowPath"/>
+          <ClearEntireCostmap name="ClearLocalCostmap-Context" service_name="local_costmap/clear_entirely_local_costmap"/>
+        </RecoveryNode>
+      </PipelineSequence>
+      <ReactiveFallback name="RecoveryFallback">
+        <GoalUpdated/>
+        <RoundRobin name="RecoveryActions">
+          <Sequence name="ClearingActions">
+            <ClearEntireCostmap name="ClearLocalCostmap-Subtree" service_name="local_costmap/clear_entirely_local_costmap"/>
+            <ClearEntireCostmap name="ClearGlobalCostmap-Subtree" service_name="global_costmap/clear_entirely_global_costmap"/>
+          </Sequence>
+          <Wait wait_duration="5"/>
+          <BackUp backup_dist="0.30" backup_speed="0.05"/>
+        </RoundRobin>
+      </ReactiveFallback>
+    </RecoveryNode>
+  </BehaviorTree>
+</root>

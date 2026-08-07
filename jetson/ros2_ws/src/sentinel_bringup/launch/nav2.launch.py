@@ -69,7 +69,21 @@ def generate_launch_description() -> LaunchDescription:
         Node(
             package='nav2_bt_navigator', executable='bt_navigator',
             name='bt_navigator', output='screen',
-            parameters=[params_file],
+            # 전륜 조향용 복구 트리 (S15P11A301-172). **경로는 여기서 넘긴다** —
+            # params YAML 안의 `$(find-pkg-share ...)` 는 launch 치환이라 파일에서는
+            # 문자열 그대로 전달되고, bt_navigator 가 그 이름의 파일을 못 열어
+            # 활성화에 실패한다(2026-08-07 실측). 두 트리를 모두 지정해야 한다 —
+            # 하나만 고치면 나머지 하나가 여전히 Spin 을 부른다.
+            parameters=[params_file, {
+                'default_nav_to_pose_bt_xml': PathJoinSubstitution([
+                    FindPackageShare('sentinel_bringup'),
+                    'behavior_trees', 'navigate_to_pose_ackermann.xml',
+                ]),
+                'default_nav_through_poses_bt_xml': PathJoinSubstitution([
+                    FindPackageShare('sentinel_bringup'),
+                    'behavior_trees', 'navigate_through_poses_ackermann.xml',
+                ]),
+            }],
         ),
         Node(
             package='nav2_waypoint_follower', executable='waypoint_follower',

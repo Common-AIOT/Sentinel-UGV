@@ -43,6 +43,14 @@ bt_navigator:
     use_sim_time: false
     global_frame: map
     robot_base_frame: base_footprint
+    # 전륜 조향용 복구 트리 (S15P11A301-172). 기본 트리는 Spin 을 호출하는데
+    # behavior_plugins 에서 spin 을 뺐으므로 bt_navigator 가 활성화에 실패하고
+    # **Nav2 전체가 inactive 로 남는다**(2026-08-07 무부하 검증에서 발견).
+    # 플러그인 목록과 이 경로는 한 쌍이다 — 한쪽만 바꾸면 다시 이렇게 된다.
+    # 경로는 `nav2.launch.py` 가 넘긴다 — 여기서는 못 쓴다. params YAML 은 launch
+    # 치환(`$(find-pkg-share ...)`)을 해석하지 않아 문자열이 그대로 전달되고,
+    # bt_navigator 가 그 이름의 파일을 못 열어 활성화에 실패한다(2026-08-07 실측).
+    # through_poses 트리도 함께 넘겨야 한다 — bt_navigator 는 둘 다 로드한다.
     # /wheel/odometry 는 enable_esp32 일 때만 나온다. static identity 로 돌 때는
     # 이 토픽이 없어 속도 추정이 0 으로 남는데, 경로 계획·추종 검증에는 지장이
     # 없다. 실차에서는 esp32 가 켜지므로 실측 속도가 들어온다.

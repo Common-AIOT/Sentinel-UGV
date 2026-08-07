@@ -131,4 +131,47 @@ else
        "SLAM 은 static identity 로 돌고 /environment/* 는 발행되지 않는다."
 fi
 
+# 마이크 입력 소스 고정 (S15P11A301-330).
+#
+# PulseAudio 기본 소스가 젯슨 온보드 아날로그 입력(alsa_input.platform-sound)으로
+# 잡히면 아무것도 꽂혀 있지 않으므로 **디지털 무음**이 나온다. 2026-08-07 E2E
+# 리허설이 그 상태였고 대가가 둘이었다.
+#
+#   음성 인식   요구조자가 대답했는데 무응답으로 판정하고 세션이 즉시 끝났다
+#   증빙 오디오 이벤트 영상의 오디오 트랙이 mean_volume -91.0 dB (완전 무음)
+#
+# 두 소비자가 같은 기본 소스를 쓴다 — voice 의 PortAudio 경로와 stream_pipeline
+# 의 pulsesrc 다. 그래서 한 곳에서 고친다. 증빙 오디오는 명세 32-6 요구사항이라
+# 무음이면 요구조자와의 대화가 남지 않는다.
+#
+# 여기서 하는 이유: demo_up.sh 가 스택의 단일 진입점(S15P11A301-294)이고 모든
+# 노드의 부모다. 데스크톱 세션의 pulse 설정에 의존하지 않고 매 기동마다
+# 강제되며, PULSE_SOURCE 를 export 하면 두 소비자가 함께 상속한다.
+#
+# 시리얼이 아니라 모델 부분열로 찾는다. 같은 모델의 다른 유닛으로 바꿔도 듣는다.
+#
+# 못 찾아도 스택을 막지 않는다(32장 장애 격리) — 다만 무엇이 조용해지는지 적는다.
+# "파일은 만들어지고 오디오 트랙도 있는데 소리만 없는" 상태가 겉으로는 성공처럼
+# 보이기 때문이다.
+: "${XDG_RUNTIME_DIR:=/run/user/$(id -u)}"
+export XDG_RUNTIME_DIR
+MIC_MATCH=usb-046d_Brio_100
+if ! command -v pactl >/dev/null 2>&1; then
+  echo "마이크: pactl 이 없어 기본 소스를 확인하지 못한다." \
+       "음성 인식과 증빙 영상 오디오가 무음일 수 있다(S15P11A301-330)." >&2
+else
+  MIC_SOURCE="$(pactl list short sources 2>/dev/null |
+    awk -v m="${MIC_MATCH}" '$2 ~ m && $2 !~ /monitor/ {print $2; exit}')"
+  if [[ -n "${MIC_SOURCE}" ]]; then
+    pactl set-default-source "${MIC_SOURCE}" >/dev/null 2>&1 || true
+    export PULSE_SOURCE="${MIC_SOURCE}"
+    echo "마이크: ${MIC_SOURCE} 로 고정(PULSE_SOURCE)."
+  else
+    echo "마이크: ${MIC_MATCH} 소스를 못 찾았다. 기본 소스는" \
+         "'$(pactl info 2>/dev/null | sed -n 's/^Default Source: //p')' 다." >&2
+    echo "        온보드 입력이면 음성 인식이 무응답으로 오판하고 증빙 영상" \
+         "오디오가 무음이 된다(명세 32-6). USB 연결을 확인하라." >&2
+  fi
+fi
+
 exec ros2 launch sentinel_bringup demo.launch.py "$@"

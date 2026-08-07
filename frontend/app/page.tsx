@@ -11,6 +11,7 @@ import SensorDashboard from "@/features/telemetry/SensorDashboard";
 import MotionPanel from "@/features/telemetry/MotionPanel";
 import CommandBar from "@/features/telemetry/CommandBar";
 import { useRobot } from "@/features/robot/RobotContext";
+import { SIDEBAR_WIDTH } from "@/lib/layout";
 
 /**
  * 왼쪽 세로 내비게이션 (S15P11A301-303).
@@ -123,15 +124,6 @@ function MiniMapSlot() {
 }
 
 /**
- * 사이드바 폭 (S15P11A301-259).
- *
- * 전에는 메인이 무엇이냐에 따라 폭이 달라졌다 — 영상이 메인이면 16:9 상자가
- * 먹고 남은 폭(실측 208px), 지도가 메인이면 고정 308px 이었다. 같은 페이지에서
- * 패널이 넓어지고 좁아지는 것으로 보였다. 두 값의 평균으로 고정한다.
- */
-const SIDEBAR_WIDTH = 260;
-
-/**
  * 사이드바 상단 슬롯 — 폭에서 높이를 유도한다.
  *
  * **고정 높이를 쓰지 않는다.** 예전에는 미니맵 148px·영상 180px 로 두 곳에
@@ -163,7 +155,9 @@ export default function GCSPage() {
   // 조이스틱과 하단 조종 바는 뺐다 (S15P11A301-196·197). 조종 수단이 모바일
   // 앱으로 정해져 관제 웹에 조종 입력이 없고, 하단 바가 세로 140px을 고정으로
   // 차지해 object-cover 영상이 잘렸다(720p가 깨져 보인 원인). 모드 전환만
-  // 우측 패널 한 줄(ModeRow)로 남긴다 — 영상 높이를 건드리지 않는다.
+  // 한 줄 토글(ModeRow)로 남긴다 — 영상 높이를 건드리지 않는다. 그 토글은
+  // S15P11A301-303 에서 하단 명령 바로 옮겼고, 거기서도 임무 상태와 무관하게
+  // 항상 보인다(S15P11A301-318).
   const [mainView, setMainView] = useState<MainView>("video");
 
   const videoMain = mainView === "video";
@@ -234,6 +228,17 @@ export default function GCSPage() {
  * 명령 결과 알림 (S15P11A301-207). 거부·실패·무응답을 사유와 함께 보여준다 —
  * 202 만 믿고 조용히 원상복귀하던 화면이 이유를 말하게 된다. 8초 뒤 자동으로
  * 사라지고, 새 알림이 오면 시계가 다시 돈다.
+ *
+ * **하단 명령 바 위에 띄운다 (S15P11A301-318).** 종전에는 `bottom-4`, 즉 화면
+ * 바닥에서 16px 이었는데 하단 바(높이 64px)가 그보다 나중에 생겼다(S15P11A301-303).
+ * 그래서 알림이 바 **안쪽에** 겹쳤고, 가운데 정렬이라 문장이 길수록 좌우로 퍼져
+ * 「임무 종료」·「탐사 시작」을 덮었다 — 거부 사유를 읽는 순간 그 사유를 해결할
+ * 버튼이 가려지는 셈이다.
+ *
+ * 최대 폭도 건다. 이 문구는 사유가 붙어 길어질 수 있고(예: "자율 전환 명령이
+ * 거부되었습니다 — 모터 보드가 응답하지 않음 — 로봇 전원·USB 연결을 확인하세요")
+ * 폭 제한이 없으면 화면 양 끝까지 뻗는다. 잘라내지 않고 줄바꿈으로 받는다 —
+ * 사유의 뒷부분이 「무엇을 하면 되는지」라 잘리면 안내가 아니게 된다.
  */
 function CommandAlertToast() {
   const { commandAlert, dismissCommandAlert } = useRobot();
@@ -246,12 +251,13 @@ function CommandAlertToast() {
 
   if (!commandAlert) return null;
   return (
-    <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3
-                    border border-accent/50 bg-background/95 rounded px-4 py-2.5 shadow-lg">
+    <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 flex items-start gap-3
+                    max-w-[min(90vw,44rem)] border border-accent/50 bg-background/95 rounded
+                    px-4 py-2.5 shadow-lg">
       <span className="font-mono text-xs text-accent">⚠ {commandAlert}</span>
       <button
         onClick={dismissCommandAlert}
-        className="font-mono text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+        className="font-mono text-[10px] text-muted-foreground hover:text-foreground transition-colors flex-shrink-0 mt-0.5"
       >
         닫기
       </button>

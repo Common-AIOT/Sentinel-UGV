@@ -126,6 +126,8 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
   // 명령 직후 유예 창. 202 접수 후 ACK 가 서버에 반영되기 전에 폴링이 옛 상태를
   // 가져와 낙관적 표시("복귀 중")를 "탐사 중"으로 되돌리는 경합을 막는다.
   // 유예 안에 "명령 이전과 같은 상태"가 오면 무시하고, 새 상태는 즉시 반영한다.
+  // 거부된 명령은 이 유예에 걸리지 않는다 — watchCommand 가 거부를 확인하는 즉시
+  // applyServerStatus 로 되돌린다(S15P11A301-316).
   const pendingCommand = useRef<{ before: MissionState; at: number } | null>(null);
   const COMMAND_GRACE_MS = 10_000;
 

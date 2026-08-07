@@ -10,7 +10,7 @@ import {
   type RobotStatus,
   type MissionState,
 } from "./mockData";
-import { missionStateFromServer } from "./missionStatus";
+import { missionStateFromServer, pickActiveMission } from "./missionStatus";
 
 import { api, ApiError, type CommandType } from "@/lib/api";
 import { motionFromLatest } from "@/features/telemetry/motionReading";
@@ -34,6 +34,15 @@ export const USE_MOCK = true;
 
 /** 확정 로봇 이름 (mqtt-setup·mvp-week-plan). */
 const ROBOT_ID = "SENTINEL-01";
+
+/**
+ * 활성 임무 탐색 주기 (S15P11A301-327). 임무를 아직 못 찾은 화면만 이 주기로 묻고,
+ * 찾는 순간 멈춘다.
+ *
+ * 5초는 「관람 화면이 늦게 따라오는 것」과 「임무 없는 동안의 헛질의」 사이의 절충이다.
+ * 이보다 짧으면 아무 일도 없는 시간에 요청만 늘고, 길면 발표 중에 화면이 멈춰 보인다.
+ */
+export const ACTIVE_MISSION_POLL_MS = 5_000;
 
 /**
  * 명령 거부 사유 → 관제 표현 (#207). 모르는 코드는 원문 그대로 보여준다.
@@ -365,7 +374,10 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
           mid = created.id;
         } catch (e) {
           if (e instanceof ApiError && e.httpStatus === 409) {
-            const active = (await api.missions()).find(m => m.endedAt === null);
+            // 서버가 「이미 진행 중인 임무가 있다」고 했으니 그것을 이어받는다.
+            // 어느 것인지는 pickActiveMission 이 고른다 (S15P11A301-327) — 닫히지
+            // 않은 옛 임무가 남아 있을 수 있어 배열 순서에 기대면 안 된다.
+            const active = pickActiveMission(await api.missions());
             if (!active) throw e;
             mid = active.id;
           } else {
@@ -548,13 +560,40 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
     if (stompRef.current) subscribeMission(stompRef.current, missionId);
   }, [missionId, subscribeMission]);
 
-  // 새로고침 복구 — missionId 는 리액트 상태에만 있으므로, 페이지 로드 시
-  // 서버의 활성 임무(endedAt 없음)를 찾아 이어받는다. 없으면 목 초기 상태 그대로.
+  // 활성 임무 탐색 — missionId 는 리액트 상태에만 있으므로, 서버의 활성 임무
+  // (endedAt 없음)를 찾아 이어받는다.
+  //
+  // ## 한 번만 찾던 것을 찾을 때까지 찾는다 (S15P11A301-327)
+  //
+  // 종전에는 마운트 시 한 번만 도는 effect 였다. 그래서 **임무 시작 전에 열어둔
+  // 화면은 다른 화면에서 임무를 시작해도 영원히 「대기」에 머물렀다** — 새로고침이
+  // 하는 일이 이 질문을 다시 하는 것뿐이었다.
+  //
+  // 실시간 갱신이 전부 missionId 에 묶여 있어서 그렇다. STOMP 구독
+  // (subscribeMission)도 상태 백업 폴링도 missionId 가 null 이면 즉시 빠져나간다.
+  // 즉 임무를 모르는 화면은 **아무 채널도 듣고 있지 않다.** 반대로 임무 진행 중에
+  // 연 화면이 잘 따라가는 이유도 같다 — 로드 시점에 찾아서 구독했기 때문이다.
+  //
+  // 리허설·발표처럼 화면을 여럿 띄우는 자리에서 관람 화면이 죽은 것처럼 보인다.
+  //
+  // 찾으면 멈춘다. 이 effect 는 missionId 가 null 인 동안에만 살아 있고, 이어받는
+  // 순간 의존성이 바뀌며 정리된다. 임무가 끝나 missionId 가 다시 비면(COMPLETED 를
+  // applyServerStatus 가 처리한다) 탐색이 저절로 재개된다.
+  //
+  // 주기는 5초다. 관람 화면이 「탐사 중」으로 바뀌는 데 최대 5초 걸린다는 뜻이고,
+  // 임무가 없는 동안 브라우저당 5초에 1건이다. `GET /missions` 가 최대 100건을
+  // 내려주므로 주기 조회로는 무겁다 — 활성 임무만 주는 엔드포인트가 정석이지만
+  // 백엔드·EC2 배포를 수반하므로 여기서는 하지 않는다.
   useEffect(() => {
-    (async () => {
+    if (missionId) return; // 이미 이어받았다 — 더 물을 이유가 없다.
+    let cancelled = false;
+
+    const find = async () => {
       try {
-        const active = (await api.missions()).find(m => m.endedAt === null);
-        if (!active) return;
+        const active = pickActiveMission(await api.missions());
+        // cancelled 검사가 필요하다 — 응답이 오는 사이에 이 화면이 스스로 임무를
+        // 시작했을 수 있다. 그때 옛 응답으로 덮으면 방금 만든 임무를 잃는다.
+        if (cancelled || !active) return;
         missionIdRef.current = active.id;
         setMissionId(active.id);
         // 푸시·폴링과 **같은 경로**로 반영한다 (S15P11A301-316). 종전에는 여기서
@@ -562,10 +601,14 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
         // 최대 15초 동안 「수동 조종」인데 토글은 「자율」인 화면이 나왔다.
         applyServerStatus(active.status);
       } catch {
-        // 서버에 못 붙으면 목 초기 상태로 남는다. 폴링이 아니므로 재시도하지 않는다.
+        // 서버에 못 붙으면 다음 주기에 맡긴다.
       }
-    })();
-  }, [applyServerStatus]);
+    };
+
+    void find(); // 진입 즉시 한 번 — 첫 주기를 기다리게 하지 않는다.
+    const timer = setInterval(find, ACTIVE_MISSION_POLL_MS);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [missionId, applyServerStatus]);
 
   // 임무 상태 백업 폴링 — STOMP 연결 중엔 15초로 늦추고, 끊기면 3초로 돌아온다.
   useEffect(() => {

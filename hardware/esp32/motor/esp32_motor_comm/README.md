@@ -3,10 +3,12 @@
 모터 ESP32의 **유일한 운영 스케치**. 명령 소스가 둘이고 이 보드가 중재자다.
 
 ```
-젯슨  ── USB 직렬 921600, COBS+CRC16 ──┐
-                                       ├→ control_task (100Hz, 유일한 액추에이터)
-폰    ── 핫스팟 WiFi, HTTP 20Hz ───────┘      → 후륜 BTS7960 2개 + 전륜 조향 서보
+젯슨  ── USB 직렬 921600, 동기워드+고정길이+CRC8 ──┐
+                                                    ├→ control_task (100Hz, 유일한 액추에이터)
+폰    ── 핫스팟 WiFi, HTTP 20Hz ────────────────────┘      → 후륜 BTS7960 2개 + 전륜 조향 서보
 ```
+
+**S15P11A301-321**: 젯슨 링크 프레이밍을 `jetson-comm`(COBS+CRC16+길이+uptime, 센서가 여전히 씀)에서 이 스케치 전용의 `motor_protocol.h`(동기워드 2바이트+타입+시퀀스+고정 22바이트 payload+CRC8, 27바이트 고정)로 교체했다. 메시지 종류·의미는 그대로다 - 프레이밍만 단순화했다. 근거·설계는 `motor_protocol.h` 헤더 주석과 `docs/03-제어-캘리브레이션.md` §34-5 addendum 참고.
 
 `motor_test`/`double_motor_test`/`triple_motor_test`/`steering_servo_test`(벤치 테스트용 수동 제어)는 이 스케치와 별개로 그대로 유지된다.
 
@@ -21,7 +23,9 @@
 ## 범위
 
 포함:
-- `jetson-comm`(`<protocol.h>`) 기반 COBS+CRC16 프레이밍
+- 모터 전용 동기워드+고정길이+CRC8 프레이밍(`motor_protocol.h`, S15P11A301-321).
+  페이로드 pack/unpack은 여전히 `jetson-comm`(`<protocol.h>`)의 것을 재사용한다 -
+  건드린 건 프레이밍 계층뿐이다
 - `HELLO`/`HELLO_ACK` 핸드셰이크 (E-Stop 래치 해제도 이 경로로 처리). **수동 래치는
   건드리지 않는다** — 젯슨 프로세스 재시작이 조작 중인 사람에게서 바퀴를 빼앗아선 안
   되고, 진짜 보드 리부트는 RAM 이 날아가 래치가 함께 사라진다
@@ -30,7 +34,10 @@
   자동 전환 500ms 신선도 가드, 바퀴 소유자 결정
 - **수동 조종 HTTP 채널**(`manual_web.cpp`) — 폰 핫스팟 WiFi STA, core 0 고정
 - 300ms 통신 워치독(§34-7) — 트립 시 구동만 끊고(`applySafeOutputs()`) **조향각은
-  마지막 목표를 유지한다**(CTRL-26)
+  마지막 목표를 유지한다**(CTRL-26). `mode_arbiter`가 보는 이 워치독은
+  `DRIVE_COMMAND` 수신 빈도만 본다 - 링크 자체의 생존은 `comm_task.cpp`가 별도로
+  추적해 `DIAGNOSTIC.linkSilenceMs`로 보고한다(둘을 합치면 안 되는 이유는
+  `motor_protocol.h`/`comm_task.cpp` 주석 참고)
 - `DRIVE_STATE`(50Hz)/`DIAGNOSTIC`(5Hz) 송신(실측 PWM/driver-enable/조향 목표·서보 지령값)
 - BTS7960 2개(후륜 좌·우 구동)의 PWM/DIR/EN 제어 — `safety_stub.cpp`. **전·후진 전용**이며
   비블로킹 방향 전환 데드타임(500ms)을 둔다
@@ -50,10 +57,17 @@
 ## 구조
 
 - `esp32_motor_comm.ino` — 태스크 3개 생성.
+- `motor_protocol.h/.cpp` — 모터 전용 프레이밍(동기워드+고정길이+CRC8,
+  S15P11A301-321). `Arduino.h` 미포함이라 호스트 g++로 시험한다
+  (`test/test_motor_protocol.cpp`). 페이로드 구조체·pack/unpack은 `jetson-comm`
+  것을 그대로 재사용하고, `MotorDiagnostic`(linkSilenceMs 포함)만 이 파일이
+  새로 정의한다.
 - `board_state.h/.cpp` — 뮤텍스로 보호된 공유 상태(`MotorBoardState`, 젯슨 타깃, 수동
-  장부, fault 비트, 진단 카운터).
+  장부, fault 비트, 진단 카운터, 링크 접촉 시각).
 - `comm_task.h/.cpp` — Serial(921600bps) 프레임 파싱·디스패치, 텔레메트리 송신.
-  **액추에이션을 하지 않는다** — 목표만 기록한다.
+  **액추에이션을 하지 않는다** — 목표만 기록한다. Jetson으로부터 온 프레임이면
+  타입 무관하게 링크 접촉 시각을 갱신해 `linkSilenceMs`를 만든다 -
+  `DRIVE_COMMAND` 수신 빈도만 보는 `mode_arbiter`의 300ms 워치독과는 다른 축.
 - `control_task.h/.cpp` — 100Hz. `arbitrateDrive()` 를 돌려 **유일하게** 액추에이션
   계층을 호출한다. 워치독 판정·데드타임 해제·조향 슬루레이트도 여기서.
 - `mode_arbiter.h/.cpp` — 중재 상태기계. **`Arduino.h` 미포함**이라 호스트 g++ 로
@@ -254,6 +268,10 @@ cd test
 g++ -std=c++17 -I.. -I../../../jetson-comm/src \
     test_mode_arbiter.cpp ../mode_arbiter.cpp ../../../jetson-comm/src/protocol.cpp \
     -o test_mode_arbiter && ./test_mode_arbiter
+
+g++ -std=c++17 -I.. -I../../../jetson-comm/src \
+    test_motor_protocol.cpp ../motor_protocol.cpp ../../../jetson-comm/src/protocol.cpp \
+    -o test_motor_protocol && ./test_motor_protocol
 ```
 
 Arduino IDE 는 스케치 폴더의 `test/` 를 컴파일하지 않으므로 여기 두어도 안전하다

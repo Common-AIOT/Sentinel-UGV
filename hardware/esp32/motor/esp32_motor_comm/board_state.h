@@ -127,6 +127,17 @@ struct MotorSharedState {
   uint32_t crcErrorCount = 0;
   uint32_t droppedFrameCount = 0;
   uint32_t staleSequenceCount = 0;
+
+  // ---- 링크 접촉 (S15P11A301-321, 센서 board_state.h의 lastValidJetsonRxMs와 같은
+  // 이름·같은 뜻) ----
+  //
+  // `lastValidDriveCommandMs`(위)와 축이 다르다. 저건 "액추에이션 안전 정지"용이라
+  // DRIVE_COMMAND만 갱신해야 하고(그래야 mode_arbiter가 "상위 파이프라인이 멈췄다"를
+  // 정확히 본다), 이건 "물리 링크가 살아있나"용이라 HELLO를 포함해 Jetson에서 온
+  // 어떤 유효 프레임이든 갱신한다. 두 시각을 하나로 합치면 keepalive HELLO가
+  // DRIVE_COMMAND 부재를 가려 안전 정지가 늦어진다 - 절대 합치지 말 것.
+  uint32_t lastValidJetsonRxMs = 0;
+  bool hasReceivedFromJetson = false;
 };
 
 void motorSharedStateInit();

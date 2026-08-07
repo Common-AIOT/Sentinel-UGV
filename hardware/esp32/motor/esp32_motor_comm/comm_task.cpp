@@ -1,13 +1,16 @@
 #include "comm_task.h"
 
+#include <cstring>
+
 #include <Arduino.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
-#include <protocol.h>
 #include <fault_codes.h>
+#include <message_ids.h>
 #include "board_state.h"
 #include "mode_arbiter.h"
+#include "motor_protocol.h"
 #include "safety_stub.h"
 #include "steering.h"
 
@@ -15,24 +18,27 @@ namespace {
 
 constexpr uint8_t FW_MAJOR = 0;
 constexpr uint8_t FW_MINOR = 1;
-constexpr uint8_t FW_PATCH = 0;
+constexpr uint8_t FW_PATCH = 1;
 
 constexpr uint32_t DRIVE_STATE_INTERVAL_MS = 20;   // 50Hz (§34-5)
 constexpr uint32_t DIAGNOSTIC_INTERVAL_MS = 200;   // 5Hz (§34-5)
-constexpr size_t RX_ACCUM_CAP = 256;
 
-uint8_t g_rxAccum[RX_ACCUM_CAP];
-size_t g_rxAccumLen = 0;
-uint16_t g_outboundSequence = 0;
+// 프레임 하나(MOTOR_FRAME_BYTES) 폭의 슬라이딩 윈도우. 동기/CRC 검사에 실패하면
+// 다음 바이트가 왔을 때 1바이트 밀어 다시 검사한다 - 별도 "재동기 상태"가 없다
+// (motor_protocol.h 상단 설명 참고).
+uint8_t g_rxWindow[MOTOR_FRAME_BYTES];
+size_t g_rxWindowLen = 0;
 
-uint16_t nextOutboundSequence() {
+uint8_t g_outboundSequence = 0;
+
+uint8_t nextOutboundSequence() {
   return g_outboundSequence++;
 }
 
-void sendFrame(uint8_t messageType, const uint8_t* payload, uint16_t payloadLen) {
-  uint8_t frameBuf[MAX_FRAME_BYTES + 4];
-  size_t frameLen = buildFrame(messageType, nextOutboundSequence(), millis(), payload, payloadLen,
-                                frameBuf, sizeof(frameBuf));
+void sendFrame(uint8_t messageType, const uint8_t* payload, size_t payloadLen) {
+  uint8_t frameBuf[MOTOR_FRAME_BYTES];
+  size_t frameLen = buildMotorFrame(messageType, nextOutboundSequence(), payload, payloadLen,
+                                     frameBuf, sizeof(frameBuf));
   if (frameLen > 0) {
     Serial.write(frameBuf, frameLen);
   }
@@ -45,14 +51,14 @@ void sendHelloAck() {
   ack.firmwareMajor = FW_MAJOR;
   ack.firmwareMinor = FW_MINOR;
   ack.firmwarePatch = FW_PATCH;
-  ack.protocolVersion = PROTOCOL_VERSION;
+  ack.protocolVersion = MOTOR_PROTOCOL_VERSION;
   ack.boardState = (uint8_t)snapshot.state;
   ack.faultFlags = snapshot.faultFlags;
   ack.reserved = 0;
 
   uint8_t payload[HELLO_ACK_BYTES];
   size_t len = packHelloAck(ack, payload);
-  sendFrame(MSG_HELLO_ACK, payload, (uint16_t)len);
+  sendFrame(MSG_HELLO_ACK, payload, len);
 }
 
 void sendCommandAck(uint8_t ackedType, uint16_t ackedSequence, uint8_t result) {
@@ -65,7 +71,7 @@ void sendCommandAck(uint8_t ackedType, uint16_t ackedSequence, uint8_t result) {
 
   uint8_t payload[COMMAND_ACK_BYTES];
   size_t len = packCommandAck(ack, payload);
-  sendFrame(MSG_COMMAND_ACK, payload, (uint16_t)len);
+  sendFrame(MSG_COMMAND_ACK, payload, len);
 }
 
 // PWM 듀티(-255..255)를 프로토콜 단위인 permille(-1000..1000)로 변환한다.
@@ -94,12 +100,18 @@ void sendDriveState() {
 
   uint8_t payload[DRIVE_STATE_BYTES];
   size_t len = packDriveState(state, payload);
-  sendFrame(MSG_DRIVE_STATE, payload, (uint16_t)len);
+  sendFrame(MSG_DRIVE_STATE, payload, len);
+}
+
+// Arduino.h가 min()을 매크로로 정의하는 경우가 있어 템플릿 호출과 충돌할 수 있으므로
+// 직접 클램프한다(센서 comm_task.cpp의 sampleAgeMsSince와 같은 이유).
+uint16_t clampToU16(uint32_t value) {
+  return value > 0xFFFF ? (uint16_t)0xFFFF : (uint16_t)value;
 }
 
 void sendDiagnostic() {
   MotorSharedState snapshot = motorSharedStateSnapshot();
-  Diagnostic diag{};
+  MotorDiagnostic diag{};
   diag.boardRole = BOARD_ROLE_MOTOR;
   diag.boardState = (uint8_t)snapshot.state;
   diag.faultFlags = snapshot.faultFlags;
@@ -107,10 +119,28 @@ void sendDiagnostic() {
   diag.droppedFrameCount = snapshot.droppedFrameCount;
   diag.staleSequenceCount = snapshot.staleSequenceCount;
   diag.freeHeapBytes = ESP.getFreeHeap();
+  // 링크 자체가 죽었는지(이 값이 큼) vs 상위 DRIVE_COMMAND만 안 오는지(이 값은
+  // 작은데 FAULT_COMM_TIMEOUT_MOTOR는 섬)를 가르는 축(motor_protocol.h 참고).
+  // 부팅 후 Jetson과 한 번도 접촉이 없었으면 "쭉 침묵"이므로 상한값을 보고한다.
+  diag.linkSilenceMs = snapshot.hasReceivedFromJetson
+                            ? clampToU16(millis() - snapshot.lastValidJetsonRxMs)
+                            : 0xFFFFu;
 
-  uint8_t payload[DIAGNOSTIC_BYTES];
-  size_t len = packDiagnostic(diag, payload);
-  sendFrame(MSG_DIAGNOSTIC, payload, (uint16_t)len);
+  uint8_t payload[MOTOR_DIAGNOSTIC_BYTES];
+  size_t len = packMotorDiagnostic(diag, payload);
+  sendFrame(MSG_DIAGNOSTIC, payload, len);
+}
+
+// Jetson으로부터 온, CRC/동기까지 통과한 프레임이면 타입을 가리지 않고 호출한다.
+// mode_arbiter의 300ms 워치독(lastValidDriveCommandMs, DRIVE_COMMAND만 갱신)과는
+// 별개 축이다 - 섞으면 keepalive HELLO가 "상위가 DRIVE_COMMAND를 안 보낸다"를
+// 가려 안전 정지가 늦어진다. 여기서는 board state/fault를 건드리지 않는다;
+// FAULT_COMM_TIMEOUT_MOTOR의 소유자는 여전히 mode_arbiter다.
+void markJetsonContact() {
+  motorSharedStateUpdate([](MotorSharedState& s) {
+    s.hasReceivedFromJetson = true;
+    s.lastValidJetsonRxMs = millis();
+  });
 }
 
 void handleHello() {
@@ -138,9 +168,9 @@ void handleHello() {
 // 거부는 통신 실패가 아니므로 `lastValidDriveCommandMs` 는 권한과 무관하게 항상
 // 갱신한다. 이 한 줄이 "수동 중 300ms 워치독이 STOPPING 으로 트립하지 않는다" 를
 // 참으로 만든다(CTRL-30).
-void handleDriveCommand(const uint8_t* payload, uint16_t len, uint16_t sequence) {
+void handleDriveCommand(const uint8_t* payload, uint8_t sequence) {
   DriveCommand cmd{};
-  if (!unpackDriveCommand(payload, len, cmd)) {
+  if (!unpackDriveCommand(payload, DRIVE_COMMAND_BYTES, cmd)) {
     motorSharedStateUpdate([](MotorSharedState& s) { s.droppedFrameCount++; });
     return;
   }
@@ -149,7 +179,7 @@ void handleDriveCommand(const uint8_t* payload, uint16_t len, uint16_t sequence)
   bool sendRefusedAck = false;
   motorSharedStateUpdate([&](MotorSharedState& s) {
     const uint32_t now = millis();
-    if (s.hasAcceptedSequence && !isSequenceNewer(sequence, s.lastAcceptedSequence)) {
+    if (s.hasAcceptedSequence && !isMotorSequenceNewer(sequence, (uint8_t)s.lastAcceptedSequence)) {
       s.staleSequenceCount++;
       // 20Hz 스트림이 통째로 밀리면 초당 20개의 ACK 가 나간다. 그것은 진단이
       // 아니라 소음이므로 200ms 로 레이트리밋한다.
@@ -209,9 +239,9 @@ void handleDriveCommand(const uint8_t* payload, uint16_t len, uint16_t sequence)
 
 // 모드 전환 원샷 명령(0x13). 페이로드가 깨졌으면 ACK 를 내지 않고 카운터만 올린다 -
 // 어느 명령에 대한 답인지 모르는 ACK 는 젯슨 쪽 상관을 망친다.
-void handleSetMode(const uint8_t* payload, uint16_t len, uint16_t sequence) {
+void handleSetMode(const uint8_t* payload, uint8_t sequence) {
   SetMode request{};
-  if (!unpackSetMode(payload, len, request)) {
+  if (!unpackSetMode(payload, SET_MODE_BYTES, request)) {
     motorSharedStateUpdate([](MotorSharedState& s) { s.droppedFrameCount++; });
     return;
   }
@@ -234,7 +264,7 @@ void handleSetMode(const uint8_t* payload, uint16_t len, uint16_t sequence) {
 // STOP/ESTOP 모두 구동만 끊고 **조향각은 마지막 목표를 유지한다**(§34-7). 물리
 // E-Stop만이 서보 전원을 끊어 조향을 무여자로 만들며, 그것은 소프트웨어가 관여할
 // 수 없는 경로다(§21.4).
-void handleStopCommand(uint16_t sequence) {
+void handleStopCommand(uint8_t sequence) {
   applySafeOutputs();
   motorSharedStateUpdate([](MotorSharedState& s) {
     s.targetDriveLeftMmps = 0;
@@ -254,7 +284,7 @@ void handleStopCommand(uint16_t sequence) {
   sendCommandAck(MSG_STOP_COMMAND, sequence, ACK_RESULT_ACCEPTED);
 }
 
-void handleEstopCommand(uint16_t sequence) {
+void handleEstopCommand(uint8_t sequence) {
   applySafeOutputs();
   motorSharedStateUpdate([](MotorSharedState& s) {
     s.targetDriveLeftMmps = 0;
@@ -277,9 +307,9 @@ void handleEstopCommand(uint16_t sequence) {
   sendCommandAck(MSG_ESTOP_COMMAND, sequence, ACK_RESULT_ACCEPTED);
 }
 
-void handleConfig(const uint8_t* payload, uint16_t len) {
+void handleConfig(const uint8_t* payload) {
   ConfigMessage msg{};
-  if (!unpackConfigMessage(payload, len, msg)) return;
+  if (!unpackConfigMessage(payload, CONFIG_MESSAGE_BYTES, msg)) return;
 
   // 키 테이블이 아직 정의되지 않아(§8 참고) 이번 티켓은 항상 value=0으로 응답한다.
   ConfigMessage reply{};
@@ -289,52 +319,62 @@ void handleConfig(const uint8_t* payload, uint16_t len) {
 
   uint8_t out[CONFIG_MESSAGE_BYTES];
   size_t outLen = packConfigMessage(reply, out);
-  sendFrame(MSG_CONFIG, out, (uint16_t)outLen);
+  sendFrame(MSG_CONFIG, out, outLen);
 }
 
-void dispatchFrame(const uint8_t* cobsFrame, size_t len) {
-  FrameHeader header{};
-  uint8_t payload[MAX_PAYLOAD_BYTES];
-  ParseResult result = parseFrame(cobsFrame, len, header, payload, sizeof(payload));
+void dispatchFrame(uint8_t messageType, uint8_t sequence, const uint8_t* payload) {
+  markJetsonContact();
 
-  if (result == ParseResult::BAD_CRC) {
-    motorSharedStateUpdate([](MotorSharedState& s) { s.crcErrorCount++; });
-    return;
-  }
-  if (result != ParseResult::OK) {
-    // BAD_VERSION / BAD_LENGTH / UNKNOWN_TYPE / COBS_ERROR: 실행하지 않고 카운터만 증가.
-    motorSharedStateUpdate([](MotorSharedState& s) { s.droppedFrameCount++; });
-    return;
-  }
-
-  switch (header.messageType) {
+  switch (messageType) {
     case MSG_HELLO: handleHello(); break;
-    case MSG_DRIVE_COMMAND: handleDriveCommand(payload, header.payloadLength, header.sequence); break;
-    case MSG_STOP_COMMAND: handleStopCommand(header.sequence); break;
-    case MSG_ESTOP_COMMAND: handleEstopCommand(header.sequence); break;
-    case MSG_SET_MODE: handleSetMode(payload, header.payloadLength, header.sequence); break;
-    case MSG_CONFIG: handleConfig(payload, header.payloadLength); break;
+    case MSG_DRIVE_COMMAND: handleDriveCommand(payload, sequence); break;
+    case MSG_STOP_COMMAND: handleStopCommand(sequence); break;
+    case MSG_ESTOP_COMMAND: handleEstopCommand(sequence); break;
+    case MSG_SET_MODE: handleSetMode(payload, sequence); break;
+    case MSG_CONFIG: handleConfig(payload); break;
     default: break;  // 모터 보드가 받을 일 없는 타입(텔레메트리류 등)은 무시
   }
 }
 
+// 27바이트 고정 윈도우를 유지하다가, 동기+CRC를 통과하는 즉시 디스패치하고 다음
+// 프레임을 처음부터 새로 쌓는다. 실패하면(동기 불일치·CRC 불일치) 윈도우를
+// 비우지 않고 다음 바이트로 1바이트 밀어 다시 검사한다 - 이것이 COBS 델리미터
+// 없이도 재동기가 되는 이유다(motor_protocol.h 참고).
+void feedByte(uint8_t byte) {
+  if (g_rxWindowLen < MOTOR_FRAME_BYTES) {
+    g_rxWindow[g_rxWindowLen++] = byte;
+  } else {
+    std::memmove(g_rxWindow, g_rxWindow + 1, MOTOR_FRAME_BYTES - 1);
+    g_rxWindow[MOTOR_FRAME_BYTES - 1] = byte;
+  }
+  if (g_rxWindowLen < MOTOR_FRAME_BYTES) return;
+
+  uint8_t messageType = 0;
+  uint8_t sequence = 0;
+  uint8_t payload[MOTOR_PAYLOAD_BYTES];
+  MotorParseResult result =
+      parseMotorFrame(g_rxWindow, MOTOR_FRAME_BYTES, messageType, sequence, payload, sizeof(payload));
+
+  if (result == MotorParseResult::OK) {
+    dispatchFrame(messageType, sequence, payload);
+    g_rxWindowLen = 0;
+    return;
+  }
+  if (result == MotorParseResult::BAD_CRC) {
+    motorSharedStateUpdate([](MotorSharedState& s) { s.crcErrorCount++; });
+  } else {
+    // BAD_SYNC. 잡음 구간에서는 바이트마다 한 번씩 세므로 정상 프레임 하나가
+    // 깨졌을 때의 카운트(1)보다 훨씬 빨리 올라갈 수 있다 - 이 카운터를
+    // "깨진 프레임 수"가 아니라 "재동기 시도 수"로 읽을 것.
+    motorSharedStateUpdate([](MotorSharedState& s) { s.droppedFrameCount++; });
+  }
+  // 윈도우는 가득 찬 채로 둔다. 다음 바이트가 위 memmove 분기를 태워 1바이트
+  // 밀고 다시 검사한다.
+}
+
 void pollSerial() {
   while (Serial.available() > 0) {
-    uint8_t byte = (uint8_t)Serial.read();
-    if (byte == 0x00) {
-      if (g_rxAccumLen > 0) {
-        dispatchFrame(g_rxAccum, g_rxAccumLen);
-      }
-      g_rxAccumLen = 0;
-      continue;
-    }
-    if (g_rxAccumLen >= RX_ACCUM_CAP) {
-      // 구분자 없이 버퍼가 가득 참 - 프레이밍 유실로 보고 리셋한다.
-      motorSharedStateUpdate([](MotorSharedState& s) { s.droppedFrameCount++; });
-      g_rxAccumLen = 0;
-      continue;
-    }
-    g_rxAccum[g_rxAccumLen++] = byte;
+    feedByte((uint8_t)Serial.read());
   }
 }
 

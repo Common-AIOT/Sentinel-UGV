@@ -13,7 +13,10 @@ esp32_motor_bridge:
   ros__parameters:
     port: /dev/sentinel_mcu_motor
     baudrate: 921600
-    handshake_retry_period_s: 1.0
+    # 300ms 통신 워치독의 절반 이하 - §34-7 gap-fill, 센서 브리지와 같은 근거
+    # (S15P11A301-321 전에는 이 노드에 keepalive가 아예 없어, 핸드셰이크 이후로는
+    # ~/drive_command가 끊기면 모터 링크가 완전히 조용해졌다).
+    keepalive_period_s: 0.15
 
 esp32_sensor_bridge:
   ros__parameters:

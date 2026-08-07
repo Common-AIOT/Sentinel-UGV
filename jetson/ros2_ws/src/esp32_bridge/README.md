@@ -1,12 +1,15 @@
 # esp32_bridge
 
-모터·센서 ESP32와 USB 직렬(COBS+CRC16, 921600bps)로 통신하고, 센서 페이로드를 **표준 ROS 메시지**로 변환하는 ROS2 패키지 (S15P11A301-84). `/cmd_vel` 역운동학은 `sentinel_drive`(전륜 조향 변환), 안전 중재는 `sentinel_safety`, BTS7960·조향 서보 실제 구동은 ESP32 펌웨어의 몫이다.
+모터·센서 ESP32와 USB 직렬(921600bps)로 통신하고, 센서 페이로드를 **표준 ROS 메시지**로 변환하는 ROS2 패키지 (S15P11A301-84). `/cmd_vel` 역운동학은 `sentinel_drive`(전륜 조향 변환), 안전 중재는 `sentinel_safety`, BTS7960·조향 서보 실제 구동은 ESP32 펌웨어의 몫이다.
+
+**두 링크의 프레이밍이 S15P11A301-321부터 서로 다르다.** 센서는 여전히 COBS+CRC16+길이+uptime(`packet_codec.py`)이고, 모터는 동기워드+고정길이+CRC8(`motor_packet_codec.py`)로 교체됐다 - 메시지 종류·의미는 같고 프레이밍만 바뀌었다. 근거는 아래 "모듈" 절과 `hardware/esp32/motor/esp32_motor_comm/motor_protocol.h` 참고.
 
 ## 노드
 
-- `esp32_motor_bridge` — `/dev/sentinel_mcu_motor`(기본값)를 열어 모터 ESP32와 통신. `~/drive_command`(std_msgs/String, JSON)를 구독해 `DRIVE_COMMAND`로 전송, `~/stop`/`~/estop` (`std_srvs/Trigger`) 서비스 제공, `~/drive_state`/`~/command_ack` 발행, `/diagnostics` 발행. JSON 은 후륜 좌·우 `target_drive_*_mmps` 와 전륜 `target_steering_mdeg`·`max_steering_rate_mdps` 를 함께 싣는다(2026-08-06 전륜 조향 복구로 조향 필드가 다시 살아났다). **조향 키가 빠지면 마지막 값을 유지한다** — 0 을 기본값으로 두면 명령마다 앞바퀴가 중립으로 돌아가 §34-7 과 정반대가 된다.
+- `esp32_motor_bridge` — `/dev/sentinel_mcu_motor`(기본값)를 열어 모터 ESP32와 통신. `~/drive_command`(std_msgs/String, JSON)를 구독해 `DRIVE_COMMAND`로 전송, `~/stop`/`~/estop` (`std_srvs/Trigger`) 서비스 제공, `~/drive_state`/`~/command_ack` 발행, `/diagnostics` 발행. JSON 은 후륜 좌·우 `target_drive_*_mmps` 와 전륜 `target_steering_mdeg`·`max_steering_rate_mdps` 를 함께 싣는다(2026-08-06 전륜 조향 복구로 조향 필드가 다시 살아났다). **조향 키가 빠지면 마지막 값을 유지한다** — 0 을 기본값으로 두면 명령마다 앞바퀴가 중립으로 돌아가 §34-7 과 정반대가 된다. `keepalive_period_s`(기본 0.15s)로 핸드셰이크 여부와 무관하게 영원히 HELLO를 재전송한다(S15P11A301-321 전에는 이 keepalive가 없어, 핸드셰이크 이후 `~/drive_command`가 끊기면 이 노드가 만드는 트래픽이 전혀 없었다).
 - `esp32_sensor_bridge` — `/dev/sentinel_mcu_sensor`(기본값)를 열어 센서 ESP32와 통신. 아래 "발행 토픽" 표대로 표준 메시지를 발행하고 `/diagnostics`에 보드 상태와 오도메트리 카운터를 낸다. HELLO를 ~6-7Hz로 keep-alive 재전송해 센서 보드의 300ms 통신 워치독에 입력을 공급한다(§34-7 gap-fill, README 하단 참고).
-- `esp32_hello_check` — ROS 없이 포트를 열어 HELLO/HELLO_ACK만 확인하는 브링업 도구. 하드웨어를 막 연결했을 때 가장 먼저 실행할 것.
+- `esp32_hello_check` — ROS 없이 포트를 열어 HELLO/HELLO_ACK만 확인하는 브링업 도구(옛 프레이밍, **센서** 전용). 하드웨어를 막 연결했을 때 가장 먼저 실행할 것.
+- `esp32_motor_hello_check` — 위와 같은 목적이지만 모터 전용(새 프레이밍). 모터 보드를 새로 플래싱했으면 이걸 쓸 것 - 옛 `esp32_hello_check`는 새 프레이밍 프레임을 아예 못 알아봐 항상 타임아웃난다.
 
 ## 발행 토픽 (`esp32_sensor_bridge`)
 
@@ -73,12 +76,23 @@ v   = (d_R + d_L) / 2Δt ,  ω = (d_R − d_L) / WΔt
 
 ## 모듈
 
+센서 전용(옛 프레이밍, 그대로 유지):
+
 - `packet_codec.py` — CRC-16/CCITT-FALSE, COBS, 프레임 build/parse, 메시지별 pack/unpack. `rclpy`를 import하지 않아 ROS 없이도 `pytest`로 검증할 수 있다(`test/test_packet_codec.py`).
-- `imu_clock.py` — 보드 monotonic 시계 → ROS 시각 오프셋 추정(min filter + 창 단위 재동기 + 재부팅 시 폐기). 역시 `rclpy`-free라 `pytest`로 검증한다(`test/test_imu_clock.py`).
-- `wheel_odometry.py` — 후륜 tick 정운동학·원호 적분·int32 tick 랩어라운드 처리. 역시 `rclpy`-free라 `pytest`로 검증하며(`test/test_wheel_odometry.py`), Phase 1에서 `sentinel_drive`가 그대로 가져다 쓸 수 있다.
 - `protocol_constants.py` — 메시지 코드·fault bit·struct 포맷. `hardware/esp32/jetson-comm/message_ids.h`/`fault_codes.h`/`protocol.h`와 값이 반드시 동일해야 한다(수동 동기화).
 - `serial_transport.py` — pyserial 래퍼. 백그라운드 스레드가 0x00 구분 청크를 큐에 담고, 포트가 없거나 끊기면 재연결을 계속 시도한다.
-- `diagnostics.py` — HELLO_ACK/DIAGNOSTIC → `diagnostic_msgs/DiagnosticArray` 변환, `senderUptimeMs` 역행으로 보드 재부팅 감지.
+
+모터 전용(S15P11A301-321, 새 프레이밍):
+
+- `motor_packet_codec.py` — 동기워드+고정길이+CRC8, 프레임 build/parse, 메시지별 pack/unpack. `rclpy`-free라 `pytest`로 검증한다(`test/test_motor_packet_codec.py`). `hardware/esp32/motor/esp32_motor_comm/motor_protocol.h`/`.cpp`와 값·바이트 배치가 반드시 동일해야 한다.
+- `motor_protocol_constants.py` — 모터가 쓰는 메시지 코드·fault bit·struct 포맷. 메시지 코드 값 자체는 `protocol_constants.py`와 같다(프레이밍만 바뀌었지 메시지 종류는 안 바뀌었다).
+- `motor_serial_transport.py` — `serial_transport.py`와 연결·재연결·DTR/RTS 하드닝은 동일하지만, 프레임 추출이 델리미터가 아니라 27바이트 슬라이딩 윈도우(동기워드+CRC8)다.
+
+공통:
+
+- `imu_clock.py` — 보드 monotonic 시계 → ROS 시각 오프셋 추정(min filter + 창 단위 재동기 + 재부팅 시 폐기). 역시 `rclpy`-free라 `pytest`로 검증한다(`test/test_imu_clock.py`). 센서 전용(모터는 새 프레이밍에 uptime 필드가 없어 이 방식의 재부팅 감지를 쓰지 않는다 - 대신 keepalive가 재부팅 직후에도 곧장 HELLO_ACK로 핸드셰이크를 재확인시킨다).
+- `wheel_odometry.py` — 후륜 tick 정운동학·원호 적분·int32 tick 랩어라운드 처리. 역시 `rclpy`-free라 `pytest`로 검증하며(`test/test_wheel_odometry.py`), Phase 1에서 `sentinel_drive`가 그대로 가져다 쓸 수 있다.
+- `diagnostics.py` — HELLO_ACK/DIAGNOSTIC → `diagnostic_msgs/DiagnosticArray` 변환. `RebootDetector`(`senderUptimeMs` 역행 감지)는 센서만 쓴다. `build_status()`의 `extra_values`는 모터가 `link_silence_ms`(링크 자체 생존 여부 - `DRIVE_COMMAND` 수신 빈도만 보는 `mode_arbiter`의 300ms 워치독과는 다른 축)를 덧붙이는 데 쓴다.
 
 ## 빌드·실행
 
@@ -90,8 +104,9 @@ source install/setup.bash
 
 python3 -m pytest src/esp32_bridge/test/
 
-# 하드웨어 연결 후 가장 먼저: raw HELLO/ACK 확인
+# 하드웨어 연결 후 가장 먼저: raw HELLO/ACK 확인 (센서는 위, 모터는 아래 - 프레이밍이 다르다)
 ros2 run esp32_bridge esp32_hello_check --port /dev/ttyUSB0
+ros2 run esp32_bridge esp32_motor_hello_check --port /dev/ttyUSB1
 
 # 두 노드 함께 실행 (udev 별칭이 없으면 실제 ttyUSB 경로를 넘긴다)
 ros2 launch esp32_bridge esp32_bridge.launch.py \

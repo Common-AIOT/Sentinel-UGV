@@ -1,21 +1,36 @@
-"""모터 ESP32 브리지 노드 (S15P11A301-84).
+"""모터 ESP32 브리지 노드 (S15P11A301-84, 프레이밍 재작성 S15P11A301-321).
 
-USB 직렬(921600bps, COBS+CRC16)로 모터 ESP32(`esp32_motor_comm` 스케치)와
-통신한다. 범위는 통신 계층뿐이다 - 실제 BTS7960 PWM·조향 서보 PWM 생성은 펌웨어가,
-차량 기구학 변환(v/ω → 후륜 속도 + 전륜 조향각)은 `sentinel_drive`의
-`vehicle_kinematics_node`가 담당한다(§34-11). `~/drive_command`는 전용
-`esp32_bridge_msgs` 인터페이스 대신 JSON 문자열(std_msgs/String)로 받는다(계획 §5).
+USB 직렬(921600bps)로 모터 ESP32(`esp32_motor_comm` 스케치)와 통신한다. 범위는
+통신 계층뿐이다 - 실제 BTS7960 PWM·조향 서보 PWM 생성은 펌웨어가, 차량 기구학
+변환(v/ω → 후륜 속도 + 전륜 조향각)은 `sentinel_drive`의 `vehicle_kinematics_node`가
+담당한다(§34-11). `~/drive_command`는 전용 `esp32_bridge_msgs` 인터페이스 대신
+JSON 문자열(std_msgs/String)로 받는다(계획 §5).
 
-## 조향 필드는 2026-08-06부터 실제로 쓰인다
+## S15P11A301-321: 프레이밍을 motor_packet_codec(동기워드+고정길이+CRC8)으로 교체
 
-`target_steering_mdeg`·`max_steering_rate_mdps`는 차동 구동 전환 때 프로토콜
-호환용 예약 자리로 남아 있었고, 전륜 서보 조향 복구로 다시 의미를 갖게 됐다
-(§34-5). 와이어 포맷은 그대로이며 이 노드는 값을 실어 보내고 `DRIVE_STATE`의
-조향 필드를 그대로 발행한다.
+실측된 무응답 사례가 `rx_frame_count=0`(바이트 자체가 안 옴)이었던 것과 별개로,
+이 재작성은 두 가지를 한다:
 
-키가 빠진 `drive_command`가 오면 **조향은 마지막 값을 유지한다**. 0을 기본값으로
-두면 조향 필드를 모르는 발행자(수동 시험 스크립트 등)의 명령마다 앞바퀴가 중립으로
-돌아가는데, 그것은 §34-7의 「정지 시 조향각 유지」와 정반대다.
+1. **프레이밍 단순화**: 옛 COBS+CRC16+길이+uptime(`packet_codec.py`, 센서가 여전히
+   씀)을 이 노드에서만 동기워드+고정27바이트+CRC8로 바꿨다. 메시지 종류·의미는
+   그대로다 - 프레이밍만 바뀌었다.
+2. **링크-자체-생존 keepalive 추가**: 이 노드에는 핸드셰이크 성공 전에만 HELLO를
+   재시도하는 타이머만 있었다 - 핸드셰이크 이후로는 `~/drive_command`가 계속
+   들어오지 않으면 이 노드가 만드는 트래픽이 하나도 없었다. 센서 브리지는 처음부터
+   150ms마다 영구히 HELLO를 재전송하는 keepalive가 있어 "링크 자체가 죽었나"와
+   "상위 파이프라인이 명령을 안 준다"가 섞이지 않는데, 모터 쪽엔 이 장치가
+   없었다. 이제 `keepalive_period_s`(기본 0.15, 센서와 동일 근거 - 300ms 워치독의
+   절반 이하) 타이머가 핸드셰이크 여부와 무관하게 영원히 HELLO를 보낸다. 펌웨어는
+   이 HELLO를 포함해 어떤 유효 프레임이든 받으면 `link_silence_ms`(DIAGNOSTIC)를
+   리셋한다 - 이 값과 `FAULT_COMM_TIMEOUT_MOTOR`(DRIVE_COMMAND 수신 빈도만 보는
+   `mode_arbiter`의 축)를 같이 읽으면 "링크가 죽었다"와 "상위가 명령을 안 준다"를
+   구분할 수 있다(`hardware/esp32/motor/esp32_motor_comm/motor_protocol.h` 참고).
+
+**senderUptimeMs가 없어졌다.** 새 프레이밍은 그 필드를 없앴고, 그 결과 이 노드는
+더 이상 uptime 감소로 재부팅을 감지하지 않는다(`RebootDetector`는 센서 노드에서만
+쓴다). 재부팅해도 `MotorBoardState`가 그대로 `SAFE_IDLE`로 보이므로 이 경로로는
+구분이 안 된다 - 대신 위 keepalive가 재부팅 직후에도 곧장 HELLO_ACK을 받아
+핸드셰이크를 다시 확인시켜 주므로, 실질적인 안전 영향은 없다(받아들인 단순화).
 
 시동 시 HELLO/HELLO_ACK 핸드셰이크로 버전·role을 확인한다(§34-6). 300ms 통신
 워치독과 실제 정지는 ESP32 펌웨어가 로컬로 수행하므로(esp32_motor_comm의
@@ -30,9 +45,24 @@ control_task), 이 노드가 죽거나 재시작해도 모터 ESP32는 독립적
 
 **예외는 그 하나뿐이다.** `~/set_mode`(S15P11A301-298)는 예외가 아니라
 `~/drive_command` 와 같은 모양의 순수 중계다 - 판정은 `mission_manager` 의
-`mode_gateway` 가 하고 여기서는 이름을 바이트로 옮기기만 한다. 모드 전환에는
-protective_stop 을 예외로 만든 두 근거가 둘 다 없다: 100ms 디바운스와 500ms ACK
-예산이 있으므로 홉 하나가 문제되지 않고, `safety_gate` 와 독립일 필요도 없다.
+`mode_gateway` 가 하고 여기서는 이름을 바이트로 옮기기만 한다.
+
+## S15P11A301-323: 무응답과 파싱 실패를 구분하는 링크 진단
+
+`link_health.motor_link_verdict()` 가 판정하고 `_publish_link_status()` 가 보드
+`DIAGNOSTIC` 수신 여부와 무관하게 `link_report_period_s`(기본 1Hz)마다
+`/diagnostics` 에 `esp32_bridge: MOTOR_LINK` 항목을 낸다 - 종전에는 보드가
+죽으면 이 항목 자체가 없어서 "항목 없음"과 "정상"이 화면에서 구별되지 않았다.
+`_rx_frame_count`(동기+CRC8까지 통과해 프레임으로 선 횟수)와
+`_parse_error_count`(그중 파싱까지 실패한 횟수)를 따로 세어, 0 인가 아닌가로
+"바이트 자체가 안 온다"와 "오기는 하는데 해석이 안 된다"를 가른다. 핸드셰이크가
+`handshake_warn_after_attempts`(기본 34회 ≈ keepalive 0.15s 기준 5초)를 넘도록
+안 되면 `_send_hello()` 가 이 두 경우를 구분한 ERROR 로그를 한 번 낸다.
+
+이 링크 진단(`rx_frame_count` 등)은 젯슨 쪽에서 본 raw 바이트 도착 여부이고,
+`MotorDiagnostic.linkSilenceMs`(위 S15P11A301-321)는 ESP32 펌웨어 쪽에서 본
+Jetson 프레임 수신 여부다 - 방향이 반대라 서로를 대신하지 않는다. 양쪽을 같이
+보면 어느 쪽 USB 구간이 죽었는지까지 좁혀진다.
 """
 
 from __future__ import annotations
@@ -49,30 +79,29 @@ from rclpy.qos import (DurabilityPolicy, HistoryPolicy, QoSProfile,
 from std_msgs.msg import Bool, String
 from std_srvs.srv import Trigger
 
-from .diagnostics import RebootDetector, build_array, build_status
+from .diagnostics import build_array, build_status
 from .link_health import ERROR, OK, WARN, motor_link_verdict
 from .protective_relay import ProtectiveStopRelay
-from .packet_codec import (
-    CobsError,
+from .motor_packet_codec import (
     CrcError,
     DriveCommand,
     LengthError,
     SetMode,
-    UnknownMessageTypeError,
-    VersionError,
-    build_frame,
+    SyncError,
+    build_motor_frame,
     pack_drive_command,
     pack_set_mode,
-    parse_frame,
+    parse_motor_frame,
     unpack_command_ack,
-    unpack_diagnostic,
     unpack_drive_state,
     unpack_hello_ack,
+    unpack_motor_diagnostic,
 )
-from .protocol_constants import (
+from .motor_protocol_constants import (
     ACK_RESULT_ACCEPTED,
     BOARD_MODE_VALUES,
     BOARD_ROLE_MOTOR,
+    MOTOR_PROTOCOL_VERSION,
     MSG_COMMAND_ACK,
     MSG_DIAGNOSTIC,
     MSG_DRIVE_COMMAND,
@@ -82,11 +111,10 @@ from .protocol_constants import (
     MSG_HELLO_ACK,
     MSG_SET_MODE,
     MSG_STOP_COMMAND,
-    PROTOCOL_VERSION,
     ack_result_name,
     message_type_name,
 )
-from .serial_transport import SerialTransport
+from .motor_serial_transport import MotorSerialTransport
 
 _MOTOR_STATE_NAMES = [
     "BOOT",
@@ -99,7 +127,7 @@ _MOTOR_STATE_NAMES = [
     "FAULT_LATCHED",
 ]
 
-_FRAME_PARSE_ERRORS = (CobsError, LengthError, VersionError, UnknownMessageTypeError, CrcError)
+_FRAME_PARSE_ERRORS = (LengthError, SyncError, CrcError)
 
 # `link_health` 는 ROS 타입을 모른다(CI 에서 돌아야 한다). 매핑은 여기 둔다.
 _DIAGNOSTIC_LEVELS = {
@@ -121,13 +149,17 @@ class Esp32MotorBridgeNode(Node):
 
         self.declare_parameter("port", "/dev/sentinel_mcu_motor")
         self.declare_parameter("baudrate", 921600)
-        self.declare_parameter("handshake_retry_period_s", 1.0)
+        # 300ms 통신 워치독의 절반 이하 - §34-7 gap-fill, 센서 브리지와 같은 근거
+        # (S15P11A301-321 전에는 이 노드에 keepalive가 아예 없었다).
+        self.declare_parameter("keepalive_period_s", 0.15)
         # 링크 진단 발행 주기 (S15P11A301-323). 보드 DIAGNOSTIC(5Hz)과 달리 **보드가
         # 죽어 있을 때도** 나가야 하는 값이라 이쪽 시계로 낸다.
         self.declare_parameter("link_report_period_s", 1.0)
-        # 이 횟수만큼 HELLO 를 보내고도 ACK 이 없으면 경고한다. 기본 5회(5초)는
-        # 부팅 순서상 브리지가 보드보다 먼저 뜨는 정상 구간을 넘긴 값이다.
-        self.declare_parameter("handshake_warn_after_attempts", 5)
+        # 이 횟수만큼 HELLO 를 보내고도 ACK 이 없으면 경고한다. keepalive_period_s
+        # 기본값(0.15s) 기준 34회 ≈ 5.1초 - 부팅 순서상 브리지가 보드보다 먼저 뜨는
+        # 정상 구간을 넘긴 값이다(S15P11A301-321 전 handshake_retry_period_s=1.0s
+        # 기준으로는 5회였다 - keepalive 주기가 빨라진 만큼 횟수를 올렸다).
+        self.declare_parameter("handshake_warn_after_attempts", 34)
         # 초음파 보호정지 중계 (S15P11A301-237, 명세 03-276). 근거와 왜 게이트가
         # 아니라 여기인지는 protective_relay 모듈 docstring 에 있다.
         self.declare_parameter("protective_stop_topic", "/proximity/protective_stop")
@@ -146,7 +178,6 @@ class Esp32MotorBridgeNode(Node):
         # 시작하므로 초기값 0이 맞다(§34-6).
         self._last_steering_mdeg = 0
         self._last_steering_rate_mdps = 0
-        self._reboot_detector = RebootDetector()
         self._handshake_ok = False
         # 링크 계측 (S15P11A301-323). 보드가 죽어도 이 노드는 살아 있으므로,
         # **무엇을 못 받고 있는지**를 이 값들이 말한다.
@@ -157,7 +188,7 @@ class Esp32MotorBridgeNode(Node):
         self._last_rx_monotonic: float | None = None
         self._handshake_warned = False
 
-        self._transport = SerialTransport(port, baudrate, logger=self.get_logger())
+        self._transport = MotorSerialTransport(port, baudrate, logger=self.get_logger())
         self._transport.open()
 
         self._drive_state_pub = self.create_publisher(String, "~/drive_state", 10)
@@ -166,10 +197,9 @@ class Esp32MotorBridgeNode(Node):
 
         self.create_subscription(String, "~/drive_command", self._on_drive_command, 10)
         # 모드 전환 중계 (S15P11A301-298). `~/drive_command` 와 같은 모양의 **순수
-        # 중계**이며 판단이 아니다 - 이름→바이트 변환은 `_MOTOR_STATE_NAMES` 와 같은
-        # 종류의 번역이다. RELIABLE 이어야 한다: 잃으면 mission_manager 가 500ms 뒤
-        # MOTOR_BOARD_NO_ACK 를 내고 운영자는 「보드가 죽었다」로 읽는데, 실제로는
-        # 프레임이 나가지도 않은 것이다.
+        # 중계**이며 판단이 아니다. RELIABLE 이어야 한다: 잃으면 mission_manager 가
+        # 500ms 뒤 MOTOR_BOARD_NO_ACK 를 내고 운영자는 「보드가 죽었다」로 읽는데,
+        # 실제로는 프레임이 나가지도 않은 것이다.
         self.create_subscription(
             String,
             "~/set_mode",
@@ -212,15 +242,18 @@ class Esp32MotorBridgeNode(Node):
         self._rx_thread = threading.Thread(target=self._rx_loop, daemon=True)
         self._rx_thread.start()
 
-        retry_period = self.get_parameter("handshake_retry_period_s").value
-        self._handshake_timer = self.create_timer(retry_period, self._handshake_timer_cb)
+        # 핸드셰이크 여부와 무관하게 영원히 HELLO 를 보낸다(S15P11A301-321) -
+        # 센서 브리지와 같은 패턴. 핸드셰이크 재시도와 링크 keepalive를 같은
+        # 타이머로 겸하므로 별도 "재시도 vs 유지" 상태 분기가 필요 없다 - 무응답
+        # 경고(S15P11A301-323)는 이 타이머가 도는 _send_hello() 안에서 낸다.
+        keepalive_period = self.get_parameter("keepalive_period_s").value
+        self._keepalive_timer = self.create_timer(keepalive_period, self._send_hello)
         # **보드가 죽어도 링크 상태를 계속 낸다** (S15P11A301-323). 종전에는 보드의
         # DIAGNOSTIC 프레임을 받았을 때만 발행해서, 보드가 무응답이면 /diagnostics 에
         # MOTOR 항목이 아예 없었다 — 「항목 없음」은 화면에서 「정상」과 구별되지 않는다.
         self._link_timer = self.create_timer(
             float(self.get_parameter("link_report_period_s").value), self._publish_link_status
         )
-        self._send_hello()
 
     def destroy_node(self) -> bool:
         self._transport.close()
@@ -228,19 +261,16 @@ class Esp32MotorBridgeNode(Node):
 
     def _next_sequence(self) -> int:
         with self._sequence_lock:
-            self._sequence = (self._sequence + 1) & 0xFFFF
+            self._sequence = (self._sequence + 1) & 0xFF
             return self._sequence
 
-    def _uptime_ms(self) -> int:
-        return int(self.get_clock().now().nanoseconds / 1_000_000) & 0xFFFFFFFF
-
     def _send_frame(self, message_type: int, payload: bytes = b"") -> None:
-        frame = build_frame(message_type, self._next_sequence(), self._uptime_ms(), payload)
+        frame = build_motor_frame(message_type, self._next_sequence(), payload)
         try:
             self._transport.write_frame(frame)
         except Exception as exc:  # noqa: BLE001 - 포트가 아직 안 열렸을 수 있다
             # 끊긴 동안 DRIVE_COMMAND·HELLO 주기마다 쌓이므로 억제한다
-            # (S15P11A301-264). 재연결 전이는 SerialTransport 가 남긴다.
+            # (S15P11A301-264). 재연결 전이는 MotorSerialTransport 가 남긴다.
             self.get_logger().warning(
                 f"프레임 전송 실패: {exc}", throttle_duration_sec=5.0
             )
@@ -248,13 +278,12 @@ class Esp32MotorBridgeNode(Node):
     def _send_hello(self) -> None:
         self._hello_sent_count += 1
         self._send_frame(MSG_HELLO)
-
-    def _handshake_timer_cb(self) -> None:
-        if self._handshake_ok:
-            return
-        self._send_hello()
         # **한 번은 크게 말한다** (S15P11A301-323). 종전에는 HELLO 를 영원히 다시
         # 보내면서 로그가 조용했고, 증상은 관제의 MOTOR_BOARD_NO_ACK 하나뿐이었다.
+        # keepalive 타이머가 핸드셰이크 재시도를 겸하므로(S15P11A301-321) 이
+        # 경고도 별도 타이머 없이 여기서 낸다.
+        if self._handshake_ok:
+            return
         attempts = int(self.get_parameter("handshake_warn_after_attempts").value)
         if not self._handshake_warned and self._hello_sent_count >= attempts:
             self._handshake_warned = True
@@ -346,10 +375,6 @@ class Esp32MotorBridgeNode(Node):
         for _ in range(decision.repeat):
             self._send_frame(MSG_STOP_COMMAND)
 
-        # 상승과 해제는 반드시 남긴다. 조용히 정지하면 "로봇이 안 움직인다" 만
-        # 남고 초음파가 눌렀는지 다른 층이 막았는지 알 수 없다. 재확인(REASSERT)은
-        # 눌린 동안 5Hz 로 반복되므로 debug 로 둔다 — warn 으로 두면 로그가
-        # 이것으로 덮인다.
         if decision.reason == 'RISING':
             self.get_logger().warn(
                 "초음파 보호정지 진입 — STOP_COMMAND 중계 (명세 03-276)"
@@ -382,7 +407,7 @@ class Esp32MotorBridgeNode(Node):
             self._rx_frame_count += 1
             self._last_rx_monotonic = time.monotonic()
             try:
-                frame = parse_frame(raw)
+                frame = parse_motor_frame(raw)
             except _FRAME_PARSE_ERRORS as error:
                 # 실행하지는 않는다(§34-5). 다만 **버린 사실은 남긴다** — 카운터가
                 # 없어서 진단이 한 바퀴 돌았다(S15P11A301-317).
@@ -395,11 +420,6 @@ class Esp32MotorBridgeNode(Node):
                     throttle_duration_sec=10.0,
                 )
                 continue
-
-            if self._reboot_detector.observe(frame.sender_uptime_ms):
-                self.get_logger().warn("모터 ESP32 재부팅 감지, 재핸드셰이크")
-                self._handshake_ok = False
-                self._send_hello()
 
             self._dispatch(frame)
 
@@ -418,16 +438,18 @@ class Esp32MotorBridgeNode(Node):
         if ack.board_role != BOARD_ROLE_MOTOR:
             self.get_logger().error(f"포트에 연결된 보드가 모터가 아님(role={ack.board_role})")
             return
-        if ack.protocol_version != PROTOCOL_VERSION:
+        if ack.protocol_version != MOTOR_PROTOCOL_VERSION:
             self.get_logger().error(
-                f"프로토콜 버전 불일치: 보드={ack.protocol_version} Jetson={PROTOCOL_VERSION}"
+                f"프로토콜 버전 불일치: 보드={ack.protocol_version} Jetson={MOTOR_PROTOCOL_VERSION}"
             )
             return
+        was_handshaked = self._handshake_ok
         self._handshake_ok = True
-        self.get_logger().info(
-            f"모터 ESP32 핸드셰이크 완료: fw={ack.firmware_major}.{ack.firmware_minor}.{ack.firmware_patch} "
-            f"state={_state_name(ack.board_state)}"
-        )
+        if not was_handshaked:
+            self.get_logger().info(
+                f"모터 ESP32 핸드셰이크 완료: fw={ack.firmware_major}.{ack.firmware_minor}.{ack.firmware_patch} "
+                f"state={_state_name(ack.board_state)}"
+            )
 
     def _handle_drive_state(self, payload: bytes) -> None:
         state = unpack_drive_state(payload)
@@ -453,8 +475,6 @@ class Esp32MotorBridgeNode(Node):
         msg.data = json.dumps(
             {
                 "acked_message_type": ack.acked_message_type,
-                # 이름을 함께 싣는다 (S15P11A301-298). 구독자가 숫자 표를 각자
-                # 들고 있으면 프로토콜이 늘 때마다 조용히 어긋난다.
                 "acked_message_type_name": message_type_name(ack.acked_message_type),
                 "acked_sequence": ack.acked_sequence,
                 "result": ack.result,
@@ -465,8 +485,6 @@ class Esp32MotorBridgeNode(Node):
         self._command_ack_pub.publish(msg)
 
         if ack.result != ACK_RESULT_ACCEPTED:
-            # 오늘까지는 거부된 STOP_COMMAND 조차 완전 무음이었다. 50Hz 홍수를
-            # 막되(펌웨어가 엣지 게이팅한다) 사람이 볼 수 있는 창구는 있어야 한다.
             self.get_logger().warn(
                 f"모터 보드가 {message_type_name(ack.acked_message_type)} 를 거부했다: "
                 f"{ack_result_name(ack.result)} (boardState={_state_name(ack.board_state)})",
@@ -474,7 +492,7 @@ class Esp32MotorBridgeNode(Node):
             )
 
     def _handle_diagnostic(self, payload: bytes) -> None:
-        diag = unpack_diagnostic(payload)
+        diag = unpack_motor_diagnostic(payload)
         status = build_status(
             hardware_id=self.get_parameter("port").value,
             board_role=diag.board_role,
@@ -483,6 +501,10 @@ class Esp32MotorBridgeNode(Node):
             crc_error_count=diag.crc_error_count,
             dropped_frame_count=diag.dropped_frame_count,
             stale_sequence_count=diag.stale_sequence_count,
+            # 링크가 죽었나(이 값이 큼) vs 상위가 DRIVE_COMMAND만 안 보내나(이 값은
+            # 작은데 COMM_TIMEOUT_MOTOR fault는 섬)를 운영자가 /diagnostics 하나로
+            # 가를 수 있게 한다(S15P11A301-321).
+            extra_values=[KeyValue(key="link_silence_ms", value=str(diag.link_silence_ms))],
         )
         self._diagnostics_pub.publish(build_array(self.get_clock().now().to_msg(), [status]))
 

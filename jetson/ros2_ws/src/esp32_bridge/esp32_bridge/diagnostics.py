@@ -32,7 +32,10 @@ def build_status(
     crc_error_count: int,
     dropped_frame_count: int,
     stale_sequence_count: int,
+    extra_values: Optional[list] = None,
 ) -> DiagnosticStatus:
+    """`extra_values`는 모터 브리지가 `link_silence_ms`(S15P11A301-321)를 덧붙이는
+    용도다 - 기본값 None이면 센서 브리지의 기존 호출과 완전히 동일하게 동작한다."""
     level = DiagnosticStatus.OK if fault_flags == 0 else DiagnosticStatus.ERROR
     return DiagnosticStatus(
         level=level,
@@ -45,6 +48,7 @@ def build_status(
             KeyValue(key="dropped_frame_count", value=str(dropped_frame_count)),
             KeyValue(key="stale_sequence_count", value=str(stale_sequence_count)),
             *_fault_key_values(fault_flags),
+            *(extra_values or []),
         ],
     )
 

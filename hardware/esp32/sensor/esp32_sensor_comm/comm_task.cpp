@@ -12,7 +12,7 @@ namespace {
 
 constexpr uint8_t FW_MAJOR = 0;
 constexpr uint8_t FW_MINOR = 1;
-constexpr uint8_t FW_PATCH = 0;
+constexpr uint8_t FW_PATCH = 1;
 
 constexpr uint32_t ENCODER_STATE_INTERVAL_MS = 20;      // 50Hz (§34-5)
 constexpr uint32_t IMU_STATE_INTERVAL_MS = 10;           // 100Hz (§34-5, 50~100Hz)

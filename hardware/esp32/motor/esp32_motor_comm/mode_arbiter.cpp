@@ -18,6 +18,12 @@ int32_t absI32(int32_t value) {
   return value < 0 ? -value : value;
 }
 
+int32_t clampI32(int32_t value, int32_t lo, int32_t hi) {
+  if (value < lo) return lo;
+  if (value > hi) return hi;
+  return value;
+}
+
 bool boardLatched(const MotorSharedState& s) {
   return s.state == MotorBoardState::ESTOP_LATCHED ||
          s.state == MotorBoardState::FAULT_LATCHED;
@@ -116,8 +122,13 @@ ManualResult ingestManualPacket(MotorSharedState& s, const ManualPacket& packet,
     return ManualResult::ACCEPTED;
   }
 
+  // 속도 상한은 **보드가 갖는다**(S15P11A301-312). 폰이 새로고침되거나 다른
+  // 조종자가 붙어도 유지되어야 하는 값이라 클라이언트 스케일링으로 두지 않았다.
+  // 기본 100 이면 이 곱셈은 항등이고 기존 동작·테스트가 그대로다.
+  const int32_t speedLimited =
+      ((int32_t)packet.linMilli * clampI32(s.manualSpeedLimitPercent, 0, 100)) / 100;
   s.manualDriveMmps =
-      (int16_t)(((int32_t)packet.linMilli * MANUAL_MAX_DRIVE_MMPS) / NORMALIZED_MAX);
+      (int16_t)((speedLimited * MANUAL_MAX_DRIVE_MMPS) / NORMALIZED_MAX);
   s.manualSteeringMdeg =
       (int16_t)(((int32_t)packet.angMilli * STEERING_MAX_MDEG) / NORMALIZED_MAX);
   // 정지 중에는 조향을 아예 요청하지 않는다. steering.cpp 에 보내면 거부되고 그

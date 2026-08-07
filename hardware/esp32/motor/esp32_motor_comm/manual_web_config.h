@@ -9,8 +9,8 @@
 // 로컬 `sid` 는 단일 조종자만 강제하며 신원이 아니다(docs/06 보호 공백 표).
 #pragma once
 
-constexpr char MANUAL_WIFI_SSID[] = "YOUR_PHONE_HOTSPOT_SSID";
-constexpr char MANUAL_WIFI_PASSWORD[] = "YOUR_PHONE_HOTSPOT_PASSWORD";
+constexpr char MANUAL_WIFI_SSID[] = "***REMOVED-WIFI-SSID***";
+constexpr char MANUAL_WIFI_PASSWORD[] = "***REMOVED-WIFI-PASSWORD***";
 
 // mDNS 이름. 폰에서 `http://sentinel-manual.local/` 로 연다. iOS 는 mDNS 를 잘
 // 받지만 Android 는 버전에 따라 안 되므로, 안 되면 핫스팟 클라이언트 목록에서

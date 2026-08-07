@@ -34,9 +34,21 @@ constexpr uint8_t SERVO_PWM_CHANNEL = 4;
 
 // ---- 캘리브레이션 (§35-3 「조향 중립·각도 매핑」 실측 전 임시값) ----
 // 서보 각도계의 중립과 좌·우 엔드포인트. 벤치 시험에서 링키지 기계 한계보다
-// 안쪽임을 확인한 값이며, 실측 표가 나오면 이 세 상수만 바꾼다.
+// 안쪽임을 확인한 값이며, 실측 표가 나오면 이 두 기본값을 굳힌다.
+//
+// S15P11A301-312 부터 **런타임에 조정할 수 있다**(steeringApplyCalibration).
+// 부팅값은 여전히 아래 상수이고, 재부팅하면 반드시 여기로 돌아온다.
 constexpr float SERVO_CENTER_DEG = 145.0f;
 constexpr float SERVO_MAX_OFFSET_DEG = 30.0f;
+
+float g_centerDeg = SERVO_CENTER_DEG;
+float g_maxOffsetDeg = SERVO_MAX_OFFSET_DEG;
+
+// 서보 출력 활성. **부팅값은 true 다** - drive_test 의 SERVO_START_ARMED=false 를
+// 그대로 가져오지 않았다. §34-6 은 부팅 직후 중립(δ=0)으로 초기화할 것을 요구하고,
+// 출력이 꺼진 채로는 그 초기화가 물리적으로 일어나지 않는다. 벤치 시험 스케치는
+// 사람이 옆에 서 있지만 이 펌웨어는 자율 주행으로 바로 이어진다.
+bool g_armed = true;
 
 // STEERING_MAX_MDEG 는 steering_limits.h 에 있다. 수동 채널의 ang 매핑이 같은 값을
 // 봐야 하므로 분리했다 - 갈라지면 폰 슬라이더 끝과 실제 δ_max 가 어긋난다.
@@ -47,8 +59,13 @@ constexpr float SERVO_DIRECTION_SIGN = 1.0f;
 
 // δ(도) → 서보 각도(도) 게인. 개루프이므로 이 선형 근사의 오차가 곧 조향 오차다.
 // 5점 실측 표(§35-3)가 나오면 선형 보간으로 교체한다.
-constexpr float SERVO_DEG_PER_STEERING_DEG =
-    SERVO_MAX_OFFSET_DEG / (STEERING_MAX_MDEG / 1000.0f);
+//
+// 오프셋이 런타임에 바뀌면 게인도 같이 바뀐다. **δ_max 자체는 바뀌지 않는다** -
+// 프로토콜 상한(STEERING_MAX_MDEG)은 젯슨 vehicle_kinematics 와 맞춰 둔 값이라
+// 폰에서 흔들면 안 된다. 바뀌는 것은 그 δ_max 가 몇 도의 서보 회전으로 나가느냐다.
+float servoDegPerSteeringDeg() {
+  return g_maxOffsetDeg / (STEERING_MAX_MDEG / 1000.0f);
+}
 
 // ---- 정지 중 조향 금지 (§34-2) ----
 // 임계 STEERING_MIN_DRIVE_MMPS 도 steering_limits.h 에 있다. 수동 경로가 그 값을
@@ -76,13 +93,11 @@ void writePwm(uint32_t duty) {
 
 float steeringMdegToServoDeg(int16_t steeringMdeg) {
   const float servoDeg =
-      SERVO_CENTER_DEG +
-      SERVO_DIRECTION_SIGN * (steeringMdeg / 1000.0f) * SERVO_DEG_PER_STEERING_DEG;
+      g_centerDeg +
+      SERVO_DIRECTION_SIGN * (steeringMdeg / 1000.0f) * servoDegPerSteeringDeg();
   // 최종 출력 직전에도 엔드포인트를 다시 제한한다. 어떤 코드 경로로 들어와도
   // 서보가 링키지의 기계 한계를 밀지 않게 하는 마지막 방어선이다(§21.6).
-  return constrain(servoDeg,
-                    SERVO_CENTER_DEG - SERVO_MAX_OFFSET_DEG,
-                    SERVO_CENTER_DEG + SERVO_MAX_OFFSET_DEG);
+  return constrain(servoDeg, g_centerDeg - g_maxOffsetDeg, g_centerDeg + g_maxOffsetDeg);
 }
 
 float servoDegToPulseUs(float servoDeg) {
@@ -97,6 +112,13 @@ uint32_t pulseUsToDuty(float pulseUs) {
 }
 
 void writeSteeringMdeg(int16_t steeringMdeg) {
+  // 출력이 꺼져 있으면 듀티 0 으로 펄스를 끊는다. 서보는 토크를 잃고 free 가 된다.
+  // 목표(g_commandedMdeg/g_outputMdeg)는 그대로 두어 다시 켤 때 튀지 않게 한다.
+  if (!g_armed) {
+    writePwm(0);
+    g_actuatorUs = 0;
+    return;
+  }
   const float pulseUs = servoDegToPulseUs(steeringMdegToServoDeg(steeringMdeg));
   writePwm(pulseUsToDuty(pulseUs));
   g_actuatorUs = (int16_t)lroundf(pulseUs);
@@ -184,4 +206,28 @@ int16_t steeringActuatorCmdUs() {
 
 int16_t steeringMaxMdeg() {
   return STEERING_MAX_MDEG;
+}
+
+void steeringApplyCalibration(uint8_t centerDeg, uint8_t maxOffsetDeg, bool armed) {
+  // 인자를 믿지 않는다. manual_web 이 이미 검사하지만 최종 방어선은 여기다(§21.6).
+  const float offset = constrain((float)maxOffsetDeg, 0.0f,
+                                 (float)STEERING_OFFSET_HARD_MAX_DEG);
+  const float center = constrain((float)centerDeg,
+                                 (float)STEERING_CENTER_HARD_MIN_DEG,
+                                 (float)STEERING_CENTER_HARD_MAX_DEG);
+
+  // 중립±오프셋이 서보 물리 범위(0~270°)를 넘지 않게 오프셋을 줄인다. 중립을
+  // 옮기지 않는 것은 의도다 - 사람이 방금 맞춘 중립이 조용히 이동하면 그게 더 나쁘다.
+  const float headroom = min(center, SERVO_TOTAL_ANGLE_DEG - center);
+  g_maxOffsetDeg = min(offset, headroom);
+  g_centerDeg = center;
+  g_armed = armed;
+  // 듀티는 다음 steeringUpdate(최대 20ms 뒤)가 새 매핑으로 다시 쓴다.
+}
+
+void steeringJogToMdeg(int16_t mdeg) {
+  // §34-2 우회 지점. steeringSetTarget 을 부르지 않는 이유가 이것 하나다.
+  g_commandedMdeg =
+      (int16_t)constrain((int32_t)mdeg, -(int32_t)STEERING_MAX_MDEG,
+                         (int32_t)STEERING_MAX_MDEG);
 }

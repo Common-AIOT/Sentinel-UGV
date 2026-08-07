@@ -286,7 +286,7 @@ void setupWebServer() {
 }
 
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(921600);
 
   pinMode(EN_PIN, OUTPUT);
   digitalWrite(EN_PIN, LOW);

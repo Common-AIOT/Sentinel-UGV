@@ -248,7 +248,7 @@ TTL(250ms) 만료, WiFi 끊김, `STOP_COMMAND`(추가로 re-arm 요구), 젯슨 
 ## 부팅 상태 표시 (S15P11A301-312)
 
 부팅 후 5초간 폰 핫스팟 접속 상태와 접속 주소(IP·mDNS)를 `boot_status.h/.cpp` 가
-**Serial2**(GPIO16=RX2·GPIO17=TX2, 115200)로 보여준다. Jetson 전용 UART(Serial,
+**Serial2**(GPIO16=RX2·GPIO17=TX2, 921600)로 보여준다. Jetson 전용 UART(Serial,
 921600)는 건드리지 않으며, comm_task 의 시작도 지연시키지 않는다 — 두 채널은 다른
 물리 UART라 시간적으로 완전히 독립이다. Jetson 핸드셰이크는 이 창과 무관하게
 언제나 부팅과 동시에 즉시 시작한다(아래 「디버그 주의」와 같은 이유).
@@ -259,7 +259,7 @@ GPIO16·GPIO17·GND 에 별도 USB-UART 어댑터를 물려야 한다. 컴파일
 
 ## 디버그 주의
 
-WROOM-32 온보드 USB-UART 브리지는 UART 하나뿐이며 지금 이 UART가 바이너리 프로토콜 전용이다. `Serial.print()` 텍스트 디버그를 **어느 파일에도** 추가하지 말 것 — 프레임에 섞이면 CRC 드롭으로 복구는 되지만 노이즈와 오탐 카운트를 유발한다. `tank_drive` 를 병합하면서 그쪽의 `Serial.print*` 와 `Serial.begin(115200)` 은 전부 버렸다. 상태 확인은 GPIO/LED 또는 `/manual/state` 응답으로, 텍스트 로그가 꼭 필요하면 별도 핀의 `Serial2`를 컴파일 타임 매크로로 게이트해 사용할 것.
+WROOM-32 온보드 USB-UART 브리지는 UART 하나뿐이며 지금 이 UART가 바이너리 프로토콜 전용이다. `Serial.print()` 텍스트 디버그를 **어느 파일에도** 추가하지 말 것 — 프레임에 섞이면 CRC 드롭으로 복구는 되지만 노이즈와 오탐 카운트를 유발한다. `tank_drive` 를 병합하면서 그쪽의 `Serial.print*` 와 별도 텍스트 시리얼 초기화는 전부 버렸다. 상태 확인은 GPIO/LED 또는 `/manual/state` 응답으로, 텍스트 로그가 꼭 필요하면 별도 핀의 `Serial2`를 컴파일 타임 매크로로 게이트해 사용할 것.
 
 ## 호스트 테스트
 

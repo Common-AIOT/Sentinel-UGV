@@ -725,7 +725,7 @@ void setupWebServer() {
 }
 
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(921600);
 
   // PWM 및 Wi-Fi 설정 전부터 Enable을 Low로 유지한다.
   pinMode(MOTOR_EN_PIN, OUTPUT);

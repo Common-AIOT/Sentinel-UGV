@@ -349,6 +349,7 @@ void handleNotFound() {
   respond(404, snapshot, "NOT_FOUND");
 }
 
+#if ENABLE_MANUAL_WIFI
 void startWifi() {
   // setHostname() 은 STA netif 가 이미 있어야 값이 먹는다 - mode() 보다 먼저
   // 부르면 조용히 무시된다(drive_test.ino 와 순서를 맞췄다).
@@ -362,6 +363,7 @@ void startWifi() {
   WiFi.begin(MANUAL_WIFI_SSID, MANUAL_WIFI_PASSWORD);
   g_lastWifiAttemptMs = millis();
 }
+#endif
 
 // WiFi 가 끊긴 전이에서 바퀴를 세운다. **`manualLatched` 는 건드리지 않는다** -
 // 링크 상실은 모드 이탈이 아니고, 젯슨에 자율 권한을 돌려줄 근거도 아니다.
@@ -378,10 +380,15 @@ void onWifiLost() {
 }  // namespace
 
 bool manualWebConnected() {
+#if ENABLE_MANUAL_WIFI
   return WiFi.status() == WL_CONNECTED;
+#else
+  return false;
+#endif
 }
 
 void manualWebInit() {
+#if ENABLE_MANUAL_WIFI
   startWifi();
 
   g_server.on("/", HTTP_GET, handleRoot);
@@ -398,11 +405,13 @@ void manualWebInit() {
   g_server.on("/manual/servo/recenter", HTTP_GET, handleServoRecenter);
   g_server.onNotFound(handleNotFound);
   g_server.begin();
+#endif
 }
 
 void manualWebTaskFn(void* pvParameters) {
   (void)pvParameters;
 
+#if ENABLE_MANUAL_WIFI
   for (;;) {
     const bool connected = manualWebConnected();
     const uint32_t now = millis();
@@ -454,4 +463,10 @@ void manualWebTaskFn(void* pvParameters) {
     g_server.handleClient();
     vTaskDelay(pdMS_TO_TICKS(2));
   }
+#else
+  // WiFi/HTTP 채널을 끈 경우에도 태스크 핸들은 유지하되 아무 작업도 하지 않는다.
+  for (;;) {
+    vTaskDelay(pdMS_TO_TICKS(1000));
+  }
+#endif
 }

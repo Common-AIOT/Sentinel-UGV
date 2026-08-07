@@ -1,8 +1,10 @@
 # jetson-comm
 
-모터 ESP32와 센서 ESP32 스케치가 공유하는 순수 프로토콜 라이브러리다. `Arduino.h`에 의존하지 않으므로 호스트 `g++`로도 빌드/테스트할 수 있다.
+센서 ESP32 스케치가 쓰는 순수 프로토콜 라이브러리다(프레이밍 포함). `Arduino.h`에 의존하지 않으므로 호스트 `g++`로도 빌드/테스트할 수 있다.
 
-프레이밍·메시지 타입·워치독 정책의 전체 설계는 `docs/03-제어-캘리브레이션.md` 34장을 따른다. 이 라이브러리는 그중 통신 계층(§34-5)만 구현한다.
+**S15P11A301-321부터 모터 ESP32는 이 라이브러리의 프레이밍(COBS+CRC16+길이+uptime)을 쓰지 않는다** — `esp32_motor_comm/motor_protocol.h`가 훨씬 단순한 동기워드+고정길이+CRC8 프레이밍으로 대체했다(`docs/03-제어-캘리브레이션.md` §34-5 addendum 참고). 다만 모터도 이 라이브러리의 **메시지 코드(`message_ids.h`)·fault 비트(`fault_codes.h`)·페이로드 구조체/pack·unpack(`protocol.h`의 `DriveCommand`/`SetMode`/`DriveState`/`HelloAck`/`CommandAck`/`ConfigMessage` 등)·LE read/write 헬퍼**는 그대로 재사용한다 — 바뀐 건 프레이밍 계층뿐이다.
+
+프레이밍·메시지 타입·워치독 정책의 전체 설계는 `docs/03-제어-캘리브레이션.md` 34장을 따른다. 이 라이브러리는 그중 센서가 쓰는 통신 계층(§34-5)을 구현한다.
 
 **Arduino 라이브러리 형태다** (`library.properties` + `src/`). Arduino IDE는 스케치 폴더 밖의 `.cpp`를 상대경로 include만으로는 컴파일해주지 않으므로(헤더는 찾지만 링크 단계에서 undefined reference 발생), 실제 사용 전에 아래 "설치" 절차가 필요하다.
 

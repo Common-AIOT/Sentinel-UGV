@@ -17,13 +17,14 @@ setup(
     zip_safe=True,
     maintainer='Sentinel Team',
     maintainer_email='team@example.com',
-    description='모터·센서 ESP32와 USB 직렬(COBS+CRC16)로 통신하는 브리지 (S15P11A301-84)',
+    description='모터·센서 ESP32와 USB 직렬로 통신하는 브리지 (S15P11A301-84). 센서는 COBS+CRC16, 모터는 동기워드+CRC8(S15P11A301-321)',
     license='Apache-2.0',
     entry_points={
         'console_scripts': [
             'esp32_motor_bridge = esp32_bridge.esp32_motor_bridge_node:main',
             'esp32_sensor_bridge = esp32_bridge.esp32_sensor_bridge_node:main',
             'esp32_hello_check = esp32_bridge.tools.hello_check:main',
+            'esp32_motor_hello_check = esp32_bridge.tools.motor_hello_check:main',
         ],
     },
 )

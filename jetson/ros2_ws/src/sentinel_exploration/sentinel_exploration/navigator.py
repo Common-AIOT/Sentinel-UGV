@@ -85,6 +85,26 @@ class Nav2Navigator:
     새 목표를 보낼 때 이전 것을 명시적으로 취소하지 않는다 — BT navigator 가
     선점(preempt)을 처리하며, 취소를 먼저 보내면 그 왕복 동안 로봇이 멈춘다.
     약속 정책이 목표 교체 자체를 드물게 만들어 두었으므로 선점에 맡긴다.
+
+    ## 결말은 목표마다 일련번호로 묶는다 (2026-08-07)
+
+    선점에 맡기는 대가가 있다 — **결과가 두 개 떠 있는 순간이 생긴다.** 새 목표를
+    보내면 이전 목표가 곧 `ABORTED` 로 회수되는데, 그 결과가 도착할 때는 이미 새
+    목표가 진행 중이다.
+
+    종전에는 목표를 `self._pending` 하나에 담아 결과 콜백이 그것을 읽었다. 그래서
+    **이전 목표의 실패가 방금 보낸 목표의 실패로 기록됐고**, `_goal_handle` 까지
+    지워져 새 목표가 추적에서 사라졌다. 실측(2026-08-07):
+
+        455.426  목표 전송 (-2.13, 0.69)
+        455.437  bt_navigator: Received goal preemption request   ← 이전 목표가 죽는다
+        455.440  목표 실패(status=6): (-2.13, 0.69)               ← 방금 보낸 목표가 실패로
+
+    그 실패는 블랙리스트 카운터를 올리므로, **멀쩡한 자리가 자기 선점 때문에 후보에서
+    빠진다.** 그리고 다음 선택 → 다시 선점 → 다시 실패의 자기 유지 루프가 된다.
+
+    이제 목표마다 `seq` 를 붙이고 콜백이 그것을 들고 온다. 번호가 현재 것과 다르면
+    **우리가 스스로 교체한 목표의 결말**이므로 조용히 버린다 — 실패가 아니다.
     """
 
     def __init__(self, node: Node, action_name: str = 'navigate_to_pose') -> None:
@@ -93,6 +113,8 @@ class Nav2Navigator:
         self._action_name = action_name
         self._goal_handle = None
         self._pending: tuple[float, float] | None = None
+        # 목표 일련번호. 콜백이 「내 결말인가」를 이것으로 판단한다.
+        self._seq = 0
         self._outcome: GoalOutcome | None = None
         self._warned_unavailable = False
 
@@ -121,11 +143,15 @@ class Nav2Navigator:
 
         goal = self._action_type().Goal()
         goal.pose = pose_stamped(x, y, yaw, self._node.get_clock().now().to_msg())
-        self._pending = (x, y)
+        self._seq += 1
+        seq, target = self._seq, (x, y)
+        self._pending = target
         self._node.get_logger().info(
             f'목표 전송: ({x:.2f}, {y:.2f}, {math.degrees(yaw):.0f}°)'
         )
-        self._client.send_goal_async(goal).add_done_callback(self._on_accepted)
+        self._client.send_goal_async(goal).add_done_callback(
+            lambda future: self._on_accepted(future, seq, target)
+        )
 
     def cancel(self) -> None:
         if self._goal_handle is None:
@@ -133,6 +159,9 @@ class Nav2Navigator:
         self._goal_handle.cancel_goal_async()
         self._goal_handle = None
         self._pending = None
+        # 번호를 올려 이 목표의 결말을 남의 것으로 만든다. 취소 결과가 늦게 와서
+        # 다음 목표의 실패로 기록되는 것을 막는다.
+        self._seq += 1
 
     def take_outcome(self) -> GoalOutcome | None:
         """결말을 한 번만 돌려준다. 소비하면 비워진다."""
@@ -141,10 +170,10 @@ class Nav2Navigator:
 
     # ── 콜백 ────────────────────────────────────────────────────────────────
 
-    def _on_accepted(self, future) -> None:
+    def _on_accepted(self, future, seq: int, target: tuple[float, float]) -> None:
         handle = future.result()
-        target = self._pending
-        if target is None:
+        if seq != self._seq:
+            # 수락 응답이 오는 사이에 우리가 목표를 바꿨다. 이 목표는 곧 선점된다.
             return
         if not handle.accepted:
             # 계획 자체가 불가능한 목표다. 미지 공간 안이거나 벽 안쪽이다.
@@ -156,14 +185,21 @@ class Nav2Navigator:
             self._pending = None
             return
         self._goal_handle = handle
-        handle.get_result_async().add_done_callback(self._on_result)
+        handle.get_result_async().add_done_callback(
+            lambda future: self._on_result(future, seq, target)
+        )
 
-    def _on_result(self, future) -> None:
-        target = self._pending
+    def _on_result(self, future, seq: int, target: tuple[float, float]) -> None:
+        if seq != self._seq:
+            # **우리가 스스로 교체한 목표의 결말이다.** 선점된 목표는 ABORTED 로
+            # 돌아오지만 그것은 그 자리의 실패가 아니다 — 실패로 세면 블랙리스트가
+            # 멀쩡한 후보를 지운다(클래스 docstring 참고).
+            self._node.get_logger().debug(
+                f'선점된 목표의 결말을 버린다: ({target[0]:.2f}, {target[1]:.2f})'
+            )
+            return
         self._pending = None
         self._goal_handle = None
-        if target is None:
-            return
         # STATUS_SUCCEEDED = 4 (action_msgs/GoalStatus). 문자열 비교를 피하려고
         # 숫자를 쓰지만, 의미가 보이게 이름을 남긴다.
         from action_msgs.msg import GoalStatus

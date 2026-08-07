@@ -147,7 +147,19 @@ def generate_launch_description() -> LaunchDescription:
 
     # 모델 인자와 그 결정 로그. OpaqueFunction 안에서 한 번 정하고 재기동에도
     # 같은 값을 쓴다 — 엔진이 도중에 생기거나 사라지는 상황은 다루지 않는다.
-    resolved = {'model_args': [], 'env': {}}
+    # 재기동 정책도 여기 담는다 (S15P11A301-249 후속, 2026-08-07).
+    #
+    # **이벤트 시점에 LaunchConfiguration 을 읽으면 안 된다.** demo.launch.py 는
+    # `GroupAction(scoped=True)` 으로 include 하므로 이 launch 의 인자는 그 스코프
+    # 안에만 있고, `OnProcessExit` 핸들러는 스코프가 닫힌 뒤에 돈다 — 그때
+    # `LaunchConfiguration('respawn_limit').perform(context)` 가
+    # 「launch configuration 'respawn_limit' does not exist」로 터지고 **launch
+    # 전체가 내려간다.** 탐지 하나 죽었다고 스트리밍·녹화·관제까지 죽는 것이라
+    # 32장 장애 격리를 정면으로 어긴다. 실측(2026-08-07): 탐지가 CUDA 메모리
+    # 부족으로 죽자 스택 28개 노드가 전부 종료됐다.
+    #
+    # 그래서 setup(OpaqueFunction, 스코프 안)에서 한 번 읽어 둔다.
+    resolved = {'model_args': [], 'env': {}, 'respawn_limit': 3, 'respawn_delay': 8.0}
 
     def make_process() -> ExecuteProcess:
         """탐지 프로세스 하나. 재기동마다 새로 만든다.
@@ -192,7 +204,7 @@ def generate_launch_description() -> LaunchDescription:
         if event.returncode == 0:
             return None
 
-        limit = int(LaunchConfiguration('respawn_limit').perform(context))
+        limit = resolved['respawn_limit']
         attempts['count'] += 1
         if attempts['count'] > limit:
             return [
@@ -207,7 +219,7 @@ def generate_launch_description() -> LaunchDescription:
                 )
             ]
 
-        delay = float(LaunchConfiguration('respawn_delay').perform(context))
+        delay = resolved['respawn_delay']
         following = make_process()
         return [
             LogInfo(
@@ -231,6 +243,13 @@ def generate_launch_description() -> LaunchDescription:
         model_args, logs, env = _resolve_model(context, detection_dir)
         resolved['model_args'] = model_args
         resolved['env'] = env
+        # 스코프가 살아 있는 지금 읽어 둔다. 위 주석 참고.
+        resolved['respawn_limit'] = int(
+            LaunchConfiguration('respawn_limit').perform(context)
+        )
+        resolved['respawn_delay'] = float(
+            LaunchConfiguration('respawn_delay').perform(context)
+        )
         first = make_process()
         return [
             *logs,

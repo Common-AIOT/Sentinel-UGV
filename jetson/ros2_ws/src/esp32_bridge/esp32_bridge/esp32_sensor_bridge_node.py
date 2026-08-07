@@ -129,15 +129,26 @@ _SENSOR_STATE_NAMES = ["BOOT", "STREAMING", "DEGRADED", "COMM_LOST"]
 
 _FRAME_PARSE_ERRORS = (CobsError, LengthError, VersionError, UnknownMessageTypeError, CrcError)
 
-# `sensor_task.cpp`의 §35-3 실측 전 임시 상수에서 유도한 기본 스케일.
-# 실측이 끝나면 config/esp32_bridge.yaml의 meters_per_tick_left/right를 덮어쓴다.
-_DEFAULT_METERS_PER_TICK = default_meters_per_tick(
-    wheel_diameter_m=0.120, counts_per_encoder_rev=16384, gear_ratio=82.0
-)
+# 바퀴 지름 0.25m 는 **실측이다**(2026-08-07, S15P11A301-337).
+#
+# 종전 기본값은 `sensor_task.cpp`의 실측 전 임시 상수에서 유도한 0.120m 가정이었고
+# 실제의 절반보다 작았다. 로봇이 1m 를 가면 오도메트리가 48cm 를 보고했고, SLAM 이
+# 절반 크기로 지도를 그려 Nav2 가 경로를 만들지 못했다.
+#
+# 설정(config/esp32_bridge.yaml)과 이 기본값을 **함께** 고친다. 한쪽만 고치면
+# 설정을 주지 않는 실행 경로에서 다시 틀린 값으로 돈다.
+#
+# 엔코더 분해능(16384 × 82)은 여전히 가정값이다. 측정은 지름과 분해능의 곱만
+# 잰다 — 자세한 근거는 설정 파일 주석에 있다.
+# 기하 계산 (pi*0.25)/(16384*82) = 5.846e-07 은 **실측의 절반이다.** 기어비나
+# 분해능 가정이 2배 틀렸다는 뜻이며 어느 쪽인지 아직 못 가렸다. 그래서 계산식이
+# 아니라 실측값을 직접 둔다 — 계산식을 남겨 두면 다음 사람이 그것을 믿는다.
+_DEFAULT_METERS_PER_TICK = 1.169e-06
 
-# 트랙폭은 실측값이 아예 없다(TBD-CAL-001, docs/06 CAL-04). 접지 중심 실측 전까지
-# 임시값이며, 이 값이 그대로면 기동 시 경고를 띄운다.
-_PLACEHOLDER_TRACK_WIDTH_M = 0.30
+# 후륜 접지 중심 거리. **실측이다**(2026-08-07, S15P11A301-337). 종전 0.30 은
+# 실측값이 없던 자리표시자였다. 타이어 폭 9cm 의 접지점 오차와 선회 중 스크럽은
+# 반영돼 있지 않아, 주행 실측(§35-3 δ_max 원주행)으로 다시 잡는다.
+_MEASURED_TRACK_WIDTH_M = 0.53
 
 # `sensor_task.cpp`의 validSensorMask 비트 0 = 전방 HC-SR04.
 _PROXIMITY_FRONT_MASK_BIT = 0x01
@@ -230,7 +241,7 @@ class Esp32SensorBridgeNode(Node):
         # ---- 오도메트리 캘리브레이션 (TBD-CAL-001, §35-3) ----
         self.declare_parameter("meters_per_tick_left", _DEFAULT_METERS_PER_TICK)
         self.declare_parameter("meters_per_tick_right", _DEFAULT_METERS_PER_TICK)
-        self.declare_parameter("track_width_m", _PLACEHOLDER_TRACK_WIDTH_M)
+        self.declare_parameter("track_width_m", _MEASURED_TRACK_WIDTH_M)
         self.declare_parameter("max_wheel_speed_mps", 2.0)
         self.declare_parameter(
             "odom_pose_covariance_diagonal", [0.05, 0.05, 1.0e6, 1.0e6, 1.0e6, 0.1]
@@ -373,15 +384,21 @@ class Esp32SensorBridgeNode(Node):
             f"meters_per_tick(L/R)={config.meters_per_tick_left:.4e}/"
             f"{config.meters_per_tick_right:.4e}"
         )
-        still_placeholder = (
-            math.isclose(config.track_width_m, _PLACEHOLDER_TRACK_WIDTH_M)
-            or math.isclose(config.meters_per_tick_left, _DEFAULT_METERS_PER_TICK)
-            or math.isclose(config.meters_per_tick_right, _DEFAULT_METERS_PER_TICK)
+        # 좌·우가 같은 값이면 개별 실측을 아직 안 한 것이다 (S15P11A301-337).
+        #
+        # 종전에는 "기본값과 같은가"로 판정했는데, 실측값이 기본값이 된 뒤로는
+        # 그 검사가 실측을 임시값으로 오인한다. 남은 미실측이 무엇인지로 바꾼다 —
+        # 경고가 틀리면 사람이 경고를 안 읽게 되고, 그러면 진짜 미보정을 놓친다.
+        left_right_unsplit = math.isclose(
+            config.meters_per_tick_left, config.meters_per_tick_right
         )
-        if still_placeholder:
+        if left_right_unsplit:
             self.get_logger().warn(
-                f"오도메트리 캘리브레이션이 §35-3 실측 전 임시값이다(TBD-CAL-001): {summary}. "
-                "거리·각도 절대값을 신뢰하지 말 것"
+                f"오도메트리 캘리브레이션: {summary}. "
+                "바퀴 지름(0.25m)과 트랙폭(0.53m)은 2026-08-07 실측이지만 "
+                "**좌·우 스케일을 따로 재지 않았다** — 3m 직선 5회로 개별 측정해야 "
+                "좌우 편차 ±3%p 기준을 판정할 수 있다(TBD-CAL-001, §35-3). "
+                "엔코더 분해능도 가정값이라 절대 거리에 잔차가 남을 수 있다"
             )
         else:
             self.get_logger().info(f"오도메트리 캘리브레이션: {summary}")

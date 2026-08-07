@@ -25,6 +25,11 @@ public record TelemetryPointResponse(
         Double angularVelocity,
         Boolean mcuConnected,
         /**
+         * 모터 보드 링크 (S15P11A301-317). {@code mcuConnected} 는 센서 보드이고 이 값은
+         * 모터 보드다 — 보드가 둘이라 값도 둘이다. 같은 {@code bool_and} 규칙을 쓴다.
+         */
+        Boolean motorLinkOk,
+        /**
          * 녹화기 상태 (S15P11A301-310). 구간 bool_and — 한 번이라도 실패했으면 false,
          * 보고가 없었으면 null(판정 근거 없음이며 「정상」이 아니다).
          */

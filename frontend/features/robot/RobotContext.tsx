@@ -15,6 +15,7 @@ import { missionStateFromServer } from "./missionStatus";
 import { api, ApiError, type CommandType } from "@/lib/api";
 import { motionFromLatest } from "@/features/telemetry/motionReading";
 import {
+  motorLinkFromLatest,
   sensorsFromLatest,
   sensorsFromMissionPoint,
 } from "@/features/telemetry/sensorReading";
@@ -109,7 +110,7 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
     controlMode: null,
     safetyState: "SAFE_IDLE",
     // 연동 전에는 null이 정직한 값이다. false로 두면 "고장"으로 읽힌다.
-    health: { mcuConnected: null, lidarOk: null, cameraOk: null },
+    health: { mcuConnected: null, lidarOk: null, cameraOk: null, motorLinkOk: null },
     speed: 0,
     heading: 0,
     uptime: 0,
@@ -282,7 +283,15 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
               updatedAt: Date.parse(last.time),
             });
             // MCU 연결은 상태판 건강 표시와도 같은 사실이어야 한다.
-            setStatus(s => ({ ...s, health: { ...s.health, mcuConnected: last.mcuConnected } }));
+            setStatus(s => ({
+              ...s,
+              health: {
+                ...s.health,
+                mcuConnected: last.mcuConnected,
+                // 모터 보드는 **다른 보드**다 (S15P11A301-317). 같은 버킷에 함께 온다.
+                motorLinkOk: last.motorLinkOk ?? null,
+              },
+            }));
             return;
           }
           // **비었으면 결측을 세우지 않고 최신값으로 내려간다** (S15P11A301-322).
@@ -306,7 +315,16 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
         const sensors = sensorsFromLatest(d, Date.now());
         setSensors(sensors);
         setMotion(motionFromLatest(d, Date.now()));
-        setStatus(s => ({ ...s, health: { ...s.health, mcuConnected: sensors.mcuConnected } }));
+        setStatus(s => ({
+          ...s,
+          health: {
+            ...s.health,
+            mcuConnected: sensors.mcuConnected,
+            // 모터 보드 링크 (S15P11A301-317). mcuTime 과 같은 행에서 오므로 신선도
+            // 판정이 mcuConnected 와 같고, 그 판정은 sensorReading 이 갖는다.
+            motorLinkOk: motorLinkFromLatest(d, Date.now()),
+          },
+        }));
       } catch {
         // 일시적 오류는 다음 폴링에 맡긴다. 마지막 표시값은 유지된다.
       }

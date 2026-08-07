@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   SENSOR_FRESH_MS,
+  motorLinkFromLatest,
   sensorsFromLatest,
   sensorsFromMissionPoint,
 } from "@/features/telemetry/sensorReading";
@@ -36,6 +37,7 @@ function latest(over: Partial<TelemetryLatest> = {}): TelemetryLatest {
     humidity: 60.0,
     mcuTime: iso(1_000),
     mcuConnected: true,
+    motorLinkOk: true,
     ...NO_RECORDER,
     poseTime: iso(1_000),
     linearVelocity: 0,
@@ -53,6 +55,8 @@ function point(over: Partial<TelemetryPoint> = {}): TelemetryPoint {
     linearVelocity: 0.1,
     angularVelocity: 0,
     mcuConnected: true,
+    // 보드가 둘이다 (#317) — 센서 보드와 별개 값이라 픽스처에도 따로 둔다.
+    motorLinkOk: true,
     ...NO_RECORDER,
     ...over,
   };
@@ -113,5 +117,25 @@ describe("sensorsFromMissionPoint", () => {
     expect(s.temperature).toBeNull();
     expect(s.humidity).toBeNull();
     expect(s.mcuConnected).toBeNull();
+  });
+});
+
+describe("motorLinkFromLatest", () => {
+  it("신선하면 값을 그대로 쓴다 — 센서 보드와 독립이다", () => {
+    // 보드가 둘이다. 한 응답에서 센서 보드는 정상인데 모터 보드만 죽을 수 있고,
+    // 2026-08-06 실기동이 정확히 그 상태였다.
+    const d = latest({ mcuConnected: true, motorLinkOk: false });
+    expect(sensorsFromLatest(d, NOW).mcuConnected).toBe(true);
+    expect(motorLinkFromLatest(d, NOW)).toBe(false);
+  });
+
+  it("오래된 값은 null 이다 — 끊긴 것과 모르는 것을 섞지 않는다", () => {
+    const d = latest({ mcuTime: iso(SENSOR_FRESH_MS + 1), motorLinkOk: false });
+    expect(motorLinkFromLatest(d, NOW)).toBeNull();
+  });
+
+  it("키가 없으면 null 이다 — 옛 백엔드 응답", () => {
+    const partial = { mcuTime: iso(1_000) } as unknown as TelemetryLatest;
+    expect(motorLinkFromLatest(partial, NOW)).toBeNull();
   });
 });

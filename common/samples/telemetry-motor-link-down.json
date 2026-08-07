@@ -1,0 +1,42 @@
+{
+  "schemaVersion": "1.0",
+  "messageId": "7c1f1f2e-9a3d-4f21-9a6b-2f0d4b8e5c31",
+  "messageType": "ROBOT_TELEMETRY",
+  "robotId": "SENTINEL-01",
+  "missionId": "4a43f45c-779f-4df5-ac04-1695724829a4",
+  "sequence": 10231,
+  "sentAt": "2026-07-22T06:30:15.123Z",
+  "data": {
+    "pose": {
+      "x": 4.31,
+      "y": 1.82,
+      "yaw": 0.74,
+      "mapId": "4f87365c-c914-4ba5-8e47-34417cd38c52"
+    },
+    "motion": {
+      "linearVelocityMps": 0.24,
+      "angularVelocityRadps": 0.05
+    },
+    "battery": {
+      "voltage": 14.7,
+      "percent": 72.0
+    },
+    "environment": {
+      "temperatureC": 28.4,
+      "humidityPercent": 55.1
+    },
+    "compute": {
+      "cpuPercent": 47.2,
+      "gpuPercent": 63.0,
+      "memoryPercent": 58.3,
+      "jetsonTempC": 61.0
+    },
+    "health": {
+      "mcuConnected": true,
+      "lidarOk": true,
+      "cameraOk": true,
+      "motorLinkOk": false
+    },
+    "missionState": "EXPLORING"
+  }
+}

@@ -28,8 +28,8 @@ public class TelemetryWriter {
 
     private static final String INSERT_METRICS = """
             INSERT INTO robot_metrics (time, mission_id, battery, voltage, cpu, gpu, memory, jetson_temp, state,
-                                       mcu_connected, recorder_ok, recorder_last_failure)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                       mcu_connected, motor_link_ok, recorder_ok, recorder_last_failure)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """;
 
     private static final String INSERT_ENVIRONMENT = """
@@ -75,6 +75,8 @@ public class TelemetryWriter {
                     compute == null ? null : compute.jetsonTempC(),
                     data.missionState(),
                     health == null ? null : health.mcuConnected(),
+                    // 모터 보드 링크 (S15P11A301-317). mcuConnected 와 다른 보드다.
+                    health == null ? null : health.motorLinkOk(),
                     // 녹화기 상태 (S15P11A301-310). 키가 없으면 Jackson 이 null 로 채우므로
                     // 「필드 없음」과 「null」이 같게 저장된다 — 젯슨 재빌드 전 스택이 보내는
                     // 옛 형식(두 필드 없음)이 그대로 통과한다.

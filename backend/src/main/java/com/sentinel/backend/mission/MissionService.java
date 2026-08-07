@@ -71,6 +71,9 @@ public class MissionService {
                        avg(cpu) AS cpu, avg(gpu) AS gpu, avg(memory) AS memory,
                        avg(jetson_temp) AS jetson_temp, avg(battery) AS battery,
                        bool_and(mcu_connected) AS mcu_connected,
+                       -- 모터 보드 링크 (S15P11A301-317). mcu_connected 와 다른 보드이며
+                       -- 같은 bool_and 규칙이다 — 구간 중 한 번이라도 끊겼으면 false.
+                       bool_and(motor_link_ok) AS motor_link_ok,
                        -- 녹화기 상태 (S15P11A301-310). recorder_ok 도 boolean 이라
                        -- bool_and: 구간 중 한 번이라도 실패했으면 false 로 보인다.
                        -- 사유는 젯슨이 래치해 두는 값이라 한 버킷 안에서 거의 상수다.
@@ -97,7 +100,7 @@ public class MissionService {
             )
             SELECT COALESCE(m.bucket, e.bucket, p.bucket) AS bucket,
                    m.cpu, m.gpu, m.memory, m.jetson_temp, m.battery, m.mcu_connected,
-                   m.recorder_ok, m.recorder_last_failure,
+                   m.motor_link_ok, m.recorder_ok, m.recorder_last_failure,
                    e.temperature, e.humidity,
                    p.linear_velocity, p.angular_velocity
             FROM m
@@ -195,6 +198,7 @@ public class MissionService {
                         rs.getObject("linear_velocity", Double.class),
                         rs.getObject("angular_velocity", Double.class),
                         rs.getObject("mcu_connected", Boolean.class),
+                        rs.getObject("motor_link_ok", Boolean.class),
                         rs.getObject("recorder_ok", Boolean.class),
                         rs.getString("recorder_last_failure")),
                 bucketSeconds, missionId, fromTs, toTs,

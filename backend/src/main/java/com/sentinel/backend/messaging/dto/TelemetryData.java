@@ -50,11 +50,18 @@ public record TelemetryData(
      *
      * <p>{@code recorderLastFailure} 는 String 이다. 젯슨이 {@code RECORDING_FAILED_{사유}}
      * 로 만들어 값이 늘어나므로 enum 으로 고정하지 않는다.
+     *
+     * <p>{@code motorLinkOk} 는 S15P11A301-317 에서 더했다. {@code mcuConnected} 와
+     * <b>다른 보드</b>다 — 그쪽은 엔코더를 내는 센서 ESP32 이고 이 값은 바퀴를 돌리는
+     * 모터 ESP32 다. 보드가 둘인데 값이 하나뿐이라, 2026-08-06 실기동에서 모터 보드만
+     * 죽었을 때 관제 화면이 그것을 말할 방법이 없었다. 이것도 필수가 아니다(옛 젯슨은
+     * 키를 보내지 않는다).
      */
     public record Health(
             Boolean mcuConnected,
             Boolean lidarOk,
             Boolean cameraOk,
+            Boolean motorLinkOk,
             Boolean recorderOk,
             String recorderLastFailure) {
     }

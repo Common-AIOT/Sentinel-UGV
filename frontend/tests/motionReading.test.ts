@@ -17,7 +17,7 @@ const FRESH_ISO = new Date(NOW - 1_000).toISOString();
 function full(): TelemetryLatest {
   return {
     environmentTime: FRESH_ISO, temperature: 25, humidity: 60,
-    mcuTime: FRESH_ISO, mcuConnected: true,
+    mcuTime: FRESH_ISO, mcuConnected: true, motorLinkOk: true,
     recorderOk: true, recorderLastFailure: null,
     poseTime: FRESH_ISO, linearVelocity: 0.24, angularVelocity: -0.05,
   };

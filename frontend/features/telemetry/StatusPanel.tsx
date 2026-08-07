@@ -1,6 +1,6 @@
 "use client";
 
-import { ShieldAlert } from "lucide-react";
+import { PlugZap, ShieldAlert } from "lucide-react";
 import { useRobot } from "@/features/robot/RobotContext";
 import type { MissionState } from "@/features/robot/mockData";
 
@@ -88,22 +88,50 @@ export default function StatusPanel() {
   const { missionState } = status;
 
   const danger = missionState === "ESTOP" || missionState === "ERROR";
+  /**
+   * 모터 보드 무응답 (S15P11A301-317).
+   *
+   * **`false` 일 때만 알린다.** `null` 은 「확인할 수단이 없음」이라 경고가 아니다 —
+   * 모터 보드 없이 도는 구성과 젯슨 재빌드 전 스택이 그렇다.
+   *
+   * 이것을 화면에 올린 이유: 2026-08-06 실기동에서 모터 보드만 죽었을 때, 조작자가
+   * 그것을 아는 유일한 방법이 **명령을 눌러 6초쯤 기다렸다 거부 알림을 받는 것**
+   * 이었다. 그전까지 화면은 「탐사 중」을 그대로 보여줬다.
+   */
+  const motorDown = status.health.motorLinkOk === false;
 
   // 서버 연결 표시는 상단 바로 몰았다 (S15P11A301-303). 같은 값(wsConnected)을
   // 두 곳에서 그리고 있었다 — 상단 바 시계 옆의 점과 여기가 하나의 상태였다.
   // 평상시 알릴 것이 없으면 이 패널은 자리를 차지하지 않는다.
-  if (!danger) return null;
+  if (!danger && !motorDown) return null;
 
   return (
-    <div className="p-3.5 border-b border-border">
+    <div className="p-3.5 border-b border-border space-y-2">
       {/* 비상 정지·오류는 다른 모든 것보다 위에 알린다. 배지 색만 바꾸면
           평상시와 구분되지 않는다. 상세 안내는 하단 명령 바가 함께 낸다. */}
-      <div className="flex items-center gap-2 rounded border border-destructive/50 bg-destructive/15 px-2.5 py-2">
-        <ShieldAlert size={16} className="text-destructive flex-shrink-0" />
-        <p className="text-sm font-semibold text-destructive leading-tight">
-          {MISSION_LABEL[missionState]}
-        </p>
-      </div>
+      {danger && (
+        <div className="flex items-center gap-2 rounded border border-destructive/50 bg-destructive/15 px-2.5 py-2">
+          <ShieldAlert size={16} className="text-destructive flex-shrink-0" />
+          <p className="text-sm font-semibold text-destructive leading-tight">
+            {MISSION_LABEL[missionState]}
+          </p>
+        </div>
+      )}
+      {/* 임무 상태와 **독립**이다. 보드가 죽어도 임무 상태는 「탐사 중」일 수 있고,
+          실제로 그랬다 — 명령은 나가는데 바퀴가 안 도는 상태다. */}
+      {motorDown && (
+        <div className="flex items-start gap-2 rounded border border-destructive/50 bg-destructive/15 px-2.5 py-2">
+          <PlugZap size={16} className="text-destructive flex-shrink-0 mt-0.5" />
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-destructive leading-tight">
+              모터 보드 무응답
+            </p>
+            <p className="text-[11px] text-destructive/90 leading-snug mt-0.5">
+              주행 명령이 바퀴에 닿지 않습니다 · 로봇 전원과 USB 연결을 확인하세요
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

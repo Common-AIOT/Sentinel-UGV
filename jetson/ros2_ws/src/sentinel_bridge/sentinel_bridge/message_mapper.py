@@ -437,3 +437,24 @@ class MessageMapper:
             },
             mission_id=mission_id,
         )
+
+
+def link_state(fresh: bool | None, publisher_count: int) -> bool | None:
+    """토픽 신선도 + 발행자 유무 → 3값 링크 상태 (S15P11A301-317).
+
+    `_fresh` 는 「한 번도 못 받음」을 `None` 으로 낸다. 그 규칙 자체는 옳지만
+    (「미구현·미연결」과 「장애」를 섞지 않는다) **모터 보드에는 그대로 쓸 수 없다** —
+    부팅부터 죽어 있던 보드가 `None` 이 되어 화면이 조용해지는데, 2026-08-06 에
+    실제로 일어난 것이 바로 그 경우다(보드가 HELLO 에 한 번도 답하지 않았다).
+    그때야말로 알려야 한다.
+
+    그래서 「구성에 없음」과 「있어야 하는데 죽음」을 **발행자 유무**로 가른다.
+    브리지 노드는 보드가 죽어 있어도 토픽의 발행자를 만들어 두므로, 발행자가 있는데
+    프레임이 없으면 보드 문제다. 발행자가 아예 없으면 그 보드가 이 구성에 없는 것이고,
+    그때 `False` 를 내면 모터 없는 개발 구성이 상시 경고가 된다.
+
+    `cloud_bridge._mission_manager_alive` 가 쓰는 것과 같은 기법이다.
+    """
+    if fresh is not None:
+        return fresh
+    return False if publisher_count > 0 else None

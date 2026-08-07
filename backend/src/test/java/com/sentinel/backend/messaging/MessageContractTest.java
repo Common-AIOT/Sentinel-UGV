@@ -103,6 +103,28 @@ class MessageContractTest {
     }
 
     @Test
+    void legacyTelemetryHasNoMotorLinkField() throws Exception {
+        // recorderOk 와 같은 이유다 (S15P11A301-317). 젯슨 재빌드 전 스택은 이 키를
+        // 보내지 않으며, 그것이 파싱을 깨뜨리면 telemetry 수집이 통째로 멈춘다.
+        TelemetryData data = telemetry("telemetry-esp32-connected.json");
+
+        assertNull(data.health().motorLinkOk());
+        assertTrue(data.health().mcuConnected());
+    }
+
+    @Test
+    void motorLinkIsSeparateFromSensorBoard() throws Exception {
+        // **보드가 둘이다.** mcuConnected 는 엔코더를 내는 센서 보드이고 motorLinkOk 는
+        // 바퀴를 돌리는 모터 보드다. 2026-08-06 실기동에서 모터 보드만 죽었는데 화면에
+        // 그것을 말하는 값이 없어서, 조작자는 명령을 눌러 거부 알림을 받아야 알았다.
+        // 두 값이 한 메시지에서 서로 다를 수 있다는 것이 이 시험의 요점이다.
+        TelemetryData data = telemetry("telemetry-motor-link-down.json");
+
+        assertTrue(data.health().mcuConnected());
+        assertFalse(data.health().motorLinkOk());
+    }
+
+    @Test
     void recorderFailureRidesAlongsideHealthyRecorder() throws Exception {
         // **정상 조합이다.** 젯슨은 성공해도 마지막 실패 사유를 지우지 않는다 — 지우면
         // 간헐 실패가 성공 한 번에 덮여 재발을 못 잡는다(S15P11A301-304 가 19건 쌓이는

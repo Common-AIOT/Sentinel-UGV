@@ -29,7 +29,8 @@ public class TelemetryQueryService {
         }
         // 녹화기 상태를 함께 담는다 (S15P11A301-310). 같은 robot_metrics 최신 행에서
         // 나오므로 조회가 늘지 않는다.
-        record Mcu(Instant time, Boolean connected, Boolean recorderOk, String recorderLastFailure) {
+        record Mcu(Instant time, Boolean connected, Boolean motorLinkOk,
+                   Boolean recorderOk, String recorderLastFailure) {
         }
 
         List<Env> env = jdbc.query("""
@@ -41,11 +42,12 @@ public class TelemetryQueryService {
                         rs.getObject("humidity", Double.class)));
 
         List<Mcu> mcu = jdbc.query("""
-                        SELECT time, mcu_connected, recorder_ok, recorder_last_failure
+                        SELECT time, mcu_connected, motor_link_ok, recorder_ok, recorder_last_failure
                         FROM robot_metrics ORDER BY time DESC LIMIT 1
                         """,
                 (rs, i) -> new Mcu(rs.getTimestamp("time").toInstant(),
                         rs.getObject("mcu_connected", Boolean.class),
+                        rs.getObject("motor_link_ok", Boolean.class),
                         rs.getObject("recorder_ok", Boolean.class),
                         rs.getString("recorder_last_failure")));
 
@@ -70,6 +72,7 @@ public class TelemetryQueryService {
                 e == null ? null : e.humidity(),
                 m == null ? null : m.time(),
                 m == null ? null : m.connected(),
+                m == null ? null : m.motorLinkOk(),
                 m == null ? null : m.recorderOk(),
                 m == null ? null : m.recorderLastFailure(),
                 p == null ? null : p.time(),

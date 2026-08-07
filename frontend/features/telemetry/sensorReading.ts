@@ -49,3 +49,21 @@ export function sensorsFromLatest(d: TelemetryLatest, now: number): SensorReadin
     updatedAt: envFresh ? envTime : null,
   };
 }
+
+/**
+ * 최신값 → 모터 보드 링크 (S15P11A301-317).
+ *
+ * `mcuConnected` 와 **다른 보드**다 — 그쪽은 엔코더를 내는 센서 ESP32 이고 이 값은
+ * 바퀴를 돌리는 모터 ESP32 다. 값이 하나뿐이던 동안, 2026-08-06 실기동에서 모터
+ * 보드만 죽었을 때 화면이 그것을 말할 방법이 없었다.
+ *
+ * 신선도는 `mcuTime` 으로 본다 — 같은 `robot_metrics` 행에서 오므로 시각도 같다.
+ * `false` 와 `null` 을 구별하는 것이 요점이다: `false` 는 「확인했고 끊김」이라
+ * 경고이고, `null` 은 「확인할 수단이 없음」(모터 보드 없는 구성·옛 젯슨)이라
+ * 경고가 아니다. 화면이 `null` 에 경고하면 모터 없는 개발 구성이 상시 빨간불이 된다.
+ */
+export function motorLinkFromLatest(d: TelemetryLatest, now: number): boolean | null {
+  const mcuTime = d.mcuTime == null ? null : Date.parse(d.mcuTime);
+  const fresh = mcuTime !== null && now - mcuTime <= SENSOR_FRESH_MS;
+  return fresh ? d.motorLinkOk ?? null : null;
+}

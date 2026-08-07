@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { ChevronLeft, Play, Archive, User, MapPin, Clock, Volume2, VolumeX } from "lucide-react";
+import {
+  ChevronLeft, Play, Archive, User, MapPin, Clock, Volume2, VolumeX, VideoOff, HelpCircle,
+} from "lucide-react";
 import {
   api,
   type EncounterDetail,
@@ -12,6 +14,12 @@ import {
 } from "@/lib/api";
 import TelemetryChart from "@/features/telemetry/TelemetryChart";
 import { sanitizeEnvironmentPoint } from "@/features/telemetry/environmentThresholds";
+import {
+  classifyMissingMedia,
+  mediaStateLabel,
+  summarizeMissionRecorder,
+  type MissingMediaVerdict,
+} from "@/features/telemetry/recorderStatus";
 import MissionMap from "@/features/mapping/MissionMap";
 import {
   createStompClient,
@@ -218,18 +226,18 @@ export default function MissionHistoryPage() {
         m => m.type === "EVENT_VIDEO" && m.storageStatus === "AVAILABLE",
       );
       if (!video) {
+        // 영상 행이 아예 없는 발견(=미디어 없는 발견)은 여기서 아무 말도 하지
+        // 않는다. 이유가 텔레메트리에 있고 그것은 폴링으로 늦게 오므로, 판정은
+        // 렌더 시점의 missingMedia 가 한다 (S15P11A301-311).
+        const videos = d.media.filter(m => m.type === "EVENT_VIDEO");
+        if (videos.length === 0) return;
         // 업로드 중(PENDING)과 유실(FAILED)을 구분한다 — 서버가 오래된 PENDING 을
         // 실물 대조로 FAILED 판정하게 되면서(13.6) 화면도 다르게 말해야 한다.
         // FAILED 도 젯슨이 다시 올리면 복구되므로 단정하지 않는다.
-        const failed = d.media.some(
-          m => m.type === "EVENT_VIDEO" && m.storageStatus === "FAILED",
-        );
         setVideoError(
-          d.media.length === 0
-            ? "연결된 영상이 없습니다"
-            : failed
-              ? "영상이 유실됐습니다 — 업로드 확인 실패"
-              : "영상 업로드 중입니다 — 잠시 후 다시 열어보세요",
+          videos.some(m => m.storageStatus === "FAILED")
+            ? "영상이 유실됐습니다 — 업로드 확인 실패"
+            : "영상 업로드 중입니다 — 잠시 후 다시 열어보세요",
         );
         return;
       }
@@ -312,6 +320,29 @@ export default function MissionHistoryPage() {
     [telemetry],
   );
 
+  // ── 영상 없는 발견의 사유 (S15P11A301-311) ────────────────────────────────
+  // 열려 있는 발견에 영상 행이 하나도 없을 때만 판정한다. 행이 있으면 업로드
+  // 상태(PENDING/FAILED)가 이미 답이므로 videoError 가 말한다.
+  //
+  // 판정을 openEncounter 안에서 하지 않는 이유: 사유는 encounter 가 아니라 임무
+  // 텔레메트리에서 오고 그것은 진행 중 임무에서 5초 폴링으로 늦게 온다. 렌더에서
+  // 파생시키면 발견을 다시 열지 않아도 「근거 없음」이 사유로 바뀐다.
+  const missingMedia = useMemo<MissingMediaVerdict | null>(() => {
+    if (!detail || videoUrl) return null;
+    if (detail.media.some(m => m.type === "EVENT_VIDEO")) return null;
+    // 다음 발견의 마감 결과가 이 발견에 붙지 않게 창을 그 앞까지로 좁힌다.
+    const opened = new Date(detail.startedAt).getTime();
+    const nextStart = encounters.reduce<string | null>((earliest, e) => {
+      const t = new Date(e.startedAt).getTime();
+      if (t <= opened) return earliest;
+      return earliest === null || t < new Date(earliest).getTime() ? e.startedAt : earliest;
+    }, null);
+    return classifyMissingMedia(detail, telemetry, nextStart);
+  }, [detail, videoUrl, telemetry, encounters]);
+
+  /** 임무 하나의 녹화기 상태 — 발견을 열지 않아도 마감 실패가 보여야 한다. */
+  const missionRecorder = useMemo(() => summarizeMissionRecorder(telemetry), [telemetry]);
+
   /** 영상 오버레이 닫기 — 지도로 복귀. */
   const closeOverlay = useCallback(() => {
     setDetail(null);
@@ -391,17 +422,39 @@ export default function MissionHistoryPage() {
                   예전 2×2 카드는 옆 차트 높이에 맞춰 늘어나 대부분이 빈 공간이었다. */}
               <div className="flex gap-2 flex-shrink-0">
                 {[
-                  ["걸린 시간", fmtDuration(selected.durationSec)],
-                  ["이동 거리", fmtDistance(selected.distanceM)],
-                  ["발견 인원", selected.detectionCount?.toString() ?? "—"],
-                  ["종료 사유", selected.endReason ? (END_REASON_LABEL[selected.endReason] ?? selected.endReason) : "—"],
-                ].map(([k, v]) => (
+                  { k: "걸린 시간", v: fmtDuration(selected.durationSec) },
+                  { k: "이동 거리", v: fmtDistance(selected.distanceM) },
+                  { k: "발견 인원", v: selected.detectionCount?.toString() ?? "—" },
+                  {
+                    k: "종료 사유",
+                    v: selected.endReason ? (END_REASON_LABEL[selected.endReason] ?? selected.endReason) : "—",
+                  },
+                  // 녹화기 (S15P11A301-311) — 발견을 하나하나 열지 않아도 마감 실패가
+                  // 보여야 재발을 알아챈다. 사유는 젯슨이 래치하고 그 래치는 임무
+                  // 경계에서 지워지지 않으므로 「이 임무가 실패했다」가 아니라 「실패
+                  // 기록이 남아 있다」로 말한다. 시점은 발견별 판정이 좁힌다.
+                  {
+                    k: "녹화기",
+                    v: missionRecorder.state === "FAILED"
+                      ? "실패 기록 있음"
+                      : missionRecorder.state === "OK" ? "정상" : "미보고",
+                    tone: missionRecorder.state === "FAILED"
+                      ? "text-accent"
+                      : missionRecorder.state === "OK" ? "text-foreground" : "text-muted-foreground",
+                    title: missionRecorder.lastFailure
+                      ? `${missionRecorder.lastFailure} — ${mediaStateLabel(missionRecorder.lastFailure)}`
+                      : missionRecorder.state === "FAILED"
+                        ? "마감 실패가 보고됐지만 사유는 보고되지 않았습니다"
+                        : "녹화기 상태 보고가 없습니다 — 「정상」이 아니라 판정 근거가 없다는 뜻입니다",
+                  },
+                ].map(({ k, v, tone, title }: { k: string; v: string; tone?: string; title?: string }) => (
                   <div
                     key={k}
+                    title={title}
                     className="flex-1 min-w-0 border border-border rounded bg-card px-3 py-1.5 flex items-baseline justify-between gap-2"
                   >
                     <span className="font-mono text-[9px] text-muted-foreground flex-shrink-0">{k}</span>
-                    <span className="font-mono text-xs text-foreground truncate">{v}</span>
+                    <span className={`font-mono text-xs truncate ${tone ?? "text-foreground"}`}>{v}</span>
                   </div>
                 ))}
               </div>
@@ -451,9 +504,31 @@ export default function MissionHistoryPage() {
                   {videoUrl ? (
                     <video ref={videoRef} src={videoUrl} controls autoPlay className="w-full h-full object-contain" />
                   ) : (
-                    <div className="w-full h-full flex flex-col items-center justify-center gap-2">
-                      <Play size={24} className="text-muted-foreground/40" />
-                      <span className="font-mono text-[10px] text-muted-foreground">{videoError}</span>
+                    // 영상이 없는 자리에서 세 가지를 구별해 말한다 (S15P11A301-311).
+                    // 색만으로 구별하지 않는다(28.6) — 아이콘과 문구를 함께 바꾼다.
+                    <div className="w-full h-full flex flex-col items-center justify-center gap-2 px-6 text-center">
+                      {missingMedia?.kind === "RECORDING_FAILED" ? (
+                        <VideoOff size={24} className="text-accent/70" />
+                      ) : missingMedia?.kind === "NO_EVIDENCE" ? (
+                        <HelpCircle size={24} className="text-muted-foreground/40" />
+                      ) : (
+                        <Play size={24} className="text-muted-foreground/40" />
+                      )}
+                      <span
+                        className={`font-mono text-[10px] ${
+                          missingMedia?.kind === "RECORDING_FAILED" ? "text-accent" : "text-muted-foreground"
+                        }`}
+                      >
+                        {missingMedia?.message ?? videoError}
+                      </span>
+                      {/* 원문 사유 — 툴팁만 두면 마우스 없는 화면에서 열리지 않고,
+                          젯슨 `report.json` 의 `mediaState` 와 눈으로 대조해야 할 때가
+                          있다. 한국어 문구는 표시 변환일 뿐이고 대조는 이 값으로 한다. */}
+                      {missingMedia?.rawReason && (
+                        <span className="font-mono text-[9px] text-muted-foreground/60 select-all">
+                          {missingMedia.rawReason}
+                        </span>
+                      )}
                     </div>
                   )}
                 </div>
@@ -487,7 +562,10 @@ export default function MissionHistoryPage() {
                       {[
                         ["감지 인원", detail.detectedPersonCount?.toString() ?? "—"],
                         ["상호작용", detail.interactionStartedAt ? `${fmtTime(detail.interactionStartedAt)}~${fmtTime(detail.interactionEndedAt)}` : "—"],
-                        ["영상 개수", detail.media.length.toString()],
+                        // 영상만 센다 — 잡음 제거 오디오(#228)까지 세면 영상이 없는
+                        // 발견이 「영상 개수 1」로 보인다. 옆의 녹화 실패 문구와
+                        // 정면으로 어긋나는 자리다 (S15P11A301-311).
+                        ["영상 개수", detail.media.filter(m => m.type === "EVENT_VIDEO").length.toString()],
                         // ── 음성 보고 (S15P11A301-242) — 요구조자 발화 기반 값이다.
                         // responsivePersonCount 는 응답이 확인되지 않은 주변 인원까지
                         // 포함하므로 "응답 가능"이라 쓰지 않는다. null 은 추출 실패

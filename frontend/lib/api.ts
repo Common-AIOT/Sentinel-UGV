@@ -151,6 +151,16 @@ export interface TelemetryPoint {
   angularVelocity: number | null;
   /** 구간 bool_and — 한 번이라도 끊겼으면 false, 보고가 없었으면 null. */
   mcuConnected: boolean | null;
+  /**
+   * 녹화기 상태 (#310). recorderOk 도 구간 bool_and — 한 번이라도 실패했으면 false,
+   * 보고가 없었으면 null 이며 그것은 「정상」이 아니라 「판정 근거 없음」이다.
+   *
+   * recorderLastFailure 는 젯슨이 래치한다 — 성공해도 지워지지 않으므로
+   * `recorderOk: true` 와 함께 오는 것이 정상 조합이다. 판정은
+   * `features/telemetry/recorderStatus.ts` 한 곳에서만 한다.
+   */
+  recorderOk: boolean | null;
+  recorderLastFailure: string | null;
 }
 
 /** 임무 무관 최신 센서 값 (#255). 시각이 그룹별로 따로 온다 — 신선도 판정은 화면 몫. */
@@ -160,6 +170,9 @@ export interface TelemetryLatest {
   humidity: number | null;
   mcuTime: string | null;
   mcuConnected: boolean | null;
+  /** 녹화기 상태 (#310). mcuTime 과 같은 행에서 온다 — 신선도도 그것으로 본다. */
+  recorderOk: boolean | null;
+  recorderLastFailure: string | null;
   /** 주행 지표 (#300). robot_pose 에서 오므로 시각이 또 따로다 — 신선도는 poseTime 으로 본다. */
   poseTime: string | null;
   linearVelocity: number | null;

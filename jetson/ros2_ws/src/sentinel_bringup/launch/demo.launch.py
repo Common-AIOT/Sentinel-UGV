@@ -201,6 +201,11 @@ def generate_launch_description():
         # nav2 가 아니라 탐지(enable_detector)다. 기본은 꺼짐이며 모터를 돌리는
         # 스위치(enable_safety)는 사람이 따로 켠다.
         DeclareLaunchArgument('enable_approach', default_value='false'),
+        # 접근 정지거리. 기본값은 approach.launch.py 가 갖는다(0.60m) — 여기서
+        # 다시 적으면 두 곳이 어긋난다. 빈 문자열이면 그쪽 기본값이 쓰인다.
+        #
+        # 올리는 용도는 아래 include 주석에 있다(S15P11A301-332).
+        DeclareLaunchArgument('stop_distance_m', default_value='0.60'),
         # 안전 체인 (S15P11A301-237). Nav2 와 같은 이유로 기본 꺼짐이며, 추가로
         # **켜는 순간 바퀴가 돌 수 있는 상태가 된다.** 지금까지 데모 스택은
         # /cmd_vel 발행자가 없어서 구조적으로 못 움직였는데, 이 체인이 그 연결을
@@ -332,8 +337,25 @@ def generate_launch_description():
                  '_effective_exploration', 12.0),
         # 접근도 안전 체인 뒤다 — /cmd_vel_nav 를 내는 것은 같으므로 먼저 뜨면
         # 첫 명령이 아무도 안 듣는 토픽으로 사라진다.
+        # stop_distance_m 을 넘긴다 (S15P11A301-332).
+        #
+        # approach.launch.py 가 이 인자를 노출하고 설명까지 달아 두었는데
+        # 여기서 넘기지 않아 닿을 수 없었다. `GroupAction(scoped=True)` 이라
+        # 상위 인자가 새어들지 않는다(그 격리는 _include 의 존재 이유다).
+        #
+        # 자율주행이 없는 동안 음성 구간을 검증하는 수단이다. 모터 보드가
+        # 죽어 있으면 접근이 거리를 좁힐 수 없어 사람이 프레임을 벗어날 때까지
+        # (실측 61초) 세션이 시작되지 않는다. 정지거리를 올리면 접근 노드가
+        # 즉시 도착을 선언해 6초 안에 첫 멘트가 나온다 — **같은 코드 경로가
+        # 그대로 돈다.** 우회 플래그를 만들지 않는 이유다.
+        #
+        # 기본값 0.60 은 approach.launch.py 가 갖는다. 여기서 다시 적으면 두
+        # 곳이 어긋난다.
         _include('sentinel_bringup', 'approach.launch.py',
-                 '_effective_approach', 12.0),
+                 '_effective_approach', 12.0,
+                 launch_arguments={
+                     'stop_distance_m': LaunchConfiguration('stop_distance_m'),
+                 }),
         _include('sentinel_streaming', 'streaming.launch.py',
                  'enable_streaming', 4.0,
                  {'webrtc_encryption': LaunchConfiguration('webrtc_encryption')}),

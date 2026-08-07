@@ -203,6 +203,17 @@ class EncounterSessionState(str, Enum):
     IDLE = "IDLE"
     WAITING_APPROACH = "WAITING_APPROACH"
     INTERACTION_ACTIVE = "INTERACTION_ACTIVE"
+    # 유실을 봤지만 아직 포기하지 않은 상태 (S15P11A301-332).
+    #
+    # mission_manager 가 사후 3초 창 안의 재감지를 INTERACTING 으로 되돌리는데,
+    # 이 상태가 없던 동안 voice 는 첫 LOST 를 종결로 처리했다. 실측에서 유실
+    # 구간이 **0.179초**였고, 그 뒤 답까지 받아놓고(`[STT] 나 보여?`) 버렸다.
+    # 8.4 FPS 에서는 프레임 두어 장이면 0.2초다.
+    #
+    # 창 길이를 여기서 세지 않는다. mission_manager 가 창의 주인이고, 그 창이
+    # 닫히면 상태가 POST_RECORDING 을 벗어난다 — 그것을 신호로 쓴다. 값을
+    # 복사하면 두 노드가 다시 어긋날 수 있고, 어긋남이 이 결함의 원인이었다.
+    LOST_GRACE = "LOST_GRACE"
     WAITING_ENDED = "WAITING_ENDED"
     COMPLETED = "COMPLETED"
     LOST = "LOST"
@@ -317,6 +328,11 @@ class EncounterSessionCoordinator:
             return self._outcome(False, detail="중복 CONFIRMED")
 
         if context.phase is EncounterPhase.APPROACHED:
+            if self.state is EncounterSessionState.LOST_GRACE:
+                # 유예 중 APPROACHED 가 다시 오면 재감지와 같게 다룬다.
+                # mission_manager 가 REDETECTED 대신 이것을 낼 경로가 있다.
+                self.state = EncounterSessionState.INTERACTION_ACTIVE
+                return self._outcome(True, detail="유예 중 재접근 확인, 대화를 잇는다")
             if self.state is not EncounterSessionState.WAITING_APPROACH:
                 return self._outcome(False, detail="현재 상태에서 APPROACHED 무시")
             # 이후 사건에 personCount=0이 올 수 있으므로 최초 탐지 문맥을 보존한다.
@@ -328,12 +344,21 @@ class EncounterSessionCoordinator:
             )
 
         if context.phase is EncounterPhase.LOST:
-            was_active = self.state is EncounterSessionState.INTERACTION_ACTIVE
+            # 대화 중 유실이면 **포기하지 않고 유예에 들어간다**(S15P11A301-332).
+            # 창의 주인은 mission_manager 다 — 창이 닫히면 상태가 POST_RECORDING
+            # 을 벗어나고, 그때 `lost_grace_closed()` 가 종결한다.
+            if self.state is EncounterSessionState.INTERACTION_ACTIVE:
+                self.state = EncounterSessionState.LOST_GRACE
+                return self._outcome(
+                    True,
+                    detail="사람 유실, 재감지 유예 시작(대화는 유지)",
+                )
+            # 대화 중이 아니었으면 종전대로 즉시 종결한다. 유예해서 얻을 것이
+            # 없고, 접근 대기 중 유실은 다시 CONFIRMED 부터 시작하는 편이 맞다.
             self.state = EncounterSessionState.LOST
             self._finish_current()
             return self._outcome(
                 True,
-                abort_conversation=was_active,
                 detail="사람 유실, 자동 재개 없이 안전 종료",
             )
 
@@ -344,7 +369,28 @@ class EncounterSessionCoordinator:
             self._finish_current()
             return self._outcome(True, detail="Mission Manager ENDED 확인")
 
+        # REDETECTED
+        if self.state is EncounterSessionState.LOST_GRACE:
+            self.state = EncounterSessionState.INTERACTION_ACTIVE
+            return self._outcome(True, detail="재감지 확인, 대화를 잇는다")
+
         return self._outcome(False, detail="REDETECTED는 새 음성 세션을 만들지 않음")
+
+    def lost_grace_closed(self) -> EncounterSessionOutcome:
+        """유예 창이 닫혔다 — mission 이 사후 녹화 상태를 벗어났다.
+
+        창의 길이를 이 클래스가 세지 않는 이유는 `LOST_GRACE` 주석에 있다.
+        호출부는 mission status 를 보고 판단한다.
+        """
+        if self.state is not EncounterSessionState.LOST_GRACE:
+            return self._outcome(False, detail="유예 중이 아니다")
+        self.state = EncounterSessionState.LOST
+        self._finish_current()
+        return self._outcome(
+            True,
+            abort_conversation=True,
+            detail="재감지 유예 만료, 대화를 종결한다",
+        )
 
     def conversation_finished(
         self,

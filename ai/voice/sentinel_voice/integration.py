@@ -91,6 +91,18 @@ MISSION_ACTIVE_STATES = frozenset(
     }
 )
 
+# 재감지 유예 창이 아직 열려 있는 임무 상태 (S15P11A301-332).
+#
+# mission_manager 가 창의 주인이다. 대화 중 사람을 놓치면 POST_RECORDING 으로
+# 가고 사후 3초 안에 돌아오면 INTERACTING 으로 되돌린다. 그 두 상태에 있는
+# 동안은 아직 포기할 때가 아니다.
+#
+# 창이 닫힐 때는 phase 가 오지 않는다 — POST_RECORDING → REPORTING 전이가
+# phase 없이 일어나므로 상태 자체를 신호로 쓴다. 창 길이를 이쪽에 복사하지
+# 않는 이유이기도 하다. 값을 복사하면 한쪽만 바뀌어 어긋나고, 어긋남이 이
+# 결함의 원인이었다(voice 는 0.179초 유실에 대화를 버렸고 mission 은 회복했다).
+LOST_GRACE_STATES = frozenset({"INTERACTING", "POST_RECORDING"})
+
 
 def mission_resume_expected(state: Any) -> bool:
     """"탐사를 계속하겠습니다"를 말해도 되는 임무 상태인지.

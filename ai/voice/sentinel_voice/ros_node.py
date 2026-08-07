@@ -47,6 +47,7 @@ from .guide_audio import GUIDE_ASSETS, GuideCode
 from .integration import (
     build_interaction_report,
     dialogue_ended_signal,
+    LOST_GRACE_STATES,
     mission_abort_state,
     mission_resume_expected,
     utc_now_iso,
@@ -139,6 +140,24 @@ class VoiceSessionNode(Node):
         # 중단 판정보다 먼저 저장해야 한다. 중단이 아닌 상태는 아래에서 반환된다.
         with self._lock:
             self._mission_state = payload.get("state")
+
+        # 재감지 유예 창이 닫혔는지 판단한다 (S15P11A301-332).
+        #
+        # 창의 주인은 mission_manager 다. LOST 는 그것이 POST_RECORDING 에
+        # 들어갈 때 오고, 사후 3초 안에 사람이 돌아오면 REDETECTED 가 온다.
+        # 그런데 **돌아오지 않고 창이 닫힐 때는 phase 가 오지 않는다** —
+        # POST_RECORDING → REPORTING 전이가 phase 없이 일어난다. 그래서 상태
+        # 자체를 신호로 쓴다. 이렇게 하면 창 길이를 복사하지 않아도 두 노드가
+        # 항상 같은 창을 본다(값을 복사해 어긋난 것이 이 결함의 원인이었다).
+        if payload.get("state") not in LOST_GRACE_STATES:
+            with self._lock:
+                grace = self._coordinator.lost_grace_closed()
+                if grace.abort_conversation:
+                    self._abort_state = SessionState.ABORTED_SAFETY
+            if grace.accepted:
+                self.get_logger().warn(
+                    f"임무 상태 {payload.get('state')}: {grace.detail}"
+                )
 
         abort_kind = mission_abort_state(payload)
         if abort_kind is None:

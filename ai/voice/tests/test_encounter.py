@@ -130,15 +130,24 @@ class EncounterSessionCoordinatorTest(unittest.TestCase):
         )
 
     def test_lost_aborts_active_conversation_without_report_or_resume(self):
+        # 유실이 대화를 중단시키고 보고·재개를 만들지 않는다는 규범은 그대로다.
+        # 바뀐 것은 **시점**뿐이다 — 즉시가 아니라 재감지 유예가 만료된 뒤다
+        # (S15P11A301-332). 즉시 중단하면 0.18초 끊김에 대화가 죽었고, 실측에서
+        # 답을 받아놓고 버렸다.
         coordinator = EncounterSessionCoordinator()
         coordinator.handle(event("CONFIRMED"))
         coordinator.handle(event("APPROACHED"))
 
         lost = coordinator.handle(event("LOST"))
         self.assertTrue(lost.accepted)
-        self.assertTrue(lost.abort_conversation)
-        self.assertFalse(lost.handoff_report)
-        self.assertEqual(lost.state, EncounterSessionState.LOST)
+        self.assertFalse(lost.abort_conversation)
+        self.assertEqual(lost.state, EncounterSessionState.LOST_GRACE)
+
+        expired = coordinator.lost_grace_closed()
+        self.assertTrue(expired.accepted)
+        self.assertTrue(expired.abort_conversation)
+        self.assertFalse(expired.handoff_report)
+        self.assertEqual(expired.state, EncounterSessionState.LOST)
 
     def test_manual_and_safety_abort_never_handoff_report(self):
         for abort_method in ("abort_manual", "abort_safety"):
@@ -239,3 +248,64 @@ class EncounterSessionCoordinatorTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LostGraceTest(unittest.TestCase):
+    """순간 유실로 대화를 버리지 않는다 (S15P11A301-332).
+
+    실측에서 유실 구간이 0.179초였고, mission_manager 는 그것을 사후 3초 창의
+    재감지로 회복했는데 voice 는 종결로 처리했다. 답까지 받아놓고 버렸다.
+    """
+
+    def _active(self):
+        c = EncounterSessionCoordinator()
+        c.handle(parse_encounter_message(body("CONFIRMED")))
+        started = c.handle(parse_encounter_message(body("APPROACHED")))
+        self.assertTrue(started.start_conversation)
+        self.assertIs(c.state, EncounterSessionState.INTERACTION_ACTIVE)
+        return c
+
+    def test_대화중_유실은_종결하지_않고_유예에_들어간다(self):
+        c = self._active()
+        out = c.handle(parse_encounter_message(body("LOST")))
+        self.assertTrue(out.accepted)
+        # 여기서 중단하면 0.18초 끊김에 대화가 죽는다.
+        self.assertFalse(out.abort_conversation)
+        self.assertIs(c.state, EncounterSessionState.LOST_GRACE)
+
+    def test_유예중_재감지는_대화를_잇는다(self):
+        c = self._active()
+        c.handle(parse_encounter_message(body("LOST")))
+        out = c.handle(parse_encounter_message(body("REDETECTED")))
+        self.assertTrue(out.accepted)
+        self.assertFalse(out.abort_conversation)
+        self.assertIs(c.state, EncounterSessionState.INTERACTION_ACTIVE)
+
+    def test_유예중_재접근도_대화를_잇는다(self):
+        c = self._active()
+        c.handle(parse_encounter_message(body("LOST")))
+        out = c.handle(parse_encounter_message(body("APPROACHED")))
+        self.assertTrue(out.accepted)
+        self.assertIs(c.state, EncounterSessionState.INTERACTION_ACTIVE)
+
+    def test_유예_만료는_그때_종결한다(self):
+        c = self._active()
+        c.handle(parse_encounter_message(body("LOST")))
+        out = c.lost_grace_closed()
+        self.assertTrue(out.accepted)
+        self.assertTrue(out.abort_conversation)
+        self.assertIs(c.state, EncounterSessionState.LOST)
+
+    def test_유예중이_아니면_만료_통지를_무시한다(self):
+        c = self._active()
+        out = c.lost_grace_closed()
+        self.assertFalse(out.accepted)
+        self.assertIs(c.state, EncounterSessionState.INTERACTION_ACTIVE)
+
+    def test_대화중이_아닌_유실은_종전대로_즉시_종결한다(self):
+        # 접근 대기 중 유실은 유예해서 얻을 것이 없다. 다시 CONFIRMED 부터 온다.
+        c = EncounterSessionCoordinator()
+        c.handle(parse_encounter_message(body("CONFIRMED")))
+        out = c.handle(parse_encounter_message(body("LOST")))
+        self.assertTrue(out.accepted)
+        self.assertIs(c.state, EncounterSessionState.LOST)

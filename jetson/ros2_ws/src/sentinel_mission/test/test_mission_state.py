@@ -1528,3 +1528,33 @@ def test_수동_중에는_새_encounter를_만들지_않는다():
     assert not result.changed
     assert machine.encounter is None
     assert machine.state is MissionState.MANUAL
+
+
+def test_redetection_does_not_reset_the_interaction_budget():
+    """재감지가 300초 상한을 초기화하지 않는다 (S15P11A301-332).
+
+    되돌리면 사람이 화면에 남아 있는 동안 사후 3초마다 경과 시간이 0이 되어
+    `max_interaction_seconds`가 영원히 도달 불가능해진다. 실측에서 대화가 끝난
+    뒤에도 재감지 루프가 이어져 녹화가 105초까지 갔고, 링 버퍼가 8초뿐이라
+    결과 영상이 오염됐다.
+    """
+    machine = MissionStateMachine(max_interaction_seconds=30)
+    machine.handle_signal(Signal.MISSION_START, now=at(0))
+    machine.observe_candidates(now=at(1), track_ids={7}, new_encounter_id=EID)
+    machine.handle_signal(Signal.SAFE_POSE_REACHED, now=at(2))
+    assert machine.state is MissionState.INTERACTING
+
+    # 3초마다 놓쳤다 되찾기를 반복한다. 예산이 새로 생기면 상한에 닿지 않는다.
+    moment = 2
+    for _ in range(12):
+        machine.handle_signal(Signal.DIALOGUE_ENDED, now=at(moment + 1))
+        machine.observe_candidates(
+            now=at(moment + 2), track_ids={7}, new_encounter_id=OTHER
+        )
+        moment += 3
+
+    # 첫 진입(2초)에서 30초를 넘겼으므로 상한이 이벤트를 닫아야 한다.
+    machine.tick(at(moment + 1))
+    assert machine.state is not MissionState.INTERACTING, (
+        '재감지가 상호작용 예산을 초기화해 상한이 듣지 않는다'
+    )

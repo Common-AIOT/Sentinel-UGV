@@ -3,15 +3,35 @@
 `sentinel_streaming`의 링 writer가 `index.json`을 쓰고 이 모듈이 읽는다. 두
 프로세스의 유일한 접점이며, 파일이라서 어느 쪽이 죽어도 다른 쪽이 계속 돈다.
 
-## 조각을 hard link로 가져가는 이유
+## 조각을 원자적 복사로 가져가는 이유 — hard link는 여기서 통하지 않는다
 
-링 버퍼는 `max-files`로 오래된 조각을 지운다. 복사가 끝나기를 기다리면 그 사이에
-원본이 사라질 수 있고, 복사하면 디스크를 두 번 쓴다. hard link는 즉시 끝나고
-링이 원본을 지워도 inode가 살아 있다. 명세 32-5가 "hard link 또는 원자적 복사"를
-지정한 이유다.
+명세 32-5는 "hard link 또는 원자적 복사"를 허용하고, 원래 이 모듈은 link를 먼저
+시도했다. 근거는 "링이 원본을 지워도 inode가 살아 있다"였는데 **그 전제가 이 링
+writer에서는 거짓이다**(S15P11A301-333).
 
-같은 볼륨이 아니면 hard link가 안 되므로 복사로 폴백한다. 32-5는 버퍼와 pending을
-같은 볼륨에 두라고 했으니 정상 구성에서는 link가 쓰인다.
+`splitmuxsink`는 `max-files`로 파일을 지우고 새로 만드는 것이 아니라 **같은
+inode를 truncate해서 덮어쓴다.** hard link는 inode를 붙잡으므로 아무것도 보호하지
+못한다. 실증(2026-08-07, 스택 기동 상태에서 링 조각에 링크를 걸고 14초 대기):
+
+    링크 직후    ino=1188621 nlink=2 size=214696 sha=6d247d945de1899e
+    14초 후 원본  ino=1188621        size=197212 sha=caf99e1c4a90dbfc
+    14초 후 링크  ino=1188621        size=197212 sha=caf99e1c4a90dbfc
+
+`nlink=2`인데도 링크 파일의 내용이 바뀌었다. "inode 번호가 같다"만으로는 판단할
+수 없다 — 파일시스템이 unlink 후 번호를 재활용한 경우와 구별되지 않는다. 위처럼
+**링크의 내용을 직접 비교**해야 갈린다.
+
+대가는 105초 이벤트 영상에 **마지막 8초가 13회 반복**된 것이었다(조각 105개,
+고유 파일 8개). 파일도 오디오 트랙도 정상이라 겉보기에는 성공이었다.
+
+그래서 복사한다. `.part`에 쓴 뒤 `os.replace`로 옮겨 중간에 죽어도 잘린 `.ts`가
+목적지에 남지 않게 한다 — 32-5가 말한 "원자적"이 이것이다.
+
+**"복사하면 디스크를 두 번 쓴다"를 이유로 되돌리지 않는다.** link가 아낀 것은
+실제로 아낀 것이 아니었다 — 그 데이터는 파괴되고 있었다. 1500kbps에서 초당 약
+190KB이고, 300초 상한(32-5 MAX_EVENT_SECONDS)까지 가도 약 57MB로 pending 상한
+580MB 안이다. 조각당 215KB 복사는 밀리초 단위이고 같은 파일명이 재사용되기까지
+8초(`ring_segments`)가 있다.
 
 ## 시각 기준
 
@@ -167,9 +187,10 @@ class SegmentStore:
         return detected_at - timedelta(seconds=pre_seconds)
 
     def collect(self, segment: Segment, destination: Path) -> Path | None:
-        """조각을 이벤트 디렉터리로 가져온다. 이미 있으면 그대로 둔다.
+        """조각을 이벤트 디렉터리로 **복사**한다. 이미 있으면 그대로 둔다.
 
-        hard link를 먼저 시도하고, 다른 볼륨이면 복사한다.
+        hard link를 쓰지 않는 이유는 모듈 주석에 있다 — 링 writer가 같은 inode를
+        덮어쓰므로 링크는 보호가 되지 않는다(S15P11A301-333).
         """
         source = self.buffer_directory / segment.filename
         # 목적지는 sequence 기준 이름을 쓴다. 링 버퍼의 파일명은 재사용되므로
@@ -182,13 +203,20 @@ class SegmentStore:
             return None
 
         destination.mkdir(parents=True, exist_ok=True)
+        # 임시 이름에 쓴 뒤 replace 한다. 복사 중에 죽으면 잘린 .ts 가 목적지에
+        # 남고, 먹서는 그것을 정상 조각으로 읽어 이벤트를 깨뜨린다. 32-5 가
+        # "원자적 복사"라고 한 것이 이 절차다.
+        staging = target.with_name(target.name + '.part')
         try:
-            os.link(source, target)
+            shutil.copy2(source, staging)
+            os.replace(staging, target)
         except OSError:
+            # 남은 임시 파일은 지운다. 다음 시도가 이름 충돌로 막히지 않게 한다.
             try:
-                shutil.copy2(source, target)
+                staging.unlink(missing_ok=True)
             except OSError:
-                return None
+                pass
+            return None
         return target
 
 

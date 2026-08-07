@@ -205,3 +205,107 @@ def test_빈_목록은_판정_기준을_input으로_둔다():
 
     assert report['segmentCount'] == 0
     assert report['ptsSource'] == 'input'
+
+
+# ---------------------------------------------------------------------------
+# 조각 가져오기 (S15P11A301-333)
+# ---------------------------------------------------------------------------
+
+
+def _segment(sequence: int, filename: str) -> Segment:
+    base = datetime(2026, 8, 7, 8, 30, 0, tzinfo=timezone.utc)
+    return Segment(
+        segment_id=sequence % 8,
+        sequence=sequence,
+        started_at=base + timedelta(seconds=sequence),
+        ended_at=base + timedelta(seconds=sequence + 1),
+        duration_ms=1000,
+        first_pts=sequence * 1000,
+        first_frame_key=True,
+        path=filename,
+    )
+
+
+def test_가져온_조각은_원본이_덮어써져도_바뀌지_않는다(tmp_path):
+    """hard link 로는 이것이 보장되지 않았다 (S15P11A301-333).
+
+    splitmuxsink 는 max-files 로 파일을 지우고 새로 만드는 것이 아니라 **같은
+    inode 를 truncate 해서 덮어쓴다.** 그래서 링크는 보호가 되지 않았고, 105초
+    이벤트 영상에 마지막 8초가 13회 반복됐다(조각 105개, 고유 파일 8개).
+    """
+    from sentinel_recorder.segment_store import SegmentStore
+
+    buffer_dir = tmp_path / 'buffer'
+    buffer_dir.mkdir()
+    source = buffer_dir / 'seg_000000.ts'
+    source.write_bytes(b'first-generation')
+
+    store = SegmentStore(buffer_dir)
+    work = tmp_path / 'work'
+    target = store.collect(_segment(0, 'seg_000000.ts'), work)
+    assert target is not None
+
+    # 링이 한 바퀴 돌아 같은 이름을 덮어쓴다. 실제 writer 와 같게 in-place 로 쓴다.
+    with open(source, 'r+b') as handle:
+        handle.truncate(0)
+        handle.write(b'second-generation-different-length')
+
+    assert target.read_bytes() == b'first-generation', (
+        '가져온 조각이 원본과 함께 바뀌면 이벤트 영상에 엉뚱한 구간이 담긴다'
+    )
+
+
+def test_이미_가져온_조각은_다시_복사하지_않는다(tmp_path):
+    from sentinel_recorder.segment_store import SegmentStore
+
+    buffer_dir = tmp_path / 'buffer'
+    buffer_dir.mkdir()
+    (buffer_dir / 'seg_000000.ts').write_bytes(b'payload')
+
+    store = SegmentStore(buffer_dir)
+    work = tmp_path / 'work'
+    segment = _segment(0, 'seg_000000.ts')
+    first = store.collect(segment, work)
+    assert first is not None
+    first.write_bytes(b'already-muxed')
+
+    again = store.collect(segment, work)
+    assert again == first
+    assert again.read_bytes() == b'already-muxed'
+
+
+def test_원본이_없으면_None_이고_임시파일을_남기지_않는다(tmp_path):
+    from sentinel_recorder.segment_store import SegmentStore
+
+    buffer_dir = tmp_path / 'buffer'
+    buffer_dir.mkdir()
+    store = SegmentStore(buffer_dir)
+    work = tmp_path / 'work'
+
+    assert store.collect(_segment(0, 'missing.ts'), work) is None
+    assert not list(work.glob('*.part')) if work.exists() else True
+
+
+def test_서로_다른_조각이_같은_링_파일명을_써도_따로_저장된다(tmp_path):
+    """링 파일명이 순환하므로 sequence 기준 이름이어야 한다.
+
+    이름이 겹치면 105개 조각이 8개 파일로 접힌다 — 실측에서 본 그 증상이다.
+    """
+    from sentinel_recorder.segment_store import SegmentStore
+
+    buffer_dir = tmp_path / 'buffer'
+    buffer_dir.mkdir()
+    source = buffer_dir / 'seg_000000.ts'
+    store = SegmentStore(buffer_dir)
+    work = tmp_path / 'work'
+
+    source.write_bytes(b'generation-1')
+    first = store.collect(_segment(0, 'seg_000000.ts'), work)
+    with open(source, 'r+b') as handle:
+        handle.truncate(0)
+        handle.write(b'generation-2')
+    second = store.collect(_segment(8, 'seg_000000.ts'), work)
+
+    assert first != second
+    assert first.read_bytes() == b'generation-1'
+    assert second.read_bytes() == b'generation-2'

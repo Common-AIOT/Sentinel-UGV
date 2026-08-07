@@ -9,6 +9,12 @@
 // 로컬 `sid` 는 단일 조종자만 강제하며 신원이 아니다(docs/06 보호 공백 표).
 #pragma once
 
+// Jetson UART 통신과 무관한 수동 조종용 WiFi 채널.
+// 0이면 WiFi.begin()/reconnect()와 HTTP 서버를 모두 실행하지 않는다.
+#ifndef ENABLE_MANUAL_WIFI
+#define ENABLE_MANUAL_WIFI 0
+#endif
+
 constexpr char MANUAL_WIFI_SSID[] = "***REMOVED-WIFI-SSID***";
 constexpr char MANUAL_WIFI_PASSWORD[] = "***REMOVED-WIFI-PASSWORD***";
 

@@ -21,6 +21,8 @@
 
 namespace {
 constexpr uint32_t CONTROL_LOOP_INTERVAL_MS = 10;  // 100Hz (§34-8)
+constexpr TickType_t CONTROL_LOOP_INTERVAL_TICKS =
+    pdMS_TO_TICKS(CONTROL_LOOP_INTERVAL_MS);
 }  // namespace
 
 void controlTaskFn(void* pvParameters) {
@@ -121,6 +123,17 @@ void controlTaskFn(void* pvParameters) {
     driveUpdate(now);
     steeringUpdate(now);
 
-    vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(CONTROL_LOOP_INTERVAL_MS));
+    // vTaskDelayUntil()은 마감 시각을 이미 넘긴 경우 잠들지 않고 즉시 반환한다.
+    // 제어 계산이 10ms보다 길어진 상태가 계속되면 우선순위가 낮은 comm_task가
+    // 영구 기아에 빠져 UART가 완전히 멎는다. 정상 주기에는 절대주기 100Hz를
+    // 유지하고, 마감을 놓친 주기에만 최소 1틱을 양보해 안전 통신을 보장한다.
+    const TickType_t nextWakeTime = lastWakeTime + CONTROL_LOOP_INTERVAL_TICKS;
+    const TickType_t beforeDelay = xTaskGetTickCount();
+    const bool deadlineMissed =
+        (int32_t)(beforeDelay - nextWakeTime) >= 0;
+    vTaskDelayUntil(&lastWakeTime, CONTROL_LOOP_INTERVAL_TICKS);
+    if (deadlineMissed) {
+      vTaskDelay(1);
+    }
   }
 }

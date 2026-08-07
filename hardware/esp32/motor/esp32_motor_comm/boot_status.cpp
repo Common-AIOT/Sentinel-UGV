@@ -16,7 +16,7 @@ constexpr uint32_t BOOT_STATUS_WINDOW_MS = 5000;
 constexpr uint32_t BOOT_STATUS_REPEAT_MS = 500;
 
 #if ENABLE_BOOT_STATUS_SERIAL2
-constexpr uint32_t BOOT_STATUS_BAUD = 115200;
+constexpr uint32_t BOOT_STATUS_BAUD = 921600;
 // 모터(25/26/32/33)·EN(23)·서보(18) 어느 핀과도 겹치지 않는다. 스트래핑 핀도
 // 아니라 부팅 시퀀스에 영향이 없다.
 constexpr uint8_t BOOT_STATUS_RX2_PIN = 16;

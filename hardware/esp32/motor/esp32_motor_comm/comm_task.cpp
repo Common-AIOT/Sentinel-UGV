@@ -380,9 +380,12 @@ void pollSerial() {
 
 }  // namespace
 
+void commSerialInit() {
+  Serial.begin(921600);
+}
+
 void commTaskFn(void* pvParameters) {
   (void)pvParameters;
-  Serial.begin(921600);
 
   uint32_t lastDriveStateMs = 0;
   uint32_t lastDiagnosticMs = 0;

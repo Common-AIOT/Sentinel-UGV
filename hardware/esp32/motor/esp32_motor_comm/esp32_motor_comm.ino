@@ -32,7 +32,11 @@
 constexpr uint32_t COMM_TASK_STACK_BYTES = 4096;
 // 액추에이션 중재가 이 태스크로 모이면서 프레임이 늘었다(arbitrateDrive 결정 구조체
 // + steeringSetTarget 의 float 경로).
-constexpr uint32_t CONTROL_TASK_STACK_BYTES = 3072;
+// Arduino-ESP32 3.x에서 std::function 람다, DriveDecision 지역 상태와 부동소수점
+// 조향 계산을 한 틱에 함께 수행하면 3KB 스택은 태스크 첫 실행에서 넘친다. 이때
+// 우선순위 3인 제어 태스크가 스케줄러를 망가뜨려 통신 태스크까지 멈추므로 충분한
+// 여유를 둔다. 전체 힙 320KB 중 추가 사용량은 5KB뿐이다.
+constexpr uint32_t CONTROL_TASK_STACK_BYTES = 8192;
 // WebServer 는 소켓 버퍼와 String 조립을 스택에서 쓴다. 4096 으로는 헤더가 긴
 // 요청에서 넘칠 수 있다.
 constexpr uint32_t MANUAL_WEB_TASK_STACK_BYTES = 8192;
@@ -45,18 +49,25 @@ constexpr UBaseType_t CONTROL_TASK_PRIORITY = 3;
 constexpr UBaseType_t MANUAL_WEB_TASK_PRIORITY = 1;
 
 void setup() {
-  // 5초 창의 시작을 실제 전원 인가 시점에 최대한 맞추기 위해 다른 초기화보다
-  // 먼저 부른다. **별도 UART(Serial2)에만 쓴다** - comm_task 의 Serial(921600,
-  // Jetson 전용)에는 손대지 않으므로 그 태스크의 시작 시각과 완전히 무관하다.
+  // Jetson 링크를 가장 먼저 연다. 아래의 PWM·서보·WiFi 초기화 중 하나가 오래
+  // 걸리더라도 통신 태스크가 독립적으로 HELLO와 상태 프레임을 처리할 수 있다.
+  commSerialInit();
+  motorSharedStateInit();
+  const BaseType_t commTaskResult =
+      xTaskCreatePinnedToCore(commTaskFn, "comm_task", COMM_TASK_STACK_BYTES, nullptr,
+                              COMM_TASK_PRIORITY, nullptr, 1);
+
+  // 5초 상태 창은 별도 UART(Serial2)에만 쓴다. Jetson 전용 Serial과 통신 태스크는
+  // 이미 시작됐으므로 상태 표시 초기화가 Jetson 링크를 막을 수 없다.
   bootStatusInit();
 
-  // §34-6: 전원 인가 직후 PWM=0·driver enable=LOW·조향 중립(δ=0)을 태스크 생성보다
-  // 먼저 보장한다. 조향만 중립으로 시작하는 것은 재부팅 직후에 믿을 수 있는 마지막
+  // §34-6: 전원 인가 직후 PWM=0·driver enable=LOW·조향 중립(δ=0)을 제어 태스크보다
+  // 먼저 보장한다. 통신 태스크는 액추에이터를 직접 구동하지 않는다. 조향만 중립으로
+  // 시작하는 것은 재부팅 직후에 믿을 수 있는 마지막
   // 각도가 없기 때문이며(RAM이 지워졌고 실제 바퀴 각도를 읽을 수단이 없다), 이후
   // 모든 정지 경로에서는 각도를 유지한다(§34-7).
   motorDriverInit();
   steeringInit();
-  motorSharedStateInit();
 
   // **비블로킹이다.** 접속을 여기서 기다리면 폰 핫스팟이 뜨기 전까지 부팅이 멈춰
   // comm_task 의 Serial.begin(921600) 이 실행되지 않고 젯슨 핸드셰이크가 통째로
@@ -67,12 +78,16 @@ void setup() {
   //
   // WiFi 태스크가 core 0 에 고정돼 있으므로 웹 태스크도 그쪽에 둬서, 100Hz 제어
   // 루프와 921600 RX 폴에서 소켓 작업을 물리적으로 분리한다.
-  xTaskCreatePinnedToCore(commTaskFn, "comm_task", COMM_TASK_STACK_BYTES, nullptr,
-                           COMM_TASK_PRIORITY, nullptr, 1);
   xTaskCreatePinnedToCore(controlTaskFn, "control_task", CONTROL_TASK_STACK_BYTES, nullptr,
                            CONTROL_TASK_PRIORITY, nullptr, 1);
   xTaskCreatePinnedToCore(manualWebTaskFn, "manual_web", MANUAL_WEB_TASK_STACK_BYTES,
                            nullptr, MANUAL_WEB_TASK_PRIORITY, nullptr, 0);
+
+  // 메모리 부족 등으로 별도 통신 태스크 생성이 실패해도 Jetson 링크를 완전히
+  // 잃지 않는다. setup()을 실행 중인 Arduino loopTask가 같은 루프를 맡는다.
+  if (commTaskResult != pdPASS) {
+    commTaskFn(nullptr);
+  }
 }
 
 void loop() {

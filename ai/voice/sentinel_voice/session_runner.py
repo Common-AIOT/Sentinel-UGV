@@ -231,10 +231,18 @@ class VoiceSessionRunner:
         # 0.0038), 죽은 경로는 전 구간이 정확히 0이다. 아래는 후자만 잡는다.
         # 근거와 실제 사례는 config.SILENT_INPUT_PEAK 주석에 있다.
         if is_silent_input(wav):
+            # 고치는 방법까지 적는다. S15P11A301-330 에서 이 메시지만으로는
+            # 원인을 못 찾아 진단에 시간을 썼다 — 실제 원인은 PulseAudio 기본
+            # 소스가 젯슨 온보드 아날로그 입력이라 BRIO 가 아니었다는 것이고,
+            # 같은 이유로 증빙 영상 오디오도 무음이었다(-91.0 dB, 명세 32-6).
             self.on_event(
                 f"[FAIL] {question.value}: 입력이 디지털 무음이다 "
                 f"(peak={peak(wav):.8f}) — 마이크가 아니라 빈 경로를 읽고 있다. "
-                "무응답이 아니라 장치 오류로 종료한다"
+                "무응답이 아니라 장치 오류로 종료한다. "
+                "PulseAudio 기본 소스를 확인하라: pactl info | grep 'Default Source'. "
+                "온보드 입력(alsa_input.platform-sound)이면 BRIO 로 바꾼다 — "
+                "scripts/demo_up.sh 가 기동 시 자동으로 하므로 스택을 그 스크립트로 "
+                "올렸는지도 함께 본다(S15P11A301-330)"
             )
             self._finish_turn_timing(diagnostic)
             return AudioObservation(False, None, audio_error=True)

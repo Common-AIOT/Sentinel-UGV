@@ -329,6 +329,30 @@ test:exploration:
     - python -m pytest jetson/ros2_ws/src/sentinel_exploration/test -q
     - python -m pytest jetson/ros2_ws/src/sentinel_approach/test -q
 
+# ai/detection 의 순수 모듈 시험 (S15P11A301-329).
+#
+# 이 잡이 없어서 탐지 쪽 시험 33 건이 아무 데서도 돌지 않고 있었다. 파이프라인
+# 본체는 ultralytics·torch·cv2 를 끌어오므로 CI 에서 돌릴 수 없지만, 판정 로직을
+# 순수 모듈로 빼 둔 것들은 표준 라이브러리와 pytest 만으로 돈다 —
+# sentinel_exploration 이나 link_health.py 와 같은 성격이다.
+#
+# test_posture_persistence.py 는 제외한다. src.pipeline 을 import 해
+# ultralytics 가 필요하고, 그것을 slim 이미지에 넣으면 torch 까지 따라와
+# 잡 하나가 수 분·수 GB 가 된다. 그 파일은 Jetson 에서 손으로 돌린다.
+test:detection:
+  stage: test
+  image: python:3.10-alpine
+  rules:
+    - changes:
+        - ai/detection/**/*
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+  before_script:
+    - pip install --quiet pytest
+  script:
+    - cd ai/detection
+    - python -m pytest tests/test_model_backend.py tests/test_candidates.py
+      tests/test_event_image_retention.py -q
+
 test:message-contract:
   stage: test
   image: python:3.10-alpine

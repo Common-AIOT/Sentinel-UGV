@@ -29,9 +29,10 @@ from __future__ import annotations
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-import cv2
-import numpy as np
+if TYPE_CHECKING:  # 주석 평가용. 런타임에는 numpy 없이도 import 된다.
+    import numpy as np
 
 
 class EventImageStore:
@@ -72,7 +73,16 @@ class EventImageStore:
         return self.events_dir / f"{stem}_{uuid.uuid4().hex[:8]}.jpg"
 
     def save(self, frame: np.ndarray, *, track_id: int | None = None) -> Path | None:
-        """이벤트 프레임을 저장하고 경로를 반환한다. 실패 시 None."""
+        """이벤트 프레임을 저장하고 경로를 반환한다. 실패 시 None.
+
+        cv2 는 여기서 import 한다. 모듈 최상단에서 하면 **보존 상한 시험까지
+        cv2 를 요구하게 된다** — 상한 판정은 파일 이름과 크기만 보는 순수
+        로직이라 CI(python:3.10-alpine, pytest 만 설치)에서 돌릴 수 있어야
+        하는데, import 사슬 때문에 수집 단계에서 죽었다. 저장 경로에서만
+        인코더가 필요하므로 필요한 지점으로 내린다.
+        """
+        import cv2
+
         suffix = f"_track{track_id}" if track_id is not None else ""
         path = self._unique_path(self._timestamp_name() + suffix)
         try:

@@ -11,23 +11,32 @@
 # (docs/04-자율주행-AI.md, ai/README.md). 비전이 자원을 독점하면 주행이 멈춘다.
 # 명세 목표는 Detect 상시 약 15FPS, Pose 조건부 약 2FPS다(25.6).
 
+# 이 프로파일은 TensorRT 엔진만 받는다 (S15P11A301-329).
+#
+# 이전에는 model 값이 .pt 였고 엔진은 --model 인자로만 들어왔다. 인자를 빼먹으면
+# **조용히 PyTorch 로 떨어진다** — 결과는 정상으로 나오고 로그도 조용한데 프레임당
+# CPU 가 +145ms(43% 느려짐)다. 이 함정에 실제로 빠져 측정 결론 하나를 틀렸다.
+#
+# 엔진이 없으면 굽는 명령을 담아 죽는다(model_backend.py). 엔진은 기기·드라이버
+# 종속이라 커밋되지 않으므로 SD카드를 다시 굽거나 JetPack 을 올린 뒤에는 다시
+# 구워야 하고, 그때 이 예외가 그 사실을 알려준다.
+#
+# 개발 PC 프로파일(configs/pipeline.yaml, src/main.py 의 기본값)은 이 플래그가
+# 없어 .pt 로 종전대로 돈다.
+require_engine: true
+
 detector:
-  # ⚠️ 기본값을 .engine으로 바꾸지 않는다.
+  # 엔진 빌드 (Jetson에서 직접, 약 425초). PYTHONPATH 없으면 tensorrt 임포트 실패.
   #
-  # TensorRT 엔진은 기기·드라이버 종속이라 커밋되지 않는다(.gitignore). 여기에 .engine을
-  # 박으면 엔진을 굽지 않은 기기에서 clone 직후 실행이 깨진다. 엔진은 --model 인자로 넘긴다.
-  #
-  #   # 빌드 (Jetson에서 직접, 약 425초). PYTHONPATH 없으면 tensorrt 임포트 실패
   #   PYTHONPATH=/usr/lib/python3.10/dist-packages \
   #     .venv/bin/yolo export model=models/yolo26n.pt format=engine half=True device=0
   #
-  #   # 실행
   #   PYTHONPATH=/usr/lib/python3.10/dist-packages \
   #     .venv/bin/python -m src.main --config configs/pipeline.jetson.yaml \
-  #     --model models/yolo26n.engine --source 0 --device 0
+  #     --source 0 --device 0
   #
   # 실측: 12.82 → 16.23 FPS (+26.6%), detect 72.4 → 52.5ms, 탐지력 손실 없음
-  model: models/yolo26n.pt
+  model: models/yolo26n.engine
   target_classes:
     - person
   confidence: 0.50
@@ -90,12 +99,25 @@ pose_trigger:
   global_budget: true
 
 pose:
-  model: models/yolo26n-pose.pt
+  # 엔진 빌드. **imgsz를 아래 값과 같게 굽는다** — 엔진은 입력 크기가 고정이다.
+  #
+  #   PYTHONPATH=/usr/lib/python3.10/dist-packages \
+  #     .venv/bin/yolo export model=models/yolo26n-pose.pt format=engine \
+  #     half=True device=0 imgsz=320
+  #
+  # pose만 PyTorch로 남아 있었다(S15P11A301-329). S15P11A301-186이 "이 워크로드에서
+  # 유효한 지렛대는 TensorRT뿐"이라고 결론 내렸는데 그 해법을 탐지에만 적용했다.
+  # 대가는 단독 호출 CPU 41.3ms — 입력이 절반인데 탐지 엔진(11.3ms)의 3.7배다.
+  # 파이프라인 안에서는 호출당 118ms로 프레임 시간의 13%를 차지했다.
+  model: models/yolo26n-pose.engine
   confidence: 0.50
   keypoint_confidence: 0.50
   crop_margin: 0.10
   # crop 입력이라 640은 과하다. 개발 PC 실측(FP16 기준): 320 → 4.86 / 640 → 7.38 FPS.
   # FP16 영향이 섞인 수치이므로 Jetson에서 재측정한다. 320을 기본으로 둔다.
+  #
+  # **이 값을 바꾸면 엔진을 같은 imgsz로 다시 굽는다.** 엔진 입력이 고정이라
+  # 어긋나면 Ultralytics가 매 호출 리사이즈하거나 실패한다.
   imgsz: 320
   # detector의 quantize와 동일한 주의사항이 적용된다. Jetson에서 실측 후 결정.
   quantize: 16

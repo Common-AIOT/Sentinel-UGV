@@ -16,6 +16,7 @@ import cv2
 import numpy as np
 
 from .logger import PipelineLogger
+from .model_backend import backend_label, resolve_model
 from .object_detector import ObjectDetector
 from .motion import MotionTracker
 from .persistence import PersistenceTracker
@@ -161,9 +162,38 @@ class InferencePipeline:
         self.output_dir = output_dir
         out_cfg = config["output"]
 
+        # 엔진 전용 강제 (S15P11A301-329). Jetson 프로파일이 조용히 PyTorch로
+        # 떨어지는 것을 막는다. 근거는 model_backend.py 에 있다.
+        require_engine = bool(config.get("require_engine", False))
+
         det_cfg = config["detector"]
+        detector_path = resolve_model(
+            "탐지",
+            det_cfg["model"],
+            detector_model,
+            require_engine=require_engine,
+            imgsz=det_cfg.get("imgsz", 640),
+            exists=lambda p: Path(_resolve_path(p)).exists(),
+        )
+        pose_cfg = config["pose"]
+        pose_path = resolve_model(
+            "pose",
+            pose_cfg["model"],
+            pose_model,
+            require_engine=require_engine,
+            imgsz=pose_cfg.get("imgsz", 640),
+            exists=lambda p: Path(_resolve_path(p)).exists(),
+        )
+        # 어떤 백엔드로 도는지 시작할 때 남긴다. 지금까지 이 줄이 ROS 경로에만
+        # 있어서, 직접 실행할 때는 PyTorch 로 떨어진 것을 알 방법이 없었다.
+        print(
+            f"[pipeline] 탐지 {detector_path} ({backend_label(detector_path)}) / "
+            f"pose {pose_path} ({backend_label(pose_path)}) / "
+            f"require_engine={require_engine}"
+        )
+
         self.detector = ObjectDetector(
-            detector_model or det_cfg["model"],
+            detector_path,
             # 설정 파일 안의 상대 경로는 프로젝트 루트 기준으로 해석한다.
             # cwd 기준이면 다른 디렉터리에서 실행할 때 트래커 설정을 못 찾는다.
             target_classes=det_cfg["target_classes"],
@@ -175,9 +205,8 @@ class InferencePipeline:
             quantize=det_cfg.get("quantize"),
         )
 
-        pose_cfg = config["pose"]
         self.pose_estimator = PoseEstimator(
-            pose_model or pose_cfg["model"],
+            pose_path,
             confidence=pose_cfg["confidence"],
             crop_margin=pose_cfg["crop_margin"],
             device=device,

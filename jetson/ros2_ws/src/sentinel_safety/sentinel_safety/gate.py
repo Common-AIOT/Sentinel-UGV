@@ -35,9 +35,15 @@ from dataclasses import dataclass, field
 # 주행 중에도 툭툭 끊긴다.
 DEFAULT_COMMAND_TTL_S = 0.3
 
-# 임무 상태는 latched(transient_local) 로 오고 상태가 바뀔 때만 발행된다. 즉
-# 정상 주행 중에도 몇 분간 조용할 수 있어서 명령과 같은 TTL 을 쓸 수 없다.
-# 그래도 무한정 신뢰하지는 않는다 — mission_manager 가 죽은 것을 알아야 한다.
+# 임무 상태는 latched(transient_local) 로 오고, `mission_manager` 가 전이 때 한 번
+# 그리고 **1Hz heartbeat** 로 다시 낸다(S15P11A301-320). 그래서 이 TTL 의 뜻은
+# 「전이가 없었다」가 아니라 **「heartbeat 10번을 놓쳤다」** — 즉 발행자가 죽었거나
+# 통신이 끊긴 것이다. 무한정 신뢰하지 않는 이유가 그것이다.
+#
+# **이 값과 `mission_manager` 의 발행 주기는 한 쌍이다.** 그쪽 heartbeat 가 사라지면
+# 여기가 정상 주행을 차단한다 — 실제로 그런 일이 있었다(heartbeat 이전에는 「탐사
+# 시작」 10초 뒤 속도가 0 이 됐고, 증상은 "Nav2 는 경로를 내는데 안 움직인다" 였다).
+# 명령 TTL(0.3s)만큼 짧게 두지 못하는 것도 같은 결합 때문이다.
 DEFAULT_MISSION_TTL_S = 10.0
 
 # 초음파는 esp32_sensor_bridge 가 keepalive 주기(0.15s)로 상태를 재전송하므로

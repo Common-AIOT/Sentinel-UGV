@@ -29,6 +29,12 @@ mission_manager:
     # 시간 전이(사후 3초, 최대 상호작용)를 검사하는 주기.
     tick_period_seconds: 0.25
 
+    # /mission/status 재발행 주기 (S15P11A301-320). **주행의 전제 조건이다** —
+    # safety_gate(mission_ttl_s 10s)와 exploration(status_stale_s 3s)이 이 토픽의
+    # 신선도로 정지를 판정하므로, 전이 때만 발행하면 상태가 안 바뀌는 정상 주행이
+    # 곧 차단 조건이 된다. 늘리려면 그 두 상수를 함께 본다(04장 24.1).
+    status_heartbeat_seconds: 1.0
+
     # 26.4는 재시작 후 진행 중이던 임무를 자동 주행으로 복구하지 못하게 한다.
     # 개발 중 편의를 위한 것이며 운영에서는 false로 둔다.
     auto_start: false

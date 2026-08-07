@@ -469,7 +469,8 @@ class CloudBridgeNode(Node):
     def _on_mission_status(self, message: String) -> None:
         """mission_manager의 임무 상태를 받아 둔다.
 
-        상태 변경 시에만 오므로 여기 보관하고 1초 heartbeat마다 내보낸다(31-4).
+        전이에서 한 번, 그 뒤 1Hz 재발행으로 온다(S15P11A301-320). 여기 보관하고
+        1초 heartbeat마다 MQTT로 내보낸다(31-4) — 재발행이 그 주기를 늘리지 않는다.
         """
         try:
             payload = json.loads(message.data)
@@ -651,8 +652,10 @@ class CloudBridgeNode(Node):
         관제가 마지막 값을 계속 보게 되는데, 노드가 죽은 뒤에도 EXPLORING이 남으면
         운영자가 로봇이 탐사 중이라고 믿는다. 안전 문제다.
 
-        발행자 수를 쓴다. 이 토픽은 상태 변경 시에만 발행되므로 마지막 수신 시각으로
-        생존을 판단할 수 없다. 전이가 몇 분에 한 번일 수 있다.
+        발행자 수를 쓴다. **1Hz heartbeat 가 생긴 뒤에도(S15P11A301-320) 그대로
+        둔다** — 발행자 수는 노드가 사라진 순간에 답이 바뀌므로 TTL 을 기다리지 않고,
+        맞춰야 할 값도 없다. heartbeat 주기를 바꾸면 같이 조정해야 하는 상수가
+        여기 없는 편이 낫다.
         """
         return self.count_publishers(self._param('mission_status_topic')) > 0
 

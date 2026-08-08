@@ -13,6 +13,11 @@ esp32_motor_bridge:
   ros__parameters:
     port: /dev/sentinel_mcu_motor
     baudrate: 921600
+    # Jetson 최종 송신 경계의 이중 안전 한계. vehicle_kinematics를 우회해 이
+    # 브리지 토픽에 직접 들어온 명령도 ESP32로 보내기 전에 대칭 포화한다.
+    # max_steering_mdeg는 2026-08-06 실측 링키지 한계(±22°)와 맞춘 값이다.
+    max_drive_mmps: 300
+    max_steering_mdeg: 22000
     # 300ms 통신 워치독의 절반 이하 - §34-7 gap-fill, 센서 브리지와 같은 근거
     # (S15P11A301-321 전에는 이 노드에 keepalive가 아예 없어, 핸드셰이크 이후로는
     # ~/drive_command가 끊기면 모터 링크가 완전히 조용해졌다).

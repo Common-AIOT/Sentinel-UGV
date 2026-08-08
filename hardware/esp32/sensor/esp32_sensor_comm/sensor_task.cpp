@@ -361,7 +361,7 @@ constexpr float MAX_VALID_DISTANCE_CM = 400.0f;
 
 // 실측 전 임시 안전거리(§35 캘리브레이션 대상) - Collision Monitor STOP zone과
 // 별개로 센서 ESP32가 로컬 판단만으로 즉시 세우는 최후 방어선이다.
-constexpr uint16_t PROXIMITY_STOP_DISTANCE_MM = 300;
+constexpr uint16_t PROXIMITY_STOP_DISTANCE_MM = 100;
 
 // 연속 노이즈성 실패(최소거리 미만 등) 횟수 - 이 이상 지속되면 fault로 본다.
 // echo 무응답(timeout)은 "5m 밖에 장애물 없음"으로 취급하며 fault가 아니다.

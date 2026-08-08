@@ -6,7 +6,7 @@
 
 ## 노드
 
-- `esp32_motor_bridge` — `/dev/sentinel_mcu_motor`(기본값)를 열어 모터 ESP32와 통신. `~/drive_command`(std_msgs/String, JSON)를 구독해 `DRIVE_COMMAND`로 전송, `~/stop`/`~/estop` (`std_srvs/Trigger`) 서비스 제공, `~/drive_state`/`~/command_ack` 발행, `/diagnostics` 발행. JSON 은 후륜 좌·우 `target_drive_*_mmps` 와 전륜 `target_steering_mdeg`·`max_steering_rate_mdps` 를 함께 싣는다(2026-08-06 전륜 조향 복구로 조향 필드가 다시 살아났다). **조향 키가 빠지면 마지막 값을 유지한다** — 0 을 기본값으로 두면 명령마다 앞바퀴가 중립으로 돌아가 §34-7 과 정반대가 된다. `keepalive_period_s`(기본 0.15s)로 핸드셰이크 여부와 무관하게 영원히 HELLO를 재전송한다(S15P11A301-321 전에는 이 keepalive가 없어, 핸드셰이크 이후 `~/drive_command`가 끊기면 이 노드가 만드는 트래픽이 전혀 없었다).
+- `esp32_motor_bridge` — `/dev/sentinel_mcu_motor`(기본값)를 열어 모터 ESP32와 통신. `~/drive_command`(std_msgs/String, JSON)를 구독해 `DRIVE_COMMAND`로 전송, `~/stop`/`~/estop` (`std_srvs/Trigger`) 서비스 제공, `~/drive_state`/`~/command_ack` 발행, `/diagnostics` 발행. JSON 은 후륜 좌·우 `target_drive_*_mmps` 와 전륜 `target_steering_mdeg`·`max_steering_rate_mdps` 를 함께 싣는다(2026-08-06 전륜 조향 복구로 조향 필드가 다시 살아났다). **ESP32로 보내기 직전에 좌·우 속도를 `±max_drive_mmps`(기본 300), 조향각을 `±max_steering_mdeg`(기본 22000=22°)로 다시 포화한다.** 상위 `vehicle_kinematics` 제한을 우회한 직접 발행도 이 최종 경계를 넘지 못하며, 필터링 횟수는 `/diagnostics`의 `MOTOR_COMMAND_LIMITS`에서 확인한다. 조향 키가 빠지면 마지막으로 **필터링된** 값을 유지한다 — 0 을 기본값으로 두면 명령마다 앞바퀴가 중립으로 돌아가 §34-7 과 정반대가 된다. `keepalive_period_s`(기본 0.15s)로 핸드셰이크 여부와 무관하게 영원히 HELLO를 재전송한다(S15P11A301-321 전에는 이 keepalive가 없어, 핸드셰이크 이후 `~/drive_command`가 끊기면 이 노드가 만드는 트래픽이 전혀 없었다).
 - `esp32_sensor_bridge` — `/dev/sentinel_mcu_sensor`(기본값)를 열어 센서 ESP32와 통신. 아래 "발행 토픽" 표대로 표준 메시지를 발행하고 `/diagnostics`에 보드 상태와 오도메트리 카운터를 낸다. HELLO를 ~6-7Hz로 keep-alive 재전송해 센서 보드의 300ms 통신 워치독에 입력을 공급한다(§34-7 gap-fill, README 하단 참고).
 - `esp32_hello_check` — ROS 없이 포트를 열어 HELLO/HELLO_ACK만 확인하는 브링업 도구(옛 프레이밍, **센서** 전용). 하드웨어를 막 연결했을 때 가장 먼저 실행할 것.
 - `esp32_motor_hello_check` — 위와 같은 목적이지만 모터 전용(새 프레이밍). 모터 보드를 새로 플래싱했으면 이걸 쓸 것 - 옛 `esp32_hello_check`는 새 프레이밍 프레임을 아예 못 알아봐 항상 타임아웃난다.
@@ -85,6 +85,7 @@ v   = (d_R + d_L) / 2Δt ,  ω = (d_R − d_L) / WΔt
 모터 전용(S15P11A301-321, 새 프레이밍):
 
 - `motor_packet_codec.py` — 동기워드+고정길이+CRC8, 프레임 build/parse, 메시지별 pack/unpack. `rclpy`-free라 `pytest`로 검증한다(`test/test_motor_packet_codec.py`). `hardware/esp32/motor/esp32_motor_comm/motor_protocol.h`/`.cpp`와 값·바이트 배치가 반드시 동일해야 한다.
+- `drive_command_filter.py` — 모터 직렬 송신 직전 좌·우 주행 속도와 조향각을 설정 한계로 포화하는 마지막 Jetson 안전 경계. `rclpy` 없이 양·음 경계값과 초과값을 시험한다(`test/test_drive_command_filter.py`).
 - `motor_protocol_constants.py` — 모터가 쓰는 메시지 코드·fault bit·struct 포맷. 메시지 코드 값 자체는 `protocol_constants.py`와 같다(프레이밍만 바뀌었지 메시지 종류는 안 바뀌었다).
 - `motor_serial_transport.py` — `serial_transport.py`와 연결·재연결·DTR/RTS 하드닝은 동일하지만, 프레임 추출이 델리미터가 아니라 27바이트 슬라이딩 윈도우(동기워드+CRC8)다.
 

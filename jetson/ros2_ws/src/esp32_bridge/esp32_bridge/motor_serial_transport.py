@@ -19,10 +19,22 @@ import threading
 import time
 from typing import Optional
 
+import os
 import serial
 
 from .motor_packet_codec import crc8
 from .motor_protocol_constants import FRAME_BYTES, SYNC0, SYNC1
+
+def _port_exists(port_name: str) -> bool:
+    """장치 노드가 존재하는가 (S15P11A301-340).
+
+    「보드가 안 꽂혔다」와 「남이 그 포트를 쓰고 있다」를 가르는 데 쓴다. 포트가
+    존재하는데 열리지 않으면 점유가 유일하게 가능한 원인이고, 그때 안내가
+    달라져야 한다 — 2026-08-07 에 두 경우가 같은 문구로 나와 중복 기동 진단이
+    늦어졌다. 심링크(udev 별칭)도 따라가도록 os.path.exists 를 쓴다.
+    """
+    return os.path.exists(port_name)
+
 
 # ESP32 auto-reset 회로가 DTR/RTS로 GPIO0/EN을 제어한다. DTR/RTS를 막 풀어 보드가
 # 리셋에서 빠져나오면 그 순간부터 재부팅이 시작되므로, ESP-IDF 부트로더+FreeRTOS
@@ -171,17 +183,32 @@ class MotorSerialTransport:
 
     def _connect(self) -> bool:
         try:
-            new_serial = serial.Serial(self._port_name, self._baudrate, timeout=0.2)
+            # exclusive=True 로 TIOCEXCL (S15P11A301-340). 센서 쪽
+            # serial_transport.py 의 같은 자리에 근거가 자세히 있다 — 요지는
+            # **재연결 한 번이 보드 리셋 한 번**이라(DTR/RTS auto-reset), 두
+            # 프로세스가 같은 tty 를 열면 서로를 리셋하는 고리에 빠진다는 것이다.
+            new_serial = serial.Serial(
+                self._port_name, self._baudrate, timeout=0.2, exclusive=True
+            )
             new_serial.dtr = False
             new_serial.rts = False
         except (serial.SerialException, OSError) as exc:
+            # 「보드가 없다」와 「남이 쓰고 있다」를 가른다 (S15P11A301-340).
             self._connect_failures += 1
             if self._connect_failures == 1:
-                self._warn(
-                    f"{self._port_name} not available ({exc}), "
-                    f"{self._reconnect_delay_s}s 마다 재시도한다 "
-                    f"(반복 실패는 더 찍지 않는다)"
-                )
+                if _port_exists(self._port_name):
+                    self._warn(
+                        f"{self._port_name} 를 다른 프로세스가 이미 쓰고 있다 ({exc}). "
+                        f"스택이 두 벌 떠 있지 않은지 확인하라 — "
+                        f"`./scripts/demo_down.sh --dry-run` 이 무엇이 도는지 보여준다. "
+                        f"{self._reconnect_delay_s}s 마다 재시도한다 (반복 실패는 더 찍지 않는다)"
+                    )
+                else:
+                    self._warn(
+                        f"{self._port_name} not available ({exc}), "
+                        f"{self._reconnect_delay_s}s 마다 재시도한다 "
+                        f"(반복 실패는 더 찍지 않는다)"
+                    )
             return False
 
         time.sleep(_BOOT_SETTLE_S)

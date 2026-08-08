@@ -216,8 +216,8 @@ def test_끊긴_뒤_새_장치로_다시_연결한다(monkeypatch):
 
     opened = []
 
-    def fake_ctor(port, baudrate, timeout=None):
-        opened.append(port)
+    def fake_ctor(port, baudrate, timeout=None, exclusive=None):
+        opened.append((port, exclusive))
         return FakeSerial()
 
     monkeypatch.setattr(serial, 'Serial', fake_ctor)
@@ -230,7 +230,8 @@ def test_끊긴_뒤_새_장치로_다시_연결한다(monkeypatch):
 
     assert t._connect() is True
     assert t.connects == 2
-    assert opened == ['/dev/fake', '/dev/fake']
+    # 두 번 다 배타 점유로 열어야 한다 (S15P11A301-340).
+    assert opened == [('/dev/fake', True), ('/dev/fake', True)]
     # 재연결 횟수가 로그에 남아야 한다 — 케이블 접촉 문제의 단서다.
     assert any('재연결 1회째' in m for m in logger.infos)
 
@@ -265,8 +266,9 @@ def test_재연결_성공이_실패_카운터를_되돌린다(monkeypatch):
     t._connect()
     assert len(logger.warnings) == 1
 
-    monkeypatch.setattr(serial, 'Serial',
-                        lambda port, baudrate, timeout=None: FakeSerial())
+    monkeypatch.setattr(
+        serial, 'Serial',
+        lambda port, baudrate, timeout=None, exclusive=None: FakeSerial())
     assert t._connect() is True
 
     monkeypatch.setattr(serial, 'Serial', always_fail)
@@ -274,3 +276,69 @@ def test_재연결_성공이_실패_카운터를_되돌린다(monkeypatch):
     t._connect()
 
     assert len(logger.warnings) == 2, '두 번째 끊김의 첫 실패가 보고되지 않았다'
+
+
+# ---- 배타 점유 (S15P11A301-340) ----------------------------------------
+
+
+def test_포트를_배타로_연다(monkeypatch):
+    """exclusive=True 가 없으면 두 프로세스가 같은 tty 를 열 수 있다.
+
+    2026-08-07 에 실제로 그랬다 — 스택 두 벌의 브리지가 같은 포트를 열어 서로
+    바이트를 훔쳤고, 링크가 죽은 줄 알고 재연결할 때마다 DTR 이 보드를 리셋해
+    73초 동안 29회 재부팅했다. 재부팅마다 엔코더 기준점이 리셋돼 오도메트리
+    실측이 통째로 오염됐다.
+    """
+    t = _transport(TolerantLogger())
+    monkeypatch.setattr('esp32_bridge.serial_transport._BOOT_SETTLE_S', 0.0)
+    seen = {}
+
+    def ctor(port, baudrate, timeout=None, exclusive=None):
+        seen['exclusive'] = exclusive
+        return FakeSerial()
+
+    monkeypatch.setattr(serial, 'Serial', ctor)
+    assert t._connect() is True
+    assert seen['exclusive'] is True
+
+
+def test_점유_실패는_보드_부재와_다른_문구를_낸다(monkeypatch):
+    """두 실패를 가르지 못하면 진단이 늦어진다 — 2026-08-07 이 그랬다.
+
+    포트가 존재하는데 열리지 않으면 점유가 유일하게 가능한 원인이다.
+    """
+    logger = TolerantLogger()
+    t = _transport(logger)
+
+    def busy(*_a, **_kw):
+        raise serial.SerialException(
+            'could not open port /dev/fake: [Errno 16] Device or resource busy')
+
+    monkeypatch.setattr(serial, 'Serial', busy)
+    monkeypatch.setattr('esp32_bridge.serial_transport._port_exists',
+                        lambda _p: True)
+
+    assert t._connect() is False
+    assert len(logger.warnings) == 1
+    message = logger.warnings[0]
+    assert '다른 프로세스가 이미 쓰고 있다' in message
+    # 무엇을 해야 하는지가 문구에 있어야 한다.
+    assert 'demo_down.sh --dry-run' in message
+
+
+def test_보드가_없으면_종전_문구를_유지한다(monkeypatch):
+    """포트 자체가 없으면 점유가 아니라 부재다 — 안내가 달라야 한다."""
+    logger = TolerantLogger()
+    t = _transport(logger)
+
+    def missing(*_a, **_kw):
+        raise serial.SerialException('no such device')
+
+    monkeypatch.setattr(serial, 'Serial', missing)
+    monkeypatch.setattr('esp32_bridge.serial_transport._port_exists',
+                        lambda _p: False)
+
+    assert t._connect() is False
+    assert len(logger.warnings) == 1
+    assert 'not available' in logger.warnings[0]
+    assert '다른 프로세스' not in logger.warnings[0]

@@ -116,4 +116,41 @@ export class CdrReader {
   get consumed(): number {
     return this.offset;
   }
+
+  /**
+   * 메시지를 끝까지 읽었는지 확인한다. 남은 것이 정렬 패딩이면 정상이다.
+   *
+   * **정확히 일치를 요구하면 안 된다** (S15P11A301-347). CDR 은 메시지 끝을
+   * 4바이트 경계로 정렬하므로 본문 길이가 4의 배수가 아니면 패딩이 붙는다.
+   * 관제의 지도가 그것 때문에 통째로 버려졌다 — `64274 소비 / 64276 전체`
+   * 에서 남은 2바이트는 오류가 아니라 `64274 % 4 = 2` 의 패딩이었다.
+   *
+   * 그렇다고 검사를 없애면 안 된다. 필드가 하나 추가됐을 때 그 뒤가 전부 밀려
+   * 읽히는 것을 잡아 주는 것이 이 검사이고, 그때는 **틀린 값이 맞는 것처럼
+   * 보이므로** 예외보다 나쁘다. 그래서 「패딩만큼만」 허용한다.
+   *
+   * 패딩은 0 으로 채워지므로 값도 확인한다. 0 이 아닌 바이트가 남았다면
+   * 패딩이 아니라 우리가 읽지 않은 필드일 가능성이 있다.
+   */
+  expectFullyConsumed(): void {
+    const remaining = this.view.byteLength - this.offset;
+    if (remaining === 0) {
+      return;
+    }
+    if (remaining >= 4) {
+      throw new CdrError(
+        `바이트가 남았습니다: ${this.offset} 소비 / ${this.view.byteLength} 전체 ` +
+          `(${remaining}바이트 남음 — 정렬 패딩은 4바이트 미만이므로 ` +
+          `레이아웃 이해가 틀렸을 수 있습니다)`,
+      );
+    }
+    for (let i = this.offset; i < this.view.byteLength; i += 1) {
+      if (this.view.getUint8(i) !== 0) {
+        throw new CdrError(
+          `정렬 패딩이어야 할 ${remaining}바이트에 0 이 아닌 값이 있습니다 ` +
+            `(offset ${i}) — 읽지 않은 필드가 있을 수 있습니다`,
+        );
+      }
+    }
+  }
 }

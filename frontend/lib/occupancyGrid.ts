@@ -85,13 +85,11 @@ export function decodeOccupancyGrid(buffer: ArrayBuffer): OccupancyGrid {
         `데이터가 ${data.length}바이트입니다`,
     );
   }
-  if (reader.consumed !== buffer.byteLength) {
-    // 남거나 모자라면 레이아웃 이해가 틀린 것이다. 조용히 넘기면 다음 필드가
-    // 추가됐을 때 origin 이 밀려 읽히는 것을 못 잡는다.
-    throw new CdrError(
-      `바이트가 남았습니다: ${reader.consumed} 소비 / ${buffer.byteLength} 전체`,
-    );
-  }
+  // 끝까지 읽었는지 확인한다. 남거나 모자라면 레이아웃 이해가 틀린 것이고,
+  // 조용히 넘기면 다음 필드가 추가됐을 때 origin 이 밀려 읽히는 것을 못 잡는다.
+  //
+  // 단 **정렬 패딩은 정상이다** — 판정은 CdrReader 가 한다(S15P11A301-347).
+  reader.expectFullyConsumed();
 
   return { frameId, resolution, originX, originY, width, height, data };
 }

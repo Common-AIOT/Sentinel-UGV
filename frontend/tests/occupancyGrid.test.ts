@@ -126,13 +126,35 @@ describe("decodeOccupancyGrid — 거부해야 하는 입력", () => {
     );
   });
 
-  it("바이트가 남으면 거부한다", () => {
+  it("4바이트 이상 남으면 거부한다", () => {
     // 레이아웃 이해가 틀렸다는 신호다. 조용히 넘기면 필드가 추가됐을 때
-    // origin 이 밀려 읽히는 것을 못 잡는다.
+    // origin 이 밀려 읽히는 것을 못 잡는다. 정렬 패딩은 4바이트 미만이므로
+    // 그 이상 남았다면 패딩으로 설명되지 않는다.
     const full = new Uint8Array(buildMessage());
     const padded = new Uint8Array(full.length + 8);
     padded.set(full, 0);
     expect(() => decodeOccupancyGrid(padded.buffer)).toThrow(/남았습니다/);
+  });
+
+  it("정렬 패딩 2바이트는 통과한다 — 이것 때문에 지도가 통째로 버려졌다", () => {
+    // S15P11A301-347. 실제 관측: `64274 소비 / 64276 전체`. CDR 은 메시지 끝을
+    // 4바이트 경계로 정렬하므로 본문 길이가 4의 배수가 아니면 패딩이 붙는다.
+    // 종전 코드는 정확히 일치를 요구해 멀쩡한 지도를 예외로 버렸다.
+    const full = new Uint8Array(buildMessage());
+    const padded = new Uint8Array(full.length + 2); // 0 으로 채워진 패딩
+    padded.set(full, 0);
+    const grid = decodeOccupancyGrid(padded.buffer);
+    expect(grid.width).toBe(EXPECTED.width);
+    expect(grid.data.length).toBe(EXPECTED.cells);
+  });
+
+  it("남은 바이트가 0 이 아니면 패딩으로 보지 않는다", () => {
+    // 패딩은 0 으로 채워진다. 값이 있으면 우리가 읽지 않은 필드일 수 있다.
+    const full = new Uint8Array(buildMessage());
+    const padded = new Uint8Array(full.length + 2);
+    padded.set(full, 0);
+    padded[full.length + 1] = 0x7f;
+    expect(() => decodeOccupancyGrid(padded.buffer)).toThrow(/0 이 아닌 값/);
   });
 
   it("격자 크기와 데이터 길이가 어긋나면 거부한다", () => {

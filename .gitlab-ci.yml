@@ -110,6 +110,26 @@ validate:node-callbacks:
   script:
     - python scripts/ci/validate_node_callbacks.py
 
+# URDF 링크 트리가 끊어지지 않았는지 검사합니다 (S15P11A301-349).
+#
+# S15P11A301-344 의 커밋이 주석 블록을 다시 쓰면서 그 아래 있던
+# base_link_to_camera_link 조인트 4줄을 함께 지웠습니다. 새 주석의 닫는 --> 가
+# 조인트를 삼켰고, 그 상태로 develop 에 병합됐습니다.
+#
+# **아무 신호가 없었습니다.** URDF 는 XML 로서 여전히 유효하고 링크 선언도 남아
+# 있어 파일을 훑어보면 정상으로 보입니다. robot_state_publisher 는 끊어진 트리를
+# 그대로 받아 기동하고, base_link -> camera_optical_frame 조회만 조용히 실패합니다.
+# 그러면 사람 방위각을 지도 좌표로 옮기는 경로(04장 25.3)가 성립하지 않는데, 그
+# 실패는 카메라 화면에도 지도에도 드러나지 않습니다.
+#
+# check_urdf 대신 표준 XML 파서로 검사합니다 - 그쪽은 liburdfdom-tools 가 필요해
+# rclpy 없는 lint 컨테이너에서 돌지 않습니다.
+validate:urdf-tree:
+  stage: lint
+  image: python:3.10-alpine
+  script:
+    - python scripts/ci/validate_urdf_tree.py
+
 # 각 모듈이 자체 관리하는 Docker Compose 파일의 문법과 변수 치환을 검사합니다.
 # config --quiet는 컨테이너를 실행하지 않고 최종 Compose 설정의 유효성만 확인합니다.
 # 프런트엔드·Jetson 등 다른 모듈의 Compose 파일이 추가되면 아래 목록에 함께 등록합니다.

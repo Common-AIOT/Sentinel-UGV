@@ -151,6 +151,12 @@
 
        이 값이 틀리면 사람 방위각->지도 좌표 변환(25.3)과 화면 좌표 기반 판정이
        어긋난다. 마운트를 다시 바꾸면 같은 시험으로 재측정한다(1분). -->
+  <joint name="base_link_to_camera_link" type="fixed">
+    <parent link="base_link"/>
+    <child link="camera_link"/>
+    <origin xyz="0.770 0.010 0.428" rpy="0 -0.215 0"/>
+  </joint>
+
   <!-- REP-103 optical 관례(x-우, y-하, z-전방). rpy = (-pi/2, 0, -pi/2),
        quaternion (-0.5, 0.5, -0.5, 0.5).
        S15P11A301-62 카메라 계약: /camera/image_raw/compressed의 frame_id -->

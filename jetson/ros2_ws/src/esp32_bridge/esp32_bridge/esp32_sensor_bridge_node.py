@@ -6,6 +6,7 @@ USB 직렬(921600bps, COBS+CRC16)로 센서 ESP32(`esp32_sensor_comm` 스케치)
     ENCODER_STATE     -> nav_msgs/Odometry        /wheel/odometry
     IMU_STATE         -> sensor_msgs/Imu          /imu/data_raw
     PROXIMITY_STATE   -> sensor_msgs/Range        /range/front
+                         sensor_msgs/Range        /range/rear
                          std_msgs/Bool            /proximity/protective_stop
     ENVIRONMENT_STATE -> sensor_msgs/Temperature  /environment/temperature
                          sensor_msgs/RelativeHumidity /environment/relative_humidity
@@ -13,6 +14,15 @@ USB 직렬(921600bps, COBS+CRC16)로 센서 ESP32(`esp32_sensor_comm` 스케치)
 이전 구현은 셋 다 `std_msgs/String` JSON으로 냈는데, 그러면 `robot_localization`
 EKF도 Nav2 costmap/collision_monitor도 아무것도 구독할 수 없다. 자율주행 전
 단계의 전제라 Phase 0에서 먼저 걷어냈다.
+
+## 후방 초음파 (TBD-HW-010, S15P11A301-324)
+
+`PROXIMITY_STATE`에 `rear_min_distance_mm`이 추가돼 `/range/rear`로 발행한다.
+front와 같은 방식(`valid_sensor_mask` bit1, timeout=+Inf clamp)이지만
+`protective_stop`은 아직 전방 단독 판단이다 — 센서 ESP32(`sensor_task.cpp`)가
+방향별 정지 임계 실측·안전 체인 통합(TBD-HW-011, TBD-CAL-001) 전까지
+`protective_stop`에 후방을 반영하지 않기 때문이다. `/range/rear`는 지금은
+관측용이며 `collision_monitor`/backup 제약(04장)에는 아직 연결되지 않는다.
 
 ## IMU (S15P11A301-244)
 
@@ -150,8 +160,9 @@ _DEFAULT_METERS_PER_TICK = 1.169e-06
 # 반영돼 있지 않아, 주행 실측(§35-3 δ_max 원주행)으로 다시 잡는다.
 _MEASURED_TRACK_WIDTH_M = 0.53
 
-# `sensor_task.cpp`의 validSensorMask 비트 0 = 전방 HC-SR04.
+# `sensor_task.cpp`의 validSensorMask 비트 0 = 전방 HC-SR04, 비트 1 = 후방(TBD-HW-010).
 _PROXIMITY_FRONT_MASK_BIT = 0x01
+_PROXIMITY_REAR_MASK_BIT = 0x02
 
 # `sensor_task.cpp`의 ENV_STATUS_VALID.
 _ENVIRONMENT_STATUS_VALID = 0
@@ -228,6 +239,7 @@ class Esp32SensorBridgeNode(Node):
         self.declare_parameter("odometry_topic", "/wheel/odometry")
         self.declare_parameter("imu_topic", "/imu/data_raw")
         self.declare_parameter("range_topic", "/range/front")
+        self.declare_parameter("range_rear_topic", "/range/rear")
         self.declare_parameter("protective_stop_topic", "/proximity/protective_stop")
         self.declare_parameter("temperature_topic", "/environment/temperature")
         self.declare_parameter("relative_humidity_topic", "/environment/relative_humidity")
@@ -235,6 +247,7 @@ class Esp32SensorBridgeNode(Node):
         self.declare_parameter("base_frame_id", "base_footprint")
         self.declare_parameter("imu_frame_id", "imu_link")
         self.declare_parameter("range_frame_id", "ultrasonic_front_link")
+        self.declare_parameter("range_rear_frame_id", "ultrasonic_rear_link")
         self.declare_parameter("environment_frame_id", "base_link")
         self.declare_parameter("publish_odom_tf", False)
 
@@ -269,6 +282,7 @@ class Esp32SensorBridgeNode(Node):
         self._base_frame_id = self.get_parameter("base_frame_id").value
         self._imu_frame_id = self.get_parameter("imu_frame_id").value
         self._range_frame_id = self.get_parameter("range_frame_id").value
+        self._range_rear_frame_id = self.get_parameter("range_rear_frame_id").value
         self._environment_frame_id = self.get_parameter("environment_frame_id").value
         self._range_min_m = float(self.get_parameter("range_min_m").value)
         self._range_max_m = float(self.get_parameter("range_max_m").value)
@@ -335,6 +349,9 @@ class Esp32SensorBridgeNode(Node):
         )
         self._range_pub = self.create_publisher(
             Range, self.get_parameter("range_topic").value, _reliable_qos()
+        )
+        self._range_rear_pub = self.create_publisher(
+            Range, self.get_parameter("range_rear_topic").value, _reliable_qos()
         )
         self._protective_stop_pub = self.create_publisher(
             Bool, self.get_parameter("protective_stop_topic").value, _latched_qos()
@@ -589,19 +606,19 @@ class Esp32SensorBridgeNode(Node):
         self._relative_humidity_pub.publish(humidity)
         self._environment_published_count += 1
 
-    def _handle_proximity_state(self, payload: bytes) -> None:
-        state = unpack_proximity_state(payload)
-
+    def _build_range_message(
+        self, distance_mm: int, valid: bool, frame_id: str, stamp
+    ) -> Range:
         message = Range()
-        message.header.stamp = self._sample_stamp(state.sample_age_ms)
-        message.header.frame_id = self._range_frame_id
+        message.header.stamp = stamp
+        message.header.frame_id = frame_id
         message.radiation_type = Range.ULTRASOUND
         message.field_of_view = self._range_field_of_view_rad
         message.min_range = self._range_min_m
         message.max_range = self._range_max_m
 
-        distance_m = state.front_min_distance_mm / 1000.0
-        if not state.valid_sensor_mask & _PROXIMITY_FRONT_MASK_BIT:
+        distance_m = distance_mm / 1000.0
+        if not valid:
             # 신뢰할 수 없는 샘플(최소거리 미만 반사 등). 스트림을 끊으면
             # collision_monitor가 정지하므로 값만 무효로 표시한다.
             message.range = math.inf
@@ -614,7 +631,31 @@ class Esp32SensorBridgeNode(Node):
             message.range = math.inf
         else:
             message.range = distance_m
-        self._range_pub.publish(message)
+        return message
+
+    def _handle_proximity_state(self, payload: bytes) -> None:
+        state = unpack_proximity_state(payload)
+        stamp = self._sample_stamp(state.sample_age_ms)
+
+        self._range_pub.publish(
+            self._build_range_message(
+                state.front_min_distance_mm,
+                bool(state.valid_sensor_mask & _PROXIMITY_FRONT_MASK_BIT),
+                self._range_frame_id,
+                stamp,
+            )
+        )
+        # 후방(TBD-HW-010, S15P11A301-324): 값만 발행한다. protective_stop은
+        # 방향별 임계 실측·안전 체인 통합 전까지 전방 단독 판단을 유지한다
+        # (센서 ESP32 sensor_task.cpp, TBD-HW-011).
+        self._range_rear_pub.publish(
+            self._build_range_message(
+                state.rear_min_distance_mm,
+                bool(state.valid_sensor_mask & _PROXIMITY_REAR_MASK_BIT),
+                self._range_rear_frame_id,
+                stamp,
+            )
+        )
 
         self._protective_stop_pub.publish(Bool(data=bool(state.protective_stop)))
 

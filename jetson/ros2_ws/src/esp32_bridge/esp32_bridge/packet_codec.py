@@ -379,6 +379,7 @@ def unpack_environment_state(payload: bytes) -> EnvironmentState:
 @dataclass
 class ProximityState:
     front_min_distance_mm: int
+    rear_min_distance_mm: int
     valid_sensor_mask: int
     protective_stop: int
     sample_age_ms: int
@@ -388,6 +389,7 @@ def pack_proximity_state(state: ProximityState) -> bytes:
     return struct.pack(
         STRUCT_PROXIMITY_STATE,
         state.front_min_distance_mm,
+        state.rear_min_distance_mm,
         state.valid_sensor_mask,
         state.protective_stop,
         state.sample_age_ms,

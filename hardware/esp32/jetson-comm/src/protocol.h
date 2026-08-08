@@ -131,11 +131,12 @@ bool unpackEnvironmentState(const uint8_t* payload, uint16_t len, EnvironmentSta
 
 struct ProximityState {
   uint16_t frontMinDistanceMm;
+  uint16_t rearMinDistanceMm;  // TBD-HW-010(S15P11A301-324): 후방 HC-SR04. bit1 = validSensorMask.
   uint8_t validSensorMask;
   uint8_t protectiveStop;
   uint16_t sampleAgeMs;
 };
-constexpr size_t PROXIMITY_STATE_BYTES = 6;
+constexpr size_t PROXIMITY_STATE_BYTES = 8;
 size_t packProximityState(const ProximityState& in, uint8_t* out);
 bool unpackProximityState(const uint8_t* payload, uint16_t len, ProximityState& out);
 

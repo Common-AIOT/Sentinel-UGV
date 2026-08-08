@@ -22,6 +22,7 @@ from esp32_bridge.packet_codec import (  # noqa: E402
     ImuState,
     LengthError,
     ParsedFrame,
+    ProximityState,
     SetMode,
     build_frame,
     cobs_decode,
@@ -30,10 +31,12 @@ from esp32_bridge.packet_codec import (  # noqa: E402
     is_sequence_newer,
     pack_drive_command,
     pack_imu_state,
+    pack_proximity_state,
     pack_set_mode,
     parse_frame,
     unpack_drive_command,
     unpack_imu_state,
+    unpack_proximity_state,
     unpack_set_mode,
 )
 from esp32_bridge.protocol_constants import (  # noqa: E402
@@ -44,6 +47,7 @@ from esp32_bridge.protocol_constants import (  # noqa: E402
     IMU_STATUS_VALID,
     MSG_DRIVE_COMMAND,
     MSG_IMU_STATE,
+    MSG_PROXIMITY_STATE,
     MSG_SET_MODE,
     ack_result_name,
     imu_status_flag_names,
@@ -172,6 +176,35 @@ def test_imu_status_flag_names_reports_unknown_bits():
     assert imu_status_flag_names(IMU_STATUS_VALID) == ["VALID"]
     assert imu_status_flag_names(0) == []
     assert imu_status_flag_names(0x0010) == ["UNKNOWN(0x0010)"]
+
+
+# ---- PROXIMITY_STATE (0x24) ----
+# 아래 값은 hardware/esp32/jetson-comm/test/test_protocol.cpp의
+# testProximityStateRoundTrip()과 동일하다. 한쪽을 바꾸면 반드시 다른 쪽도 확인할 것.
+# rear_min_distance_mm은 TBD-HW-010(S15P11A301-324)에서 추가됐다.
+
+_PROXIMITY_VECTOR = ProximityState(
+    front_min_distance_mm=850,
+    rear_min_distance_mm=1200,
+    valid_sensor_mask=0x03,  # bit0 전방 + bit1 후방
+    protective_stop=0,
+    sample_age_ms=42,
+)
+
+
+def test_proximity_state_payload_is_8_bytes():
+    assert len(pack_proximity_state(_PROXIMITY_VECTOR)) == 8
+
+
+def test_proximity_state_frame_round_trip_preserves_rear_field():
+    payload = pack_proximity_state(_PROXIMITY_VECTOR)
+    frame = build_frame(MSG_PROXIMITY_STATE, sequence=3, sender_uptime_ms=100, payload=payload)
+
+    parsed = parse_frame(frame[:-1])
+    assert parsed.message_type == MSG_PROXIMITY_STATE  # 0x24가 KNOWN_MESSAGE_TYPES에 있다
+
+    decoded = unpack_proximity_state(parsed.payload)
+    assert decoded == _PROXIMITY_VECTOR
 
 
 # ---- SET_MODE (0x13) ----

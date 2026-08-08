@@ -155,6 +155,40 @@ void testImuStateRoundTrip() {
              "unpackImuState rejects a short payload");
 }
 
+void testProximityStateRoundTrip() {
+  ProximityState state{};
+  state.frontMinDistanceMm = 850;
+  state.rearMinDistanceMm = 1200;
+  state.validSensorMask = 0x03;  // bit0 전방 + bit1 후방(TBD-HW-010)
+  state.protectiveStop = 0;
+  state.sampleAgeMs = 42;
+
+  uint8_t payload[PROXIMITY_STATE_BYTES];
+  size_t payloadLen = packProximityState(state, payload);
+  expectTrue(payloadLen == PROXIMITY_STATE_BYTES, "packProximityState emits expected byte count");
+
+  uint8_t frameBuf[MAX_FRAME_BYTES + 4];
+  size_t frameLen = buildFrame(MSG_PROXIMITY_STATE, 3, 100, payload, (uint16_t)payloadLen,
+                                frameBuf, sizeof(frameBuf));
+  expectTrue(frameLen > 0, "buildFrame accepts MSG_PROXIMITY_STATE");
+
+  FrameHeader header{};
+  uint8_t decodedPayload[MAX_PAYLOAD_BYTES];
+  ParseResult result =
+      parseFrame(frameBuf, frameLen - 1, header, decodedPayload, sizeof(decodedPayload));
+  expectTrue(result == ParseResult::OK && header.messageType == MSG_PROXIMITY_STATE,
+             "parseFrame accepts MSG_PROXIMITY_STATE (0x24) as a known type");
+
+  ProximityState decoded{};
+  bool unpacked = unpackProximityState(decodedPayload, header.payloadLength, decoded);
+  expectTrue(unpacked && decoded.frontMinDistanceMm == 850 && decoded.rearMinDistanceMm == 1200 &&
+                 decoded.validSensorMask == 0x03 && decoded.sampleAgeMs == 42,
+             "unpackProximityState recovers original values (rear field included)");
+
+  expectTrue(!unpackProximityState(decodedPayload, PROXIMITY_STATE_BYTES - 1, decoded),
+             "unpackProximityState rejects a short payload");
+}
+
 void testSetModeRoundTrip() {
   SetMode req{};
   req.requestedMode = SET_MODE_AUTO;
@@ -214,6 +248,7 @@ int main() {
   testCobsRoundTrip("0000", "010101", "cobs two consecutive zero bytes");
   testFrameRoundTrip();
   testImuStateRoundTrip();
+  testProximityStateRoundTrip();
   testSetModeRoundTrip();
   testSequenceWraparound();
 

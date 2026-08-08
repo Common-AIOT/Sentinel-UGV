@@ -193,7 +193,7 @@ STRUCT_ENCODER_STATE = "<iihhhH"  # 16 bytes
 # IEEE-754 LE라 protocol.cpp의 writeF32LE가 쓴 비트 패턴을 그대로 읽는다.
 STRUCT_IMU_STATE = "<QffffffhH"  # 36 bytes
 STRUCT_ENVIRONMENT_STATE = "<hHBH"  # 7 bytes
-STRUCT_PROXIMITY_STATE = "<HBBH"  # 6 bytes
+STRUCT_PROXIMITY_STATE = "<HHBBH"  # 8 bytes (rear_min_distance_mm 추가, TBD-HW-010 S15P11A301-324)
 STRUCT_HELLO_ACK = "<BBBBBBHB"  # 9 bytes
 STRUCT_DIAGNOSTIC = "<BBHIIII"  # 20 bytes
 STRUCT_COMMAND_ACK = "<BHBB"  # 5 bytes

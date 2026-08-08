@@ -102,10 +102,11 @@
     <origin xyz="0.810 0 0.215" rpy="0 0 0"/>
   </joint>
 
-  <!-- 후방 HC-SR04. 기계적으로 장착돼 있으나 아직 배선·펌웨어 채널이 없다
-       (S15P11A301-324 가 배선한다). frame 을 미리 두는 이유: 배선되는 날 TF 가
-       준비돼 있어야 하고, 위치 실측은 차체가 열려 있던 지금만 가능했다.
-       yaw=pi 로 +x 가 후방을 향한다 - Range 를 점으로 바꿀 때 방향이 곧 값이다. -->
+  <!-- 후방 HC-SR04. 위치 실측(2026-08-08, S15P11A301-344) - 차체가 열려 있던
+       때에 먼저 재 둔 값이다. yaw=pi 로 +x 가 후방을 향한다 - esp32_sensor_bridge
+       의 /range/rear(sensor_msgs/Range) frame_id이며, Range 를 점으로 바꿀 때
+       방향이 곧 값이다. 배선·펌웨어·`/range/rear` 발행은 S15P11A301-324 에서
+       완료됐다. protective_stop 에는 아직 반영되지 않는다(TBD-HW-011). -->
   <joint name="base_link_to_ultrasonic_rear_link" type="fixed">
     <parent link="base_link"/>
     <child link="ultrasonic_rear_link"/>

@@ -35,11 +35,22 @@ constexpr int16_t PWM_MAX = 255;
 // 이보다 짧으면 드라이버가 역기전력을 맞는다. 최종값은 §35-4에서 확정한다.
 constexpr uint32_t DIRECTION_CHANGE_STOP_MS = 500;
 
-// docs/03-제어-캘리브레이션.md §35-4 실측 전 임시값: 이 mm/s에서 PWM=255(100%)로
-// 포화되도록 선형 매핑한다. 폐루프 속도 보정은 Jetson이 센서 ESP32 엔코더
-// 피드백으로 target_drive_*_mmps 자체를 갱신하는 방식으로 수행하므로(§34-8),
-// 여기서는 목표값을 그대로 개루프 PWM으로 변환하기만 한다.
-constexpr int16_t MAX_DRIVE_SPEED_MMPS = 600;
+// §35-4 실측 (2026-08-08, S15P11A301-342). 줄자 3점에서 뽑은 오프셋형 매핑이다.
+//
+//   실측점(현재 매핑 기준):  PWM 63.8 -> 0.273 m/s,  PWM 85.0 -> 0.388 m/s
+//   회귀:                    PWM = 13.3 + 184.8 * v   (v: m/s)
+//   최고속 환산:             PWM 255 = 1.31 m/s  (종전 가정 0.6 의 2.2배였다)
+//
+// 원점을 지나는 순수 비례가 아니라 절편이 있는 이유는 정지 마찰이다. 기울기만
+// 고치면(600 -> 1310) 저속 명령이 문턱 아래로 떨어져 로봇이 아예 안 움직인다.
+constexpr int32_t PWM_INTERCEPT_MILLI = 13300;   // 절편 13.3 을 1000배로 (정수 연산)
+constexpr int32_t PWM_PER_MMPS_MICRO = 184800;   // 기울기 184.8/(m/s) = 0.1848/(mm/s), 1e6배
+constexpr int16_t MAX_DRIVE_SPEED_MMPS = 1310;   // PWM 255 포화 지점 (실측 환산)
+
+// 이 속도 미만은 정지로 처리한다. 문턱 근처(0.10 명령=PWM 17%)에서 실제로 안
+// 움직였고, 그 구간은 위 직선에서도 벗어난다. 사용 대역이 0.15 이상이라
+// 클램프로 충분하다 — 필요해지면 0.12·0.13 을 실측해 무릎을 넣는다.
+constexpr int16_t MIN_DRIVE_SPEED_MMPS = 150;
 
 // tank_drive.ino 배선 실측과 동일: 전진 명령에서 한쪽 바퀴가 반대로 돌면 이
 // 값만 바꾼다.
@@ -99,7 +110,15 @@ void writeOneMotor(int16_t command, uint8_t rpwmPin, uint8_t rpwmChannel, uint8_
 
 int16_t mmpsToSignedPwm(int16_t targetMmps, bool reversed) {
   const int32_t clamped = constrain(targetMmps, -MAX_DRIVE_SPEED_MMPS, MAX_DRIVE_SPEED_MMPS);
-  const int32_t pwm = (clamped * PWM_MAX) / MAX_DRIVE_SPEED_MMPS;
+  const int32_t magnitude = abs(clamped);
+
+  int32_t pwm = 0;
+  if (magnitude >= MIN_DRIVE_SPEED_MMPS) {
+    // PWM = 절편 + 기울기 * |v|,  정수 연산으로 (1000 배율 유지 후 나눔)
+    pwm = (PWM_INTERCEPT_MILLI + (magnitude * PWM_PER_MMPS_MICRO) / 1000) / 1000;
+    pwm = constrain(pwm, 0, PWM_MAX);
+    if (clamped < 0) pwm = -pwm;
+  }
   return static_cast<int16_t>(reversed ? -pwm : pwm);
 }
 

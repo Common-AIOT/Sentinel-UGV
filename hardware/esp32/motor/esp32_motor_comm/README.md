@@ -46,7 +46,10 @@
 
 포함하지 않음(후속 티켓):
 - 전류/과열 등 실제 드라이버 fault 판독(현재는 통신·watchdog 기반 fault만 존재)
-- mm/s → PWM 매핑의 실측 캘리브레이션(`MAX_DRIVE_SPEED_MMPS`, §35-4) — 현재는 임시값
+- mm/s → PWM 매핑은 S15P11A301-342에서 줄자 실측 오프셋형 매핑(`PWM_INTERCEPT_MILLI`/
+  `PWM_PER_MMPS_MICRO`, §35-4)으로 교체했다. 다만 실측 2점(0.15/0.20 m/s)이 모두
+  정지 마찰 문턱 위 속도라 문턱 부근(0.15~0.25 m/s, 로봇 실사용 대역 전체)은
+  외삽 구간이다 — 이 대역에서 실제로 움직이는지 재확인이 필요하다
 - 조향 중립·엔드포인트·δ_max 실측(§35-3, TBD-HW-008) — `steering.cpp`의
   `SERVO_CENTER_DEG`/`SERVO_MAX_OFFSET_DEG`/`STEERING_MAX_MDEG`는 벤치 임시값이다.
   실측 절차는 `../steering_servo_test/`

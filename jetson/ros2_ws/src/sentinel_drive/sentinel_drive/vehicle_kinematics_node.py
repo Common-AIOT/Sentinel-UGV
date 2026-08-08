@@ -59,14 +59,19 @@ class VehicleKinematicsNode(Node):
     def __init__(self) -> None:
         super().__init__('vehicle_kinematics')
 
-        # 휠베이스 잠정값. 실측(TBD-HW-008)이 오면 파라미터만 바꾼다. 틀리면
-        # 직진은 맞고 **선회 반경만 어긋난다** — 지령 ω 대비 실제 yaw rate 의 비가
-        # L 오차의 비다.
-        self.declare_parameter('wheelbase_m', 0.50)
-        # 최대 조향각 잠정값. 모터 ESP32 steering.cpp 의 STEERING_MAX_MDEG(30000)와
-        # 반드시 같아야 한다 — 여기가 더 크면 펌웨어가 조용히 클램프하고
-        # STEERING_COMMAND_INVALID 만 올라온다(§34-9 bit 14).
-        self.declare_parameter('max_steering_deg', 30.0)
+        # 휠베이스 **실측**(2026-08-07, S15P11A301-299 2단계). 틀리면 직진은 맞고
+        # **선회 반경만 어긋난다** — 지령 ω 대비 실제 yaw rate 의 비가 L 오차의 비다.
+        self.declare_parameter('wheelbase_m', 0.683)
+        # 최대 조향각 **실측**(2026-08-07, 좌우 동일). R_min = L/tan(δ) = 1.69m 가
+        # 여기서 나온다 — 04장 24.1 과 nav2.yaml 이 그 값을 근거로 쓴다.
+        #
+        # **모터 ESP32 의 STEERING_MAX_MDEG 와 같아야 한다.** 여기가 더 크면 펌웨어가
+        # 조용히 클램프하고 STEERING_COMMAND_INVALID 만 올라온다(§34-9 bit 14).
+        #
+        # 맞추는 방향에 주의한다 — **펌웨어를 실측에 맞춘다.** 종전 주석은
+        # 「STEERING_MAX_MDEG(30000)와 같아야 한다」였는데, 그대로 따르면 실측 22°를
+        # 30°로 되돌리게 된다. 30°는 실측 전 가정값이었다(S15P11A301-341).
+        self.declare_parameter('max_steering_deg', 22.0)
         # 후륜 상한 잠정값. 보수적으로 수동 상한(24.2, 0.30m/s)과 같은 값을 쓴다.
         # RS540 실측(TBD-CAL-001) 전까지 이 위로 못 나가게 막는 물리 한계 역할.
         #

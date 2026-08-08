@@ -27,6 +27,27 @@
 # 앞 0.80·뒤 -0.11 은 차체 길이 0.91 과 휠베이스 0.683 에서 오버행을 반씩 본
 # **추정값**이다. 오버행을 재면 이 두 숫자만 고친다.
 #
+# ## 곡률 상한을 지키는 층은 Nav2 가 아니다 (2026-08-08, S15P11A301-348)
+#
+# **RPP 에는 곡률 상한 기능이 없다.** 헤더의 `applyConstraints` 와 멤버 변수를
+# 확인했다 — 곡률 관련은 `regulated_linear_scaling_min_radius` 하나이고 그것은
+# 「급하면 감속」이지 「급한 것을 금지」가 아니다. 즉 Nav2 안에는 이 차량이 못 도는
+# 곡률을 애초에 만들지 않게 하는 층이 없다.
+#
+#   NavFn         회전반경을 모른다 → 못 따라갈 경로를 낸다
+#   RPP           그 경로를 따라가려 곡률을 명령한다 (상한 없음)
+#   vehicle_kinematics  δ 를 δ_max 로 **클램프한다** ← 상한을 지키는 유일한 층
+#
+# 클램프 자체는 안전하다(조향각을 상한으로 자른다). 문제는 상위가 그 사실을 모른
+# 채 계속 무리한 곡률을 낸다는 것이고, 그 대가가 2026-08-08 실기동에 그대로
+# 찍혔다 — `steering_clamp_count 7224`, `spin_in_place_reject_count 43`.
+# 로봇은 조향을 최대로 붙인 채 넓은 호로 벌어지고, 목표에 수렴하지 못해
+# progress checker 가 15초 뒤 포기한다.
+#
+# 근본 해법은 회전반경을 아는 planner(Smac Hybrid-A*)이며 R_min 실측 뒤에
+# 판정한다(TBD-NAV-001, S15P11A301-299 3단계). 그 전까지는 이 층 구분을 알고
+# 있는 것이 최선이다 — 모르면 「왜 경로를 못 따라가지」를 매번 다시 조사한다.
+#
 # ## planner 는 NavFn 을 유지하되 한계를 적어 둔다
 #
 # NavFn 은 회전반경을 모르므로 R_min 1.69m 로 못 따라갈 경로를 낸다. 옆이나
@@ -132,15 +153,26 @@ controller_server:
       max_allowed_time_to_collision_up_to_carrot: 1.0
       use_regulated_linear_velocity_scaling: true
       use_cost_regulated_linear_velocity_scaling: false
+      # **이것은 곡률 상한이 아니라 감속 임계다** (S15P11A301-348). 반경이 이 값
+      # 아래로 급해지면 RPP 가 속도를 줄이는데, 그 곡선을 여전히 명령한다.
+      #
+      # 0.4 는 차동 구동 시절 값이고 이 차량과 맞지 않는다 — R_min 이 1.69m 라
+      # 0.4m 반경은 아예 못 돈다. R_min 근처(1.7~2.0)로 올리면 못 도는 곡률에
+      # 접근할 때 미리 감속해 아래 「클램프」 구간이 줄어든다.
+      #
+      # 지금 올리지 않는 이유: S15P11A301-341(링키지 비 2.5)이 펌웨어에 반영되면
+      # **실제 R_min 이 4.4m 에서 1.69m 로 바뀐다.** 그 전에 값을 정하면 두 번
+      # 만지게 되므로, 341 뒤에 실주행으로 확정한다.
       regulated_linear_scaling_min_radius: 0.4
       regulated_linear_scaling_min_speed: 0.1
       # 조향 차량은 제자리에서 방향을 맞출 수 없다. true 로 두면 RPP 가
       # v=0·ω 를 내고 로봇은 앞바퀴만 꺾은 채 서 있는다.
       use_rotate_to_heading: false
-      # 최소 회전반경. RPP 는 이 값을 직접 쓰지 않지만, 여기 적어 두면 Smac
-      # 전환 때 옮길 자리가 명확하고 실측 근거가 한곳에 남는다.
-      minimum_turning_radius: 1.69
       max_robot_pose_search_dist: 1.0
+      # `minimum_turning_radius` 를 여기서 제거했다 (S15P11A301-348).
+      # **RPP 에 그 이름의 파라미터가 없어 조용히 무시된다** — S15P11A301-172 가
+      # 근거를 남길 의도로 넣었는데, 설정 자리에 있으면 「곡률 상한이 걸려 있다」로
+      # 읽힌다(2026-08-08 에 실제로 그렇게 오독했다). 실측 근거는 머리말에 있다.
 
 planner_server:
   ros__parameters:

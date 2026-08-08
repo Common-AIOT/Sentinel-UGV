@@ -34,6 +34,9 @@ esp32_sensor_bridge:
     odometry_topic: /wheel/odometry
     imu_topic: /imu/data_raw
     range_topic: /range/front
+    # 후방 HC-SR04(TBD-HW-010, S15P11A301-324). 값만 발행하고 protective_stop에는
+    # 아직 반영되지 않는다(TBD-HW-011, esp32_sensor_bridge_node.py 상단 docstring).
+    range_rear_topic: /range/rear
     protective_stop_topic: /proximity/protective_stop
     temperature_topic: /environment/temperature
     relative_humidity_topic: /environment/relative_humidity
@@ -43,6 +46,7 @@ esp32_sensor_bridge:
     # placeholder다(§35-7, TBD-HW-012).
     imu_frame_id: imu_link
     range_frame_id: ultrasonic_front_link
+    range_rear_frame_id: ultrasonic_rear_link
     environment_frame_id: base_link
 
     # slam.launch.py가 odom->base_footprint를 static identity로 발행하는 동안은
@@ -141,6 +145,7 @@ esp32_sensor_bridge:
     imu_clock_resync_period_s: 10.0
 
     # ---- HC-SR04 (sensor_task.cpp의 MIN/MAX_VALID_DISTANCE_CM과 맞출 것) ----
+    # 전방·후방 모두 같은 모델이라 아래 세 값을 공유한다(TBD-HW-010).
     range_min_m: 0.02
     range_max_m: 4.0
     range_field_of_view_rad: 0.26  # 데이터시트 유효 각도 약 15deg

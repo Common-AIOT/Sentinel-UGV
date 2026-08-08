@@ -116,6 +116,7 @@ void sendProximityState() {
   SensorSharedState snapshot = sensorSharedStateSnapshot();
   ProximityState state{};
   state.frontMinDistanceMm = snapshot.frontMinDistanceMm;
+  state.rearMinDistanceMm = snapshot.rearMinDistanceMm;
   state.validSensorMask = snapshot.validSensorMask;
   state.protectiveStop = snapshot.protectiveStop;
   state.sampleAgeMs = sampleAgeMsSince(snapshot.lastProximityUpdateMs);

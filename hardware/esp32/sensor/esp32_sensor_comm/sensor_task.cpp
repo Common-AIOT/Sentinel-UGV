@@ -348,40 +348,62 @@ bool updateImu(ImuChannel& imu, ImuSample& sampleOut) {
 }
 
 // ------------------------------------------------------------
-// HC-SR04 전방 초음파
+// HC-SR04 전방·후방 초음파(TBD-HW-010, S15P11A301-324)
+// 같은 센서 ESP32에 독립 TRIG/ECHO 핀 쌍으로 붙는다. 두 센서를 동시에
+// trigger하면 서로의 echo를 오독하므로(02장 6.5·21.3) envTaskFn에서 전방을
+// 완전히 측정(pulseIn 종료 또는 timeout)한 뒤에만 후방을 trigger한다.
+//
+// **2026-08-08 실차 배선 점검(S15P11A301-324): GPIO5/GPIO36에 물린 HC-SR04는
+// 실제로는 후방에 달려 있었다.** 센서 위치를 다시 바꾸기 어려워 아래 전방/후방
+// 핀 배정을 맞바꿨다 - 핀 번호 자체(5/36, 18/39)는 바뀌지 않았다.
 // ------------------------------------------------------------
-constexpr uint8_t HC_TRIG_PIN = 5;
-constexpr uint8_t HC_ECHO_PIN = 36;
+// 전방 핀은 실제 도통 시험 전 임시값이다(부록 J는 TBD-HW-010 확정 전까지 TBD로
+// 남긴다) - 앞바퀴 조향 서보(모터 ESP32)나 이 보드의 다른 핀과 겹치지 않는
+// 범용 GPIO 쌍을 골랐다. ECHO는 5V 신호라 후방과 마찬가지로 레벨 변환이 필요하다.
+constexpr uint8_t HC_TRIG_PIN = 18;
+constexpr uint8_t HC_ECHO_PIN = 39;
 
-constexpr uint32_t ULTRASONIC_INTERVAL_MS = 60;  // ~15-16Hz, §34-5 권장 10~20Hz
+// 후방 핀은 실배선 점검으로 확인된 값이다(위 2026-08-08 항목 참고).
+constexpr uint8_t HC_REAR_TRIG_PIN = 5;
+constexpr uint8_t HC_REAR_ECHO_PIN = 36;
+
+constexpr uint32_t ULTRASONIC_INTERVAL_MS = 60;  // ~15-16Hz, §34-5 권장 10~20Hz(전방·후방 공통)
 constexpr uint32_t ECHO_TIMEOUT_US = 30000;      // 약 5.1m 왕복 상당
 constexpr float SPEED_OF_SOUND_CM_PER_US = 0.0343f;
 constexpr float MIN_VALID_DISTANCE_CM = 2.0f;
 constexpr float MAX_VALID_DISTANCE_CM = 400.0f;
 
 // 실측 전 임시 안전거리(§35 캘리브레이션 대상) - Collision Monitor STOP zone과
-// 별개로 센서 ESP32가 로컬 판단만으로 즉시 세우는 최후 방어선이다.
+// 별개로 센서 ESP32가 로컬 판단만으로 즉시 세우는 최후 방어선이다. 전방
+// 전용이다 - 후방은 장착 각도·높이가 달라 이 값을 그대로 쓸 수 없고
+// (TBD-CAL-001), protective_stop 반영 여부 자체가 안전 체인 통합 결정
+// 사항이라(TBD-HW-011) 아직 반영하지 않는다.
 constexpr uint16_t PROXIMITY_STOP_DISTANCE_MM = 100;
 
 // 연속 노이즈성 실패(최소거리 미만 등) 횟수 - 이 이상 지속되면 fault로 본다.
 // echo 무응답(timeout)은 "5m 밖에 장애물 없음"으로 취급하며 fault가 아니다.
 constexpr uint32_t PROXIMITY_FAULT_STREAK_THRESHOLD = 20;
 
-uint32_t g_ultrasonicFailStreak = 0;
+// validSensorMask 비트(esp32_sensor_bridge_node.py와 값을 맞출 것).
+constexpr uint8_t PROXIMITY_FRONT_VALID_BIT = 0x01;
+constexpr uint8_t PROXIMITY_REAR_VALID_BIT = 0x02;
 
-uint32_t readEchoTimeUs() {
-  digitalWrite(HC_TRIG_PIN, LOW);
+uint32_t g_frontUltrasonicFailStreak = 0;
+uint32_t g_rearUltrasonicFailStreak = 0;
+
+uint32_t readEchoTimeUs(uint8_t trigPin, uint8_t echoPin) {
+  digitalWrite(trigPin, LOW);
   delayMicroseconds(3);
-  digitalWrite(HC_TRIG_PIN, HIGH);
+  digitalWrite(trigPin, HIGH);
   delayMicroseconds(12);
-  digitalWrite(HC_TRIG_PIN, LOW);
-  return pulseIn(HC_ECHO_PIN, HIGH, ECHO_TIMEOUT_US);
+  digitalWrite(trigPin, LOW);
+  return pulseIn(echoPin, HIGH, ECHO_TIMEOUT_US);
 }
 
 // true를 반환하면 distanceMmOut이 유효하다(timeout=원거리 clear로 간주).
 // false는 최소거리 미만의 노이즈성 반사 등 이번 샘플을 신뢰할 수 없는 경우다.
-bool measureUltrasonicMm(uint16_t& distanceMmOut) {
-  const uint32_t echoUs = readEchoTimeUs();
+bool measureUltrasonicMm(uint8_t trigPin, uint8_t echoPin, uint16_t& distanceMmOut) {
+  const uint32_t echoUs = readEchoTimeUs(trigPin, echoPin);
   if (echoUs == 0) {
     distanceMmOut = static_cast<uint16_t>(MAX_VALID_DISTANCE_CM * 10.0f);
     return true;
@@ -476,6 +498,9 @@ void sensorHardwareInit() {
   pinMode(HC_TRIG_PIN, OUTPUT);
   digitalWrite(HC_TRIG_PIN, LOW);
   pinMode(HC_ECHO_PIN, INPUT);
+  pinMode(HC_REAR_TRIG_PIN, OUTPUT);
+  digitalWrite(HC_REAR_TRIG_PIN, LOW);
+  pinMode(HC_REAR_ECHO_PIN, INPUT);
   pinMode(DHT_DATA_PIN, INPUT_PULLUP);
 
   // DHT-11 전원 안정화 대기(데이터시트 권장). MPU6050 시동 시간도 함께 확보된다.
@@ -618,13 +643,19 @@ void envTaskFn(void* pvParameters) {
     const uint32_t now = millis();
 
     bool ultrasonicUpdated = false;
-    bool ultrasonicValid = false;
-    uint16_t distanceMm = 0;
+    bool frontUltrasonicValid = false;
+    bool rearUltrasonicValid = false;
+    uint16_t frontDistanceMm = 0;
+    uint16_t rearDistanceMm = 0;
     if (now - lastUltrasonicMs >= ULTRASONIC_INTERVAL_MS) {
       lastUltrasonicMs = now;
       ultrasonicUpdated = true;
-      ultrasonicValid = measureUltrasonicMm(distanceMm);
-      g_ultrasonicFailStreak = ultrasonicValid ? 0 : (g_ultrasonicFailStreak + 1);
+      // 전방을 완전히 측정(에코 종료 또는 30ms timeout)한 뒤에만 후방을
+      // trigger한다 - 동시 측정은 서로의 echo를 오독한다(TBD-HW-010).
+      frontUltrasonicValid = measureUltrasonicMm(HC_TRIG_PIN, HC_ECHO_PIN, frontDistanceMm);
+      g_frontUltrasonicFailStreak = frontUltrasonicValid ? 0 : (g_frontUltrasonicFailStreak + 1);
+      rearUltrasonicValid = measureUltrasonicMm(HC_REAR_TRIG_PIN, HC_REAR_ECHO_PIN, rearDistanceMm);
+      g_rearUltrasonicFailStreak = rearUltrasonicValid ? 0 : (g_rearUltrasonicFailStreak + 1);
     }
 
     bool dhtUpdated = false;
@@ -645,17 +676,29 @@ void envTaskFn(void* pvParameters) {
 
     sensorSharedStateUpdate([&](SensorSharedState& s) {
       if (ultrasonicUpdated) {
-        if (ultrasonicValid) {
-          s.frontMinDistanceMm = distanceMm;
-          s.validSensorMask |= 0x01;
-          s.protectiveStop = (distanceMm <= PROXIMITY_STOP_DISTANCE_MM) ? 1 : 0;
+        if (frontUltrasonicValid) {
+          s.frontMinDistanceMm = frontDistanceMm;
+          s.validSensorMask |= PROXIMITY_FRONT_VALID_BIT;
+          // 후방은 아직 protective_stop에 반영하지 않는다(위 PROXIMITY_STOP_DISTANCE_MM
+          // 주석 참고, TBD-HW-011) - 기존 전방 단독 안전 동작을 그대로 유지한다.
+          s.protectiveStop = (frontDistanceMm <= PROXIMITY_STOP_DISTANCE_MM) ? 1 : 0;
         } else {
-          s.validSensorMask &= ~0x01;
+          s.validSensorMask &= ~PROXIMITY_FRONT_VALID_BIT;
         }
 
-        if (g_ultrasonicFailStreak >= PROXIMITY_FAULT_STREAK_THRESHOLD) {
+        if (rearUltrasonicValid) {
+          s.rearMinDistanceMm = rearDistanceMm;
+          s.validSensorMask |= PROXIMITY_REAR_VALID_BIT;
+        } else {
+          s.validSensorMask &= ~PROXIMITY_REAR_VALID_BIT;
+        }
+
+        const bool proximityFault =
+            g_frontUltrasonicFailStreak >= PROXIMITY_FAULT_STREAK_THRESHOLD ||
+            g_rearUltrasonicFailStreak >= PROXIMITY_FAULT_STREAK_THRESHOLD;
+        if (proximityFault) {
           s.faultFlags |= FAULT_PROXIMITY_SENSOR_FAULT;
-        } else if (ultrasonicValid) {
+        } else if (frontUltrasonicValid || rearUltrasonicValid) {
           s.faultFlags &= ~FAULT_PROXIMITY_SENSOR_FAULT;
         }
         s.lastProximityUpdateMs = now;

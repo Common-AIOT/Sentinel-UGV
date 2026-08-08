@@ -372,6 +372,7 @@ bool unpackEnvironmentState(const uint8_t* payload, uint16_t len, EnvironmentSta
 size_t packProximityState(const ProximityState& in, uint8_t* out) {
   size_t offset = 0;
   writeU16LE(out, offset, in.frontMinDistanceMm);
+  writeU16LE(out, offset, in.rearMinDistanceMm);
   writeU8(out, offset, in.validSensorMask);
   writeU8(out, offset, in.protectiveStop);
   writeU16LE(out, offset, in.sampleAgeMs);
@@ -382,6 +383,7 @@ bool unpackProximityState(const uint8_t* payload, uint16_t len, ProximityState& 
   if (len != PROXIMITY_STATE_BYTES) return false;
   size_t offset = 0;
   out.frontMinDistanceMm = readU16LE(payload, offset);
+  out.rearMinDistanceMm = readU16LE(payload, offset);
   out.validSensorMask = readU8(payload, offset);
   out.protectiveStop = readU8(payload, offset);
   out.sampleAgeMs = readU16LE(payload, offset);

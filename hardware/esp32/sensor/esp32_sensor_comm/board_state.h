@@ -47,6 +47,9 @@ struct SensorSharedState {
   uint16_t imuStatusFlags = 0;
 
   uint16_t frontMinDistanceMm = 0xFFFF;
+  // TBD-HW-010(S15P11A301-324): 후방 HC-SR04. protective_stop에는 아직 반영하지
+  // 않는다 - 방향별 임계 실측·안전 체인 통합은 TBD-HW-011·TBD-CAL-001로 미룬다.
+  uint16_t rearMinDistanceMm = 0xFFFF;
   uint8_t validSensorMask = 0;
   uint8_t protectiveStop = 0;
 

@@ -44,11 +44,11 @@ constexpr float SERVO_MAX_OFFSET_DEG = 30.0f;
 float g_centerDeg = SERVO_CENTER_DEG;
 float g_maxOffsetDeg = SERVO_MAX_OFFSET_DEG;
 
-// 서보 출력 활성. **부팅값은 true 다** - drive_test 의 SERVO_START_ARMED=false 를
-// 그대로 가져오지 않았다. §34-6 은 부팅 직후 중립(δ=0)으로 초기화할 것을 요구하고,
-// 출력이 꺼진 채로는 그 초기화가 물리적으로 일어나지 않는다. 벤치 시험 스케치는
-// 사람이 옆에 서 있지만 이 펌웨어는 자율 주행으로 바로 이어진다.
-bool g_armed = true;
+// 리셋·펌웨어 업로드 직후에는 반드시 펄스를 끊은 상태로 시작한다. GPIO18의 외부
+// 10kΩ pull-down이 setup() 전 구간을 LOW로 잡고, 여기의 false가 LEDC attach 이후
+// control_task가 명시적으로 활성화할 때까지 듀티 0을 보장한다. 종료 전과 같은 중립
+// 펄스(기본 145°)를 첫 유효 출력으로 내보내 중간 각도를 거치지 않는다.
+bool g_armed = false;
 
 // STEERING_MAX_MDEG 는 steering_limits.h 에 있다. 수동 채널의 ang 매핑이 같은 값을
 // 봐야 하므로 분리했다 - 갈라지면 폰 슬라이더 끝과 실제 δ_max 가 어긋난다.
@@ -139,13 +139,15 @@ void steeringInit() {
   ledcAttachPin(SERVO_SIGNAL_PIN, SERVO_PWM_CHANNEL);
 #endif
 
-  // §34-6: 재부팅 직후에는 믿을 수 있는 마지막 값이 없으므로 중립이 유일하게
-  // 정의된 안전 상태다. 정지 시 각도 유지 정책(§34-7)의 유일한 예외다.
+  // 재부팅 직후 내부 목표만 중립으로 준비한다. 여기서는 유효한 RC 펄스를 내보내지
+  // 않는다. setup()이 주변장치 초기화를 끝낸 뒤 공유 상태를 arm하고 control_task의
+  // 첫 steeringUpdate()가 중간값 없이 이 중립을 첫 펄스로 출력한다.
   g_commandedMdeg = 0;
   g_outputMdeg = 0;
   g_maxRateMdps = 0;
   g_lastUpdateMs = millis();
-  writeSteeringMdeg(0);
+  writePwm(0);
+  g_actuatorUs = 0;
 }
 
 bool steeringSetTarget(int16_t requestedMdeg, uint16_t maxRateMdps, int16_t driveTargetMmps) {

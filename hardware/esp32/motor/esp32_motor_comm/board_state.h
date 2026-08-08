@@ -102,7 +102,9 @@ struct MotorSharedState {
   //
   // 쓰기는 manual_web 이 게이팅한다(자율 주행 중·바퀴 구동 중·래치 중 거부).
   // 실제 반영은 언제나 control_task 의 10ms 틱 하나뿐이다.
-  bool servoArmed = true;          // 서보 PWM 출력. false 면 펄스를 끊어 서보가 free 가 된다
+  // 부팅값은 false다. setup()이 모든 주변장치 초기화를 끝낸 뒤 true로 바꾸며, 그 전에는
+  // 외부 10kΩ pull-down과 LEDC duty 0이 GPIO18을 LOW로 유지한다.
+  bool servoArmed = false;         // 서보 PWM 출력. false 면 펄스를 끊어 서보가 free 가 된다
   uint8_t servoCenterDeg = 145;    // 서보 중립 각도. steering.cpp SERVO_CENTER_DEG 와 같은 기본값
   uint8_t servoMaxOffsetDeg = 30;  // 좌우 최대 오프셋. δ_max 가 이 각도로 매핑된다
 

@@ -10,9 +10,9 @@
 #pragma once
 
 // Jetson UART 통신과 무관한 수동 조종용 WiFi 채널.
-// 0이면 WiFi.begin()/reconnect()와 HTTP 서버를 모두 실행하지 않는다.
+// 1이면 WiFi.begin()/reconnect()와 HTTP 서버를 실행한다.
 #ifndef ENABLE_MANUAL_WIFI
-#define ENABLE_MANUAL_WIFI 0
+#define ENABLE_MANUAL_WIFI 1
 #endif
 
 constexpr char MANUAL_WIFI_SSID[] = "***REMOVED-WIFI-SSID***";

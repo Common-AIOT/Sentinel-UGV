@@ -587,6 +587,7 @@ ros2 topic pub -r 50 /esp32_motor_bridge/drive_command std_msgs/msg/String \
 
 - 좌·우 뒷바퀴가 모두 같은 방향(전진)으로 도는지 눈으로 확인한다. 반대로 돌면 `safety_stub.cpp`의 `LEFT_MOTOR_REVERSED`/`RIGHT_MOTOR_REVERSED`를 뒤집는다.
 - `drive_pwm_left/right_permille`가 0이 아니고 `driver_enabled`가 `true`인지 확인한다.
+- `target_drive_left_mmps`·`target_drive_right_mmps`를 **둘 다 1000**, 다음에는 **둘 다 -1000**처럼 `±max_drive_mmps`(기본 300) 밖으로 보내면 `drive_state`에는 각각 300/-300만 도달해야 한다. 한 명령에서 좌·우 부호를 반대로 주면 아래 제자리 회전 방어가 먼저 동작하므로 그렇게 시험하지 않는다. Jetson 로그의 `모터 명령 안전 한계 초과값 필터링`과 `/diagnostics`의 `MOTOR_COMMAND_LIMITS.filtered_command_count`도 증가하는지 확인한다.
 - **좌·우 부호를 반대로 보내지 않는다.** 2026-08-06 전륜 조향 복구로 후륜은 전·후진 전용이며(§6.3), 부호가 반대인 명령은 펌웨어가 양쪽 0으로 만든다. 제자리 회전은 더 이상 존재하지 않는 기동이다.
 - 전진 중 즉시 반대 부호로 바꿔 보내(급후진) 드라이버 fault 없이 데드타임(500ms) 이후 반대 방향으로 전환되는지 확인한다(CTRL-13). 데드타임 동안 `driver_enabled`가 `false`인 것이 정상이다.
 - Ctrl-C로 발행을 멈추고, 300ms 뒤 바퀴가 실제로 멈추는지 확인한다(8단계 워치독 확인을 실제 PWM으로 재확인하는 것).
@@ -604,13 +605,13 @@ ros2 topic pub -r 50 /esp32_motor_bridge/drive_command std_msgs/msg/String \
 
 - `drive_state`의 `target_steering_mdeg`가 15000 으로 **서서히** 수렴하는지 본다. 계단으로 뛰면 슬루레이트가 안 걸린 것이다(CTRL-25). `steering_actuator_cmd`는 서보 펄스폭(µs)이다.
 - `+15000`에서 앞바퀴가 **좌**로 꺾이는지 눈으로 본다. 반대면 `steering.cpp`의 `SERVO_DIRECTION_SIGN`을 `-1`로 바꾼다 — 부호가 뒤집힌 채 자율주행에 들어가면 회피가 장애물 쪽으로 향한다.
-- `±30000`을 넘는 값(예: 40000)을 보내 `drive_state`가 30000에서 포화하고 `/diagnostics`에 `STEERING_COMMAND_INVALID`(bit 14)가 서는지 확인한다(CTRL-14). 정상 값으로 되돌리면 즉시 내려간다 — 래치하지 않는다.
+- `±22000`을 넘는 값(예: 40000)을 보내 `drive_state`가 22000에서 포화하는지 확인한다. Jetson 최종 송신 필터가 먼저 자르므로 펌웨어의 `STEERING_COMMAND_INVALID`(bit 14)는 서지 않는 것이 정상이다. Jetson 로그와 `/diagnostics`의 `MOTOR_COMMAND_LIMITS.filtered_command_count`가 증가해야 한다. 펌웨어 자체의 30000 한계는 브리지를 우회한 별도 벤치 시험에서 확인한다(CTRL-14).
 - **정지 상태(`target_drive_*_mmps: 0`)에서 조향각을 바꿔 보낸다.** 서보가 움직이지 않고 `STEERING_COMMAND_INVALID`가 서면 정상이다(§34-2 — 정지 조향은 회두를 만들지 못하고 타이어·서보에만 부담이다).
 - 조향을 준 상태에서 Ctrl-C로 발행을 멈춘다. 구동은 300ms 안에 멈추고 **조향각은 그대로 유지**돼야 한다(CTRL-26, §34-7). 중립으로 튀면 정지 경로 어딘가가 조향을 건드리는 것이다.
 
 ## 13단계 — mm/s ↔ PWM, 조향 매핑, 거리 매핑은 아직 임시값
 
-`safety_stub.cpp`의 `MAX_DRIVE_SPEED_MMPS`(현재 600), `steering.cpp`의 `SERVO_CENTER_DEG`(145)·`SERVO_MAX_OFFSET_DEG`(30)·`STEERING_MAX_MDEG`(30000), `sensor_task.cpp`의 `LEFT/RIGHT_GEAR_RATIO`(82.0)·`WHEEL_DIAMETER_MM`(120)·`PROXIMITY_STOP_DISTANCE_MM`(300), `config/esp32_bridge.yaml`의 `meters_per_tick_left/right`·`track_width_m`, `sentinel_drive`의 `wheelbase_m`(0.50)·`max_steering_deg`(30)은 전부 §35-3/§35-4 실측 전 임시값이다. 10~12단계에서는 부호·방향·응답성만 확인하고, 절대 속도(mm/s)·조향각·절대 거리의 정확도는 실측 캘리브레이션 이후에 판단한다.
+`safety_stub.cpp`의 `MAX_DRIVE_SPEED_MMPS`(현재 600), `steering.cpp`의 `SERVO_CENTER_DEG`(145)·`SERVO_MAX_OFFSET_DEG`(30)·`STEERING_MAX_MDEG`(30000), `sensor_task.cpp`의 `LEFT/RIGHT_GEAR_RATIO`(82.0)·`WHEEL_DIAMETER_MM`(120)·`PROXIMITY_STOP_DISTANCE_MM`(300), `config/esp32_bridge.yaml`의 `max_drive_mmps`(300)·`max_steering_mdeg`(22000)·`meters_per_tick_left/right`·`track_width_m`, `sentinel_drive`의 `wheelbase_m`(0.683)·`max_steering_deg`(22)는 함께 관리해야 한다. Jetson 한계가 현재 운용 한계이고 ESP32의 더 넓은 포화값은 최후 방어다. 10~12단계에서는 부호·방향·응답성만 확인하고, 절대 속도(mm/s)·조향각·절대 거리의 정확도는 실측 캘리브레이션 이후에 판단한다.
 
 조향은 개루프라 **매핑 정확도가 곧 조향 정확도**이며(§34-8), 실제 조향각을 재는 센서가 없어 이 값이 틀려도 시스템은 아무 오류도 내지 않는다.
 

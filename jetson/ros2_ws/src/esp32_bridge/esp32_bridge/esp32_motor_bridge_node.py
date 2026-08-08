@@ -80,6 +80,7 @@ from std_msgs.msg import Bool, String
 from std_srvs.srv import Trigger
 
 from .diagnostics import build_array, build_status
+from .drive_command_filter import DriveCommandLimits, filter_drive_targets
 from .link_health import ERROR, OK, WARN, motor_link_verdict
 from .protective_relay import ProtectiveStopRelay
 from .motor_packet_codec import (
@@ -149,6 +150,10 @@ class Esp32MotorBridgeNode(Node):
 
         self.declare_parameter("port", "/dev/sentinel_mcu_motor")
         self.declare_parameter("baudrate", 921600)
+        # 상위 vehicle_kinematics 의 제한을 우회한 명령도 모터 직렬 송신 직전에
+        # 다시 자른다. 기본값은 2026-08-06 실측 안전 설정(safety.yaml)과 같다.
+        self.declare_parameter("max_drive_mmps", 300)
+        self.declare_parameter("max_steering_mdeg", 22000)
         # 300ms 통신 워치독의 절반 이하 - §34-7 gap-fill, 센서 브리지와 같은 근거
         # (S15P11A301-321 전에는 이 노드에 keepalive가 아예 없었다).
         self.declare_parameter("keepalive_period_s", 0.15)
@@ -171,6 +176,10 @@ class Esp32MotorBridgeNode(Node):
 
         port = self.get_parameter("port").value
         baudrate = self.get_parameter("baudrate").value
+        self._drive_limits = DriveCommandLimits(
+            max_drive_mmps=int(self.get_parameter("max_drive_mmps").value),
+            max_steering_mdeg=int(self.get_parameter("max_steering_mdeg").value),
+        )
 
         self._sequence = 0
         self._sequence_lock = threading.Lock()
@@ -187,6 +196,9 @@ class Esp32MotorBridgeNode(Node):
         self._hello_sent_count = 0
         self._last_rx_monotonic: float | None = None
         self._handshake_warned = False
+        self._filtered_command_count = 0
+        self._filtered_field_count = 0
+        self._filtered_since_last_report = 0
 
         self._transport = MotorSerialTransport(port, baudrate, logger=self.get_logger())
         self._transport.open()
@@ -322,14 +334,42 @@ class Esp32MotorBridgeNode(Node):
             hardware_id=str(self.get_parameter("port").value),
             values=[KeyValue(key=k, value=v) for k, v in verdict.values.items()],
         )
+        recently_filtered = self._filtered_since_last_report
+        limit_status = DiagnosticStatus(
+            level=DiagnosticStatus.WARN if recently_filtered else DiagnosticStatus.OK,
+            name="esp32_bridge: MOTOR_COMMAND_LIMITS",
+            message=(
+                f"최근 명령 {recently_filtered}건의 안전 한계 초과값을 필터링했다"
+                if recently_filtered
+                else "정상"
+            ),
+            hardware_id="jetson_motor_command_egress",
+            values=[
+                KeyValue(
+                    key="max_drive_mmps", value=str(self._drive_limits.max_drive_mmps)
+                ),
+                KeyValue(
+                    key="max_steering_mdeg",
+                    value=str(self._drive_limits.max_steering_mdeg),
+                ),
+                KeyValue(
+                    key="filtered_command_count",
+                    value=str(self._filtered_command_count),
+                ),
+                KeyValue(
+                    key="filtered_field_count", value=str(self._filtered_field_count)
+                ),
+            ],
+        )
+        self._filtered_since_last_report = 0
         self._diagnostics_pub.publish(
-            build_array(self.get_clock().now().to_msg(), [status])
+            build_array(self.get_clock().now().to_msg(), [status, limit_status])
         )
 
     def _on_drive_command(self, msg: String) -> None:
         try:
             data = json.loads(msg.data)
-            cmd = DriveCommand(
+            raw_cmd = DriveCommand(
                 mode=int(data["mode"]),
                 flags=int(data.get("flags", 0)),
                 target_drive_left_mmps=int(data["target_drive_left_mmps"]),
@@ -346,6 +386,34 @@ class Esp32MotorBridgeNode(Node):
         except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
             self.get_logger().warn(f"drive_command 파싱 실패, 무시함: {exc}")
             return
+
+        filtered = filter_drive_targets(
+            left_mmps=raw_cmd.target_drive_left_mmps,
+            right_mmps=raw_cmd.target_drive_right_mmps,
+            steering_mdeg=raw_cmd.target_steering_mdeg,
+            limits=self._drive_limits,
+        )
+        cmd = DriveCommand(
+            mode=raw_cmd.mode,
+            flags=raw_cmd.flags,
+            target_drive_left_mmps=filtered.left_mmps,
+            target_drive_right_mmps=filtered.right_mmps,
+            target_steering_mdeg=filtered.steering_mdeg,
+            max_accel_mmps2=raw_cmd.max_accel_mmps2,
+            max_steering_rate_mdps=raw_cmd.max_steering_rate_mdps,
+            command_timeout_ms=raw_cmd.command_timeout_ms,
+        )
+        if filtered.was_filtered:
+            self._filtered_command_count += 1
+            self._filtered_field_count += len(filtered.filtered_fields)
+            self._filtered_since_last_report += 1
+            self.get_logger().warning(
+                "모터 명령 안전 한계 초과값 필터링: "
+                f"left {raw_cmd.target_drive_left_mmps}->{cmd.target_drive_left_mmps}mm/s, "
+                f"right {raw_cmd.target_drive_right_mmps}->{cmd.target_drive_right_mmps}mm/s, "
+                f"steering {raw_cmd.target_steering_mdeg}->{cmd.target_steering_mdeg}mdeg",
+                throttle_duration_sec=1.0,
+            )
         self._last_steering_mdeg = cmd.target_steering_mdeg
         self._last_steering_rate_mdps = cmd.max_steering_rate_mdps
         self._send_frame(MSG_DRIVE_COMMAND, pack_drive_command(cmd))

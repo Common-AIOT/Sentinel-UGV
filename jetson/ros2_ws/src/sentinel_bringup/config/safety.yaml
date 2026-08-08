@@ -178,3 +178,5 @@ vehicle_kinematics:
   ros__parameters:
     wheelbase_m: 0.683
     max_steering_deg: 22.0
+    # esp32_motor_bridge의 최종 송신 한계(max_drive_mmps)와 같은 값이어야 한다.
+    max_drive_mmps: 300

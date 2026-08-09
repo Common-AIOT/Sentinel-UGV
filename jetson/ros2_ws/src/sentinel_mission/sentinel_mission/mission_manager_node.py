@@ -86,6 +86,7 @@ from .mission_state import (
     format_utc,
 )
 from .mode_gateway import MODE_AUTO, MODE_MANUAL, ModeGateway
+from .slam_reset import reset_slam_process
 
 SCHEMA_VERSION = '1.0'
 
@@ -110,6 +111,11 @@ class MissionManagerNode(Node):
             'command_result_topic', '/mission/command_result'
         )
         self.declare_parameter('post_recording_seconds', 3)
+        # 임무 시작마다 slam 을 재시작해 지도를 초기화한다 (S15P11A301-362).
+        # 지도 수명 = 임무 수명. 지도가 임무를 넘어 살아남으면 두 번째 탐사가
+        # frontier 즉시 소진으로 2초 만에 완료된다(임무 47bac6ed 실사례).
+        # 재개(RESUME)에는 걸리지 않는다 — MISSION_START 새 임무 전이에서만 동작.
+        self.declare_parameter('reset_map_on_start', True)
         self.declare_parameter('max_interaction_seconds', 300)
         self.declare_parameter('person_lost_seconds', 3.0)
         self.declare_parameter('tick_period_seconds', 0.25)
@@ -424,6 +430,7 @@ class MissionManagerNode(Node):
             detail=str(payload.get('detail') or ''),
         )
         if signal is Signal.MISSION_START and transition.changed:
+            self._reset_slam_map()
             if self.machine.mission_id:
                 self.get_logger().info(
                     f'임무 시작. missionId={self.machine.mission_id[:8]}'
@@ -540,6 +547,29 @@ class MissionManagerNode(Node):
                 self.get_logger().warn(outcome.note)
             else:
                 self.get_logger().info(outcome.note)
+
+    def _reset_slam_map(self) -> None:
+        """새 임무 = 새 지도 (S15P11A301-362).
+
+        slam 프로세스에 종료 신호를 보내면 launch 의 respawn 이 빈 지도로
+        되살린다(slam.launch.py 의 짝 주석). 재시작 공백 3~4초는 탐사의
+        pose 대기가 흡수한다. RESUME(재개) 경로에서는 호출되지 않는다 —
+        일시정지는 지도를 유지한다(37-3).
+        """
+        if not bool(self._param('reset_map_on_start')):
+            return
+        if reset_slam_process():
+            self.get_logger().info(
+                '새 임무 — slam 재시작으로 지도를 초기화한다. '
+                'map frame 이 3~4초 사라졌다 현재 위치를 원점으로 돌아온다'
+            )
+        else:
+            # enable_slam 없이 도는 구성(무지도 검증)에서는 정상이다. 지도가
+            # 있어야 하는 구성에서 이 경고가 보이면 respawn 체인부터 의심하라.
+            self.get_logger().warn(
+                'slam 프로세스를 찾지 못해 지도 초기화를 건너뛴다 — '
+                '이전 임무의 지도가 남아 있으면 탐사가 즉시 완료될 수 있다'
+            )
 
     def _engage(self, signal: Signal) -> None:
         """보드가 알린 사실을 상태기계에 넣는다.

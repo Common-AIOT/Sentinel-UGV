@@ -176,6 +176,11 @@ controller_server:
       # 조향 차량은 제자리에서 방향을 맞출 수 없다. true 로 두면 RPP 가
       # v=0·ω 를 내고 로봇은 앞바퀴만 꺾은 채 서 있는다.
       use_rotate_to_heading: false
+      # Smac Hybrid-A*(아래 planner_server)가 REEDS_SHEPP 로 후진 구간을
+      # 계획하므로 RPP 도 후진 추종을 켠다 (S15P11A301-358). 차는 후진이
+      # 검증돼 있다(0.30 에서 159cm, S15P11A301-342). use_rotate_to_heading
+      # 과는 상호배타 — 둘 다 켜면 RPP 가 기동 시 예외를 던진다.
+      allow_reversing: true
       max_robot_pose_search_dist: 1.0
       # `minimum_turning_radius` 를 여기서 제거했다 (S15P11A301-348).
       # **RPP 에 그 이름의 파라미터가 없어 조용히 무시된다** — S15P11A301-172 가
@@ -187,13 +192,65 @@ planner_server:
     use_sim_time: false
     expected_planner_frequency: 1.0
     planner_plugins: ["GridBased"]
+    # NavFn → Smac Hybrid-A* (S15P11A301-358, TBD-NAV-001 확정).
+    #
+    # NavFn 은 경로에 방향 개념이 없고 회전반경도 모른다. 두 실기동에서 그
+    # 대가가 그대로 나왔다: 후방·측면 목표로 못 따라갈 경로를 내고, RPP 가
+    # 그 곡률을 요구하다 조향이 상한에 붙어(steering_clamp 192→446) 좌우로
+    # 헤맸다. Hybrid-A* 는 R_min 을 알고 실차가 따라갈 수 있는 경로만 낸다.
+    #
+    # **Humble(1.1.20) 의 한계 — 후진 계획은 실질적으로 안 된다** (2026-08-09
+    # ComputePathToPose 실측, 자유 공간·가상 시작점):
+    #
+    #   전방 1m (yaw 0)          SUCCEEDED
+    #   전방 1m (yaw 180°)       SUCCEEDED   ← 선회 기동은 된다
+    #   후방 0.3m (yaw 0)        SUCCEEDED   (tolerance 0.25 안이라 유의미하지 않음)
+    #   후방 0.6m / 1.0m (yaw 0) ABORTED     (10초 예산·스무더 off 로도 동일)
+    #
+    # 후진 해석 확장(allow_reverse_expansion)은 이후 Nav2 릴리스에 추가됐다 —
+    # Humble 에는 파라미터 자체가 없다(선언 목록 확인). 그래서 이 구성의 실효는
+    # 「전방 실현가능 경로 + 공간이 되면 선회」까지고, 후방 목표는 빠르게 실패해
+    # 탐사가 blacklist 로 넘긴다 — NavFn 처럼 가짜 경로로 헤매는 것보다 낫다.
+    # 완전한 후진 계획은 Nav2 업그레이드가 선행이다(S15P11A301-358 코멘트).
     GridBased:
-      plugin: "nav2_navfn_planner/NavfnPlanner"
+      plugin: "nav2_smac_planner/SmacPlannerHybrid"
       tolerance: 0.25
-      use_astar: false
       # 미지 통과 금지. 23.3 도달성 판정("plan 생성 불가 후보 제거")이 이 값에
       # 기대고 있다 — 미지를 통과시키면 벽 뒤 frontier 도 도달 가능으로 나온다.
+      # NavFn 시절부터의 결합이며 planner 를 바꿔도 유지한다.
       allow_unknown: false
+      # 실측 R_min 좌 1.37m·우 1.76m (S15P11A301-341) — 안전측(큰 쪽) 위.
+      # 작게 적으면 실차가 못 도는 호를 계획해 NavFn 시절 문제로 돌아간다.
+      # RPP 의 regulated_linear_scaling_min_radius(1.8)와 같은 근거·같은 값.
+      minimum_turning_radius: 1.8
+      # REEDS_SHEPP 가 후진 확장을 담당한다(DUBIN 은 전진 전용).
+      motion_model_for_search: "REEDS_SHEPP"
+      angle_quantization_bins: 64
+      # 후진은 전진보다 2배 비싸게 — 짧은 빠져나오기 후진은 허용하되
+      # 긴 후진 주행은 억제한다(후방은 카메라가 없다).
+      reverse_penalty: 2.0
+      change_penalty: 0.0
+      non_straight_penalty: 1.2
+      cost_penalty: 2.0
+      retrospective_penalty: 0.015
+      analytic_expansion_ratio: 3.5
+      # 해석적 확장(목표 근처 곡선 이어붙이기)의 상한. 교실 규모(수 m)에서
+      # 3m 면 충분하고, 크게 두면 장애물 비용을 무시한 긴 지름길이 생긴다.
+      analytic_expansion_max_length: 3.0
+      max_iterations: 1000000
+      max_on_approach_iterations: 1000
+      # 1Hz 재계획(expected_planner_frequency)과 양립하는 상한.
+      max_planning_time: 3.0
+      downsample_costmap: false
+      downsampling_factor: 1
+      lookup_table_size: 20.0
+      cache_obstacle_heatmap: false
+      smooth_path: true
+      smoother:
+        max_iterations: 1000
+        w_smooth: 0.3
+        w_data: 0.2
+        tolerance: 1.0e-10
 
 behavior_server:
   ros__parameters:

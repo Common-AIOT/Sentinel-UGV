@@ -59,6 +59,44 @@ def frontier_mask(grid: np.ndarray) -> np.ndarray:
     return free & adjacent
 
 
+def _retreat_into_free(
+    grid: np.ndarray, row: int, col: int, steps: int
+) -> tuple[int, int]:
+    """frontier 셀에서 자유 공간 안쪽으로 `steps` 칸 물러난 셀 (S15P11A301-366).
+
+    방향은 5×5 창의 자유 셀 무게중심으로 정한다 — 미지 쪽은 자유 셀이 없으므로
+    자연스럽게 반대편(이미 탐사한 열린 공간)을 가리킨다. 후퇴 경로 위의 셀을
+    하나씩 보며 **자유인 마지막 지점**을 고른다. 벽에 막히면 거기서 멈추므로
+    후퇴가 상황을 나쁘게 만들지 않는다.
+    """
+    if steps <= 0:
+        return row, col
+    free = free_mask(grid)
+    height, width = grid.shape
+
+    lo_r, hi_r = max(0, row - 2), min(height, row + 3)
+    lo_c, hi_c = max(0, col - 2), min(width, col + 3)
+    window = free[lo_r:hi_r, lo_c:hi_c]
+    rows, cols = np.nonzero(window)
+    if len(rows) == 0:
+        return row, col
+    dir_r = float((rows + lo_r).mean()) - row
+    dir_c = float((cols + lo_c).mean()) - col
+    norm = (dir_r ** 2 + dir_c ** 2) ** 0.5
+    if norm < 1e-6:
+        return row, col
+    dir_r, dir_c = dir_r / norm, dir_c / norm
+
+    best = (row, col)
+    for step in range(1, steps + 1):
+        r = int(round(row + dir_r * step))
+        c = int(round(col + dir_c * step))
+        if not (0 <= r < height and 0 <= c < width) or not free[r, c]:
+            break
+        best = (r, c)
+    return best
+
+
 def extract_frontiers(
     grid: np.ndarray,
     info: GridInfo,
@@ -67,6 +105,7 @@ def extract_frontiers(
     home_x: float = 0.0,
     home_y: float = 0.0,
     max_radius_m: float = 12.0,
+    retreat_m: float = 0.6,
 ) -> list[FrontierCluster]:
     """frontier 군집을 뽑는다. 반환 순서는 결정적이다(첫 셀의 행 우선).
 
@@ -116,7 +155,25 @@ def extract_frontiers(
         cell_array = np.asarray(cells)
         centroid = cell_array.mean(axis=0)
         nearest = cell_array[np.argmin(((cell_array - centroid) ** 2).sum(axis=1))]
-        rep_x, rep_y = cell_to_world(info, int(nearest[0]), int(nearest[1]))
+        anchor_row, anchor_col = int(nearest[0]), int(nearest[1])
+
+        # **자유 공간 쪽으로 물러난다** (S15P11A301-366).
+        #
+        # frontier 셀은 「자유이면서 미지에 맞닿은」 셀이라 정의상 미지 경계에
+        # 붙어 있다. 그 자리를 그대로 목표로 주면 Nav2 가 거부한다 — global
+        # costmap 에서 그 근방이 미지(-1)이거나 inflation_radius(0.50) 팽창에
+        # 걸린 고비용이기 때문이다. 2026-08-09 실측: frontier 대표점 3개가 SLAM
+        # 지도에서는 전부 자유였는데 costmap 값은 -1 / 66 / 66 이었고,
+        # ComputePathToPose 가 셋 다 ABORTED 였다. 증상은 「탐사가 도는데 로봇이
+        # 한 발짝도 안 움직인다」 하나뿐이다.
+        #
+        # 그래서 대표점을 군집에서 자유 공간 안쪽으로 retreat_m 만큼 민다.
+        # 방향은 「군집 중심 → 자유 이웃이 많은 쪽」이고, 후퇴한 자리가 자유가
+        # 아니면 원래 자리를 쓴다(후퇴가 상황을 나쁘게 만들지는 않게).
+        rep_row, rep_col = _retreat_into_free(
+            grid, anchor_row, anchor_col, int(round(retreat_m / info.resolution))
+        )
+        rep_x, rep_y = cell_to_world(info, rep_row, rep_col)
 
         if (rep_x - home_x) ** 2 + (rep_y - home_y) ** 2 > max_radius_sq:
             continue

@@ -18,7 +18,7 @@ from sentinel_exploration.frontier import (
     extract_frontiers,
     frontier_mask,
 )
-from sentinel_exploration.grid import GridInfo, free_mask, world_to_cell
+from sentinel_exploration.grid import GridInfo, free_mask, unknown_mask, world_to_cell
 
 FIXTURE = pathlib.Path(__file__).parent / 'fixtures' / 'map_351x372.npz'
 
@@ -55,11 +55,54 @@ def test_대표점은_항상_자유_셀이다(real_map):
         assert free[cell[0], cell[1]]
 
 
-def test_대표점은_군집_소속_셀이다(real_map):
+def test_후퇴_없이는_대표점이_군집_소속_셀이다(real_map):
+    # retreat_m=0 이면 종전 규칙 그대로다. 후퇴 로직이 그 외의 것을 바꾸지
+    # 않는다는 것을 이 시험이 지킨다.
     grid, info = real_map
-    for cluster in extract_frontiers(grid, info):
+    for cluster in extract_frontiers(grid, info, retreat_m=0.0):
         cell = world_to_cell(info, cluster.rep_x, cluster.rep_y)
         assert cell in cluster.cells
+
+
+def test_대표점은_미지_경계에서_물러난다(real_map):
+    """S15P11A301-366: frontier 셀 그대로면 Nav2 가 목표를 거부한다.
+
+    frontier 는 정의상 미지에 맞닿은 자유 셀이라, 그 자리는 global costmap 에서
+    미지(-1)이거나 inflation 팽창에 걸린 고비용이다. 2026-08-09 실측에서 대표점
+    3개가 SLAM 지도상 전부 자유였는데 costmap 은 -1/66/66 이었고
+    ComputePathToPose 가 셋 다 ABORTED 였다 — 증상은 「탐사가 도는데 로봇이
+    안 움직인다」 하나뿐이었다.
+
+    후퇴한 대표점은 미지에서 더 멀어야 한다.
+    """
+    grid, info = real_map
+    unknown = unknown_mask(grid)
+    plain = {(c.rep_x, c.rep_y) for c in extract_frontiers(grid, info, retreat_m=0.0)}
+    retreated = extract_frontiers(grid, info, retreat_m=0.6)
+    assert retreated, "군집이 있어야 의미 있는 시험이다"
+
+    moved = 0
+    for cluster in retreated:
+        cell = world_to_cell(info, cluster.rep_x, cluster.rep_y)
+        assert cell is not None
+        # 후퇴 지점은 미지에 인접하지 않아야 한다(적어도 한 칸은 떨어진다).
+        r, c = cell
+        if (cluster.rep_x, cluster.rep_y) not in plain:
+            moved += 1
+            neighbours = unknown[max(0, r - 1):r + 2, max(0, c - 1):c + 2]
+            assert not neighbours.all(), "후퇴했는데 여전히 미지에 둘러싸였다"
+    assert moved > 0, "실제 지도에서 최소 한 군집은 후퇴해야 한다"
+
+
+def test_후퇴해도_자유_셀을_벗어나지_않는다(real_map):
+    # 후퇴가 상황을 나쁘게 만들면 안 된다 — 벽 안으로 밀려들어가면 종전보다
+    # 못한 목표가 된다.
+    grid, info = real_map
+    free = free_mask(grid)
+    for cluster in extract_frontiers(grid, info, retreat_m=1.0):
+        cell = world_to_cell(info, cluster.rep_x, cluster.rep_y)
+        assert cell is not None
+        assert free[cell[0], cell[1]]
 
 
 def test_최소_크기_미만은_버린다(real_map):

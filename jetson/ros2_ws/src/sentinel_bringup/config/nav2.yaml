@@ -312,9 +312,18 @@ global_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0
-        # 반폭 0.31 에 약 19cm 여유. 정지거리가 실측되면(S15P11A301-299)
-        # 그 값으로 다시 잡는다. 좁은 실내에서 이보다 키우면 통로가 막힌다.
-        inflation_radius: 0.50
+        # **0.50 → 0.35** (S15P11A301-366). 반폭 0.31 에 4cm 여유다.
+        #
+        # 0.50 은 「반폭 + 19cm」로 잡은 값이었고 주석은 「좁은 실내에서 이보다
+        # 키우면 통로가 막힌다」고 경고했는데, 실측해 보니 **0.50 도 이 공간에는
+        # 이미 과했다.** 2026-08-09: /map 자유 셀의 31%가 costmap 에서 치명이었고
+        # 그 97%가 실제 벽에서 0.5m 이내였다 — 팽창 버그가 아니라 방이 좁은 것이다.
+        # 그 결과 frontier 목표 101개 중 계획 가능한 것이 3개뿐이었고 로봇이 한
+        # 발짝도 못 움직였다(Nav2 가 목표를 거부).
+        #
+        # 대가: 벽에 더 가까이 붙어 다닌다. 충돌 자체는 collision_monitor 정지
+        # 구역(범퍼 앞 0.25m, 좌우 ±0.33)이 최후 방어선으로 막는다.
+        inflation_radius: 0.35
 
 local_costmap:
   local_costmap:
@@ -349,6 +358,7 @@ local_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0
-        # 반폭 0.31 에 약 19cm 여유. 정지거리가 실측되면(S15P11A301-299)
-        # 그 값으로 다시 잡는다. 좁은 실내에서 이보다 키우면 통로가 막힌다.
-        inflation_radius: 0.50
+        # global 과 같은 값이어야 한다 (S15P11A301-366). 두 곳이 어긋나면
+        # 전역 계획이 통과시킨 경로를 로컬이 막아 로봇이 제자리에서 재계획만 한다.
+        # 근거는 global_costmap 쪽 주석에 있다.
+        inflation_radius: 0.35

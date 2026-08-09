@@ -6,7 +6,13 @@ import {
   type MapClientState,
 } from "@/lib/foxgloveMapClient";
 import { classifyGridCell, type OccupancyGrid } from "@/lib/occupancyGrid";
-import { worldToPixel } from "@/lib/gridGeometry";
+import {
+  expandView,
+  fitView,
+  gridWorldBounds,
+  worldToScreen,
+  type ViewWindow,
+} from "@/lib/gridGeometry";
 import {
   arrowRotationFromMapYaw,
   mapYawDegrees,
@@ -175,6 +181,9 @@ export default function LiveMap({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const gridRef = useRef<OccupancyGrid | null>(null);
   const poseRef = useRef<{ pose: RobotPose; at: number } | null>(null);
+  // 세계 좌표 창. 지도가 넓어져도 지나간 영역이 화면에서 움직이지 않게 한다
+  // (S15P11A301-367). 임무가 바뀌면 지도가 새로 시작하므로 그때 비운다.
+  const viewRef = useRef<ViewWindow | null>(null);
   const [state, setState] = useState<MapClientState>("connecting");
   const [detail, setDetail] = useState<string | null>(null);
   const [meta, setMeta] = useState<Meta | null>(null);
@@ -233,30 +242,44 @@ export default function LiveMap({
     ctx.fillStyle = `rgb(${COLOR_UNKNOWN.join(",")})`;
     ctx.fillRect(0, 0, box.width, box.height);
 
-    // 종횡비를 유지한다. 늘리면 벽 두께가 방향에 따라 달라져 지도를 잘못 읽는다.
-    const scale = Math.min(box.width / grid.width, box.height / grid.height);
-    const drawW = grid.width * scale;
-    const drawH = grid.height * scale;
+    // **세계 좌표에 고정해 그린다** (S15P11A301-367). 격자를 화면에 꽉 채우면
+    // SLAM 이 지도를 넓힐 때마다 크기와 origin 이 함께 바뀌어 배율·위치가 통째로
+    // 달라진다 — 이미 그린 벽이 미끄러지고 「차는 가만있는데 지도가 움직이는」
+    // 것으로 보인다. 창은 단조 증가로만 넓히므로 지나간 영역은 제자리에 남는다.
+    viewRef.current = expandView(
+      viewRef.current,
+      gridWorldBounds(grid, grid.width, grid.height),
+    );
+    const view = viewRef.current;
+    const fit = fitView(view, box.width, box.height);
+
     // 셀 경계를 흐리지 않는다. 격자는 사진이 아니라 데이터다.
     ctx.imageSmoothingEnabled = false;
-    const offsetX = (box.width - drawW) / 2;
-    const offsetY = (box.height - drawH) / 2;
-    ctx.drawImage(offscreen, offsetX, offsetY, drawW, drawH);
+    // 격자 이미지의 좌상단은 세계 좌표로 (originX, originY + 높이)다 —
+    // renderGrid 가 행을 뒤집어 그리므로 이미지 첫 행이 y 최대다.
+    const topLeft = worldToScreen(
+      grid.originX,
+      grid.originY + grid.height * grid.resolution,
+      view,
+      fit,
+    );
+    ctx.drawImage(
+      offscreen,
+      topLeft.x,
+      topLeft.y,
+      grid.width * grid.resolution * fit.pxPerMeter,
+      grid.height * grid.resolution * fit.pxPerMeter,
+    );
 
     const tracked = poseRef.current;
     if (!tracked) return;
-    // 격자 픽셀 → 화면 픽셀. drawImage 에 쓴 것과 **같은** scale·offset 이어야
-    // 한다. 따로 계산하면 창 크기에 따라 화살표만 어긋난다.
-    const { col, row } = worldToPixel(
-      tracked.pose.x,
-      tracked.pose.y,
-      grid,
-      grid.height,
-    );
+    // 로봇도 **같은 세계 좌표 변환**을 쓴다. 따로 계산하면 지도가 넓어질 때
+    // 화살표만 어긋난다.
+    const at = worldToScreen(tracked.pose.x, tracked.pose.y, view, fit);
     drawRobot(
       ctx,
-      offsetX + col * scale,
-      offsetY + row * scale,
+      at.x,
+      at.y,
       tracked.pose.yaw,
       Date.now() - tracked.at < POSE_STALE_MS,
     );

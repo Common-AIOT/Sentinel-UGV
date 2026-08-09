@@ -110,6 +110,7 @@ from .motor_protocol_constants import (
     MSG_ESTOP_COMMAND,
     MSG_HELLO,
     MSG_HELLO_ACK,
+    AUTHORITY_FLAG_MANUAL_FALLBACK,
     MSG_SET_MODE,
     MSG_STOP_COMMAND,
     ack_result_name,
@@ -183,6 +184,8 @@ class Esp32MotorBridgeNode(Node):
 
         self._sequence = 0
         self._sequence_lock = threading.Lock()
+        # 폴백 래치 상승 엣지에서만 경고하기 위한 직전 값 (S15P11A301-345).
+        self._manual_fallback_seen = False
         # 조향 필드가 빠진 명령에서 쓸 마지막 값. 펌웨어도 부팅 시 중립에서
         # 시작하므로 초기값 0이 맞다(§34-6).
         self._last_steering_mdeg = 0
@@ -533,9 +536,28 @@ class Esp32MotorBridgeNode(Node):
                 "steering_actuator_cmd": state.steering_actuator_cmd,
                 "estop_active": bool(state.estop_active),
                 "driver_enabled": bool(state.driver_enabled),
+                # 수동 권한의 **출처** (S15P11A301-345). 참이면 관제가 승인한
+                # 수동이 아니라 젯슨 링크 침묵으로 폰이 관제 자리를 대신한
+                # 것이다. 구판 펌웨어(15바이트)에서는 항상 거짓이다.
+                "manual_fallback": bool(
+                    state.authority_flags & AUTHORITY_FLAG_MANUAL_FALLBACK
+                ),
             }
         )
         self._drive_state_pub.publish(msg)
+
+        # 폴백 래치는 **한 번만** 경고한다. 50Hz 로 오는 상태라 조건 없이 찍으면
+        # 로그가 그것으로 덮인다. 내려가는 것은 SET_MODE(AUTO) 수락뿐이므로
+        # (motor_protocol.h) 상승 엣지 하나면 사실이 남는다.
+        fallback = bool(state.authority_flags & AUTHORITY_FLAG_MANUAL_FALLBACK)
+        if fallback and not self._manual_fallback_seen:
+            self.get_logger().warn(
+                "수동 권한이 링크 침묵 폴백으로 잡혔다 — 관제가 승인한 수동이 "
+                "아니다. 자율로 돌리려면 관제 「자율」(SET_MODE(AUTO))을 눌러야 한다"
+            )
+        elif not fallback and self._manual_fallback_seen:
+            self.get_logger().info("수동 권한 폴백이 해제됐다")
+        self._manual_fallback_seen = fallback
 
     def _handle_command_ack(self, payload: bytes) -> None:
         ack = unpack_command_ack(payload)

@@ -37,6 +37,10 @@ void quietManualOutputs(MotorSharedState& s) {
 
 }  // namespace
 
+bool jetsonLinkSilent(const MotorSharedState& s, uint32_t nowMs) {
+  return (nowMs - s.lastValidJetsonRxMs) > MANUAL_FALLBACK_SILENCE_MS;
+}
+
 bool jetsonActuationAllowed(const MotorSharedState& s) {
   // 수동 래치가 유일한 차단 사유다. ESTOP/FAULT 는 arbitrateDrive 의 0번 분기가
   // 먼저 걸러내므로 여기서 다시 보지 않는다.
@@ -97,14 +101,30 @@ ManualResult ingestManualPacket(MotorSharedState& s, const ManualPacket& packet,
   }
 
   if (!s.manualLatched) {
+    // ---- 관제 우선 (S15P11A301-345) ----
+    //
+    // 폰 입력만으로는 권한이 넘어오지 않는다. 종전에는 여기서 래치가 걸렸고,
+    // 그래서 폰 조종 페이지를 열어 둔 사람 하나가 캘리브레이션 주행을 조용히
+    // 세웠다 - 관제·젯슨 어느 화면에도 그 사실이 보이지 않은 채로.
+    //
+    // 남은 유일한 승격 경로는 **젯슨 링크가 죽었을 때의 폴백**이다. 두 조건을
+    // 모두 요구한다:
+    //   - 링크가 5초 이상 침묵 (`jetsonLinkSilent`)
+    //   - 사람이 실제로 조종 중 (deadman run 2패킷·100ms)
+    // 뒤 조건이 「페이지가 열려만 있는 폴링」을 걸러 낸다. `/manual/state` 는
+    // 부작용이 없고 deadman 이 풀린 패킷은 위에서 run 을 끊으므로, 화면을 켜 둔
+    // 것만으로는 이 지점에 도달하지 못한다.
     const bool longEnough = (nowMs - s.manualRunStartedMs) >= MANUAL_PROMOTION_HOLD_MS;
     const bool enoughPackets = s.manualRunPackets >= MANUAL_PROMOTION_PACKETS;
-    if (!(longEnough && enoughPackets)) {
-      // 아직 자율이 굴린다. 승격 조건을 채우기 전에는 바퀴를 주지 않는다.
+    if (!(longEnough && enoughPackets) || !jetsonLinkSilent(s, nowMs)) {
+      // 권한은 관제에 있다. 장부는 갱신했고 바퀴는 주지 않는다.
       quietManualOutputs(s);
       return ManualResult::ACCEPTED;
     }
     s.manualLatched = true;
+    // 폴백으로 걸렸다는 사실을 붙든다. 발동 순간의 DRIVE_STATE 는 링크가 죽어
+    // 있어 아무도 받지 못하므로, 래치하지 않으면 관제가 이것을 영원히 못 본다.
+    s.manualFallbackLatched = true;
     // 보고 상태도 **같은 순간에** 옮긴다. control_task 가 10ms 뒤에 어차피 같은
     // 값을 쓰지만, 그 창 안에 SET_MODE(AUTO) 가 도착하면 거부 ACK 가 아직
     // AUTO_ACTIVE 인 boardState 를 싣고 나간다. 젯슨은 그 필드로 「500ms 가드에
@@ -156,6 +176,10 @@ SetModeResult applySetMode(MotorSharedState& s, uint8_t requestedMode, uint32_t 
       return SetModeResult::REJECTED_STATE;
     }
     s.manualLatched = false;
+    // 폴백 사유 비트가 내려가는 **유일한 지점**이다 (S15P11A301-345). 관제가
+    // 권한을 되찾는 이 순간이 곧 관제가 폴백 발동을 확인했다는 증거다. ESTOP 은
+    // 권한을 벗기지만 이 비트는 남긴다 - 정전 구간의 발동이 지워지면 안 된다.
+    s.manualFallbackLatched = false;
     s.manualReArmRequired = false;
     s.manualDeadman = false;
     s.manualDriveMmps = 0;
@@ -172,6 +196,9 @@ SetModeResult applySetMode(MotorSharedState& s, uint8_t requestedMode, uint32_t 
     return SetModeResult::ACCEPTED;
   }
 
+  // 관제 승인 경로. 폰이 권한을 얻는 정상 경로는 이것 하나다 (S15P11A301-345).
+  // `manualFallbackLatched` 는 건드리지 않는다 - 폴백으로 시작된 수동을 관제가
+  // 이어받는 경우에도 「폴백이 있었다」는 사실은 SET_MODE(AUTO) 까지 남는다.
   s.manualLatched = true;
   s.manualReArmRequired = false;
   s.manualDeadman = false;

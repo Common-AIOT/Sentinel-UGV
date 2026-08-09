@@ -30,15 +30,17 @@
   건드리지 않는다** — 젯슨 프로세스 재시작이 조작 중인 사람에게서 바퀴를 빼앗아선 안
   되고, 진짜 보드 리부트는 RAM 이 날아가 래치가 함께 사라진다
 - `STOP_COMMAND`/`ESTOP_COMMAND`/`SET_MODE` 수신과 `COMMAND_ACK` 응답
-- **액추에이션 중재**(`mode_arbiter.cpp`) — 수동 승격(2패킷·100ms), TTL(250ms),
-  자동 전환 500ms 신선도 가드, 바퀴 소유자 결정
+- **액추에이션 중재**(`mode_arbiter.cpp`) — **관제 우선** 권한 모델(S15P11A301-345),
+  링크 침묵 폴백(5초 + 실제 조종 입력), TTL(250ms), 자동 전환 500ms 신선도 가드,
+  바퀴 소유자 결정
 - **수동 조종 HTTP 채널**(`manual_web.cpp`) — 폰 핫스팟 WiFi STA, core 0 고정
 - 300ms 통신 워치독(§34-7) — 트립 시 구동만 끊고(`applySafeOutputs()`) **조향각은
   마지막 목표를 유지한다**(CTRL-26). `mode_arbiter`가 보는 이 워치독은
   `DRIVE_COMMAND` 수신 빈도만 본다 - 링크 자체의 생존은 `comm_task.cpp`가 별도로
   추적해 `DIAGNOSTIC.linkSilenceMs`로 보고한다(둘을 합치면 안 되는 이유는
   `motor_protocol.h`/`comm_task.cpp` 주석 참고)
-- `DRIVE_STATE`(50Hz)/`DIAGNOSTIC`(5Hz) 송신(실측 PWM/driver-enable/조향 목표·서보 지령값)
+- `DRIVE_STATE`(50Hz)/`DIAGNOSTIC`(5Hz) 송신(실측 PWM/driver-enable/조향 목표·서보 지령값,
+  그리고 **권한의 출처**를 담은 `authorityFlags` 1바이트 — S15P11A301-345)
 - BTS7960 2개(후륜 좌·우 구동)의 PWM/DIR/EN 제어 — `safety_stub.cpp`. **전·후진 전용**이며
   비블로킹 방향 전환 데드타임(500ms)을 둔다
 - 전륜 DS51150 조향 서보 PWM 생성 — `steering.cpp`. δ_max 클램프·슬루레이트 제한·
@@ -63,8 +65,9 @@
 - `motor_protocol.h/.cpp` — 모터 전용 프레이밍(동기워드+고정길이+CRC8,
   S15P11A301-321). `Arduino.h` 미포함이라 호스트 g++로 시험한다
   (`test/test_motor_protocol.cpp`). 페이로드 구조체·pack/unpack은 `jetson-comm`
-  것을 그대로 재사용하고, `MotorDiagnostic`(linkSilenceMs 포함)만 이 파일이
-  새로 정의한다.
+  것을 그대로 재사용하고, `MotorDiagnostic`(linkSilenceMs 포함)과
+  `packMotorDriveState`(`DriveState` 15바이트 **뒤에** authorityFlags 1바이트를
+  덧붙인 16바이트, S15P11A301-345)만 이 파일이 새로 정의한다.
 - `board_state.h/.cpp` — 뮤텍스로 보호된 공유 상태(`MotorBoardState`, 젯슨 타깃, 수동
   장부, fault 비트, 진단 카운터, 링크 접촉 시각).
 - `comm_task.h/.cpp` — Serial(921600bps) 프레임 파싱·디스패치, 텔레메트리 송신.
@@ -106,7 +109,7 @@
 |---|---|
 | `GET /` | 조종 페이지 |
 | `GET /manual/session` | `sid` 발급. 다른 조종자가 500ms 내 활성이면 409 |
-| `GET /manual/drive?sid=&seq=&dm=&lin=&ang=&ttl=` | `lin`/`ang` 은 −1000..1000 정규화 밀리 단위(보드에서 float 파싱 없음). `ang` 은 CCW=+ (REP-103). 200/400/403/409/423 |
+| `GET /manual/drive?sid=&seq=&dm=&lin=&ang=&ttl=` | `lin`/`ang` 은 −1000..1000 정규화 밀리 단위(보드에서 float 파싱 없음). `ang` 은 CCW=+ (REP-103). 200/400/403/409/423. **200 은 「수락」이지 「액추에이션」이 아니다** — 권한이 없으면 장부에만 남는다(S15P11A301-345). 응답의 `lat`/`fb` 가 지금 누가 바퀴를 쥐고 있는지를 말한다 |
 | `GET /manual/stop?sid=&seq=` | 즉시 구동 0. **세션 불일치에도 수락한다** — 누구의 정지든 존중 |
 | `GET /manual/state` | 조회 전용. **부작용이 하나도 없다** |
 | `GET /manual/speed?percent=` | 수동 주행 상한 0~100%. 게이트 없음 — 속도를 낮추는 건 늘 안전한 방향이다 |
@@ -224,15 +227,66 @@ MANUAL_MAX_DRIVE_MMPS(300) x 1000` 이다 — 펌웨어가 어차피 거부할 �
 `sid` 는 **로컬** 세션이며 관제의 `controlSessionId` 가 아니다. 인증 경계는 핫스팟
 WPA2 가 전부이고 `sid` 는 단일 조종자만 강제하며 신원이 아니다(docs/06 보호 공백 표).
 
+### 권한 서열 (S15P11A301-345)
+
+```
+ESTOP  >  관제(자율 · 수동 승인)  >  폰 수동
+          단, 젯슨 링크가 5초 이상 침묵하면 폰이 관제 자리를 대신한다
+```
+
+**폰 입력은 권한을 가져가지 못한다.** `manualLatched` 를 세우는 것은 관제의
+`SET_MODE(MANUAL)` 하나이고, 래치가 없는 동안 폰 패킷은 장부에만 기록되고 바퀴에
+닿지 않는다(구동·조향 목표 0). 종전에는 deadman 2패킷·100ms 가 그대로 래치를 걸어,
+**폰 조종 페이지를 열어 둔 사람 하나가 자율 주행을 조용히 세울 수 있었다** — 그리고
+그 사실이 관제·젯슨 어느 화면에도 보이지 않았다(관제는 「자율·탐사중」, 젯슨은
+`movementAllowed=true`, 보드만 `MANUAL_ACTIVE`).
+
+예외는 **링크 침묵 폴백** 하나다. 두 조건을 모두 만족해야 발동한다:
+
+| 조건 | 값 | 왜 |
+|---|---|---|
+| 젯슨 링크 침묵 | `> 5000ms` (`MANUAL_FALLBACK_SILENCE_MS`) | 정상 구간 최대 침묵은 브리지 재접속 1사이클 2.5초(재시도 1.0 + 부팅 정착 1.5). 더 짧으면 재접속마다 권한이 펄럭인다 |
+| 실제 조종 입력 | deadman run 2패킷·100ms | 페이지가 열려만 있는 폴링으로 발동하면 안 된다. `/manual/state` 는 부작용이 없고 deadman 이 풀린 패킷은 run 을 끊는다 |
+
+침묵을 재는 값은 `lastValidJetsonRxMs`(HELLO 포함 **어떤** 유효 프레임이든 갱신)다 —
+`DRIVE_COMMAND` 수신 빈도만 보는 300ms 안전 워치독과 **다른 축**이다. 저쪽은 「상위
+파이프라인이 멈췄나」를, 이쪽은 「링크 자체가 죽었나」를 재고, 권한을 넘길 근거가
+되는 것은 후자뿐이다.
+
+폴백을 완전히 없애지 않는 이유: 수동 조종자가 폰 하나뿐이라(관제 수동 조종 경로는
+구현체가 없다) 잠가 버리면 젯슨이 죽었을 때 로봇을 옮길 수단이 사라진다 — 04장
+950-953 의 「잠그면 들어 옮기는 것 말고 복구 경로가 없다」가 그 상황이다.
+
+**폴백 발동은 래치되어 `DRIVE_STATE.authorityFlags` bit 0 으로 계속 보고된다.**
+순간 플래그로 보내면 그 프레임이 나가는 시점에 링크가 죽어 있어 젯슨이 영원히 못
+본다 — 관제는 복구 **후에** 이 사실을 알아야 하므로 래치가 필수다. 폰 쪽은
+`/manual/state` 응답의 `fb` 필드로 같은 사실을 본다.
+
+와이어 변경은 **덧붙이기 한 바이트뿐**이다. `DRIVE_STATE` payload 가 15 → 16바이트가
+되고 16번째(offset 15)가 `authorityFlags` 다. 모터 프레임은 payload 를 22바이트로 0
+패딩해 보내고 젯슨 디코더는 자기가 아는 접두 바이트만 읽으므로(`motor_packet_codec.py`
+상단 주석) **구 디코더는 아무 영향 없이 계속 동작한다** — 폴백이 아닐 때 그 바이트는
+0 이라 종전 패딩과 값도 같다. 젯슨 쪽에서 이 비트를 읽으려면
+`STRUCT_DRIVE_STATE`(`motor_protocol_constants.py`)를 `<HBHhhhhBBB` 로 늘리고
+`DriveState` 에 필드 하나를 더하면 된다 — **모터 링크 전용이므로 센서 채널의
+`packet_codec.py`/`protocol_constants.py` 는 건드리지 않는다.**
+
 ### 수동 중에 무엇이 모드를 바꾸는가
 
-바꾸는 것은 하나뿐이다 — 관제 「자율」이 보내는 `SET_MODE(AUTO)`. 아래는 전부 **바퀴만
-0 이고 `MANUAL_ACTIVE` 는 유지된다**: 모바일 「정지」/Space/Esc/창 blur, deadman 해제,
-TTL(250ms) 만료, WiFi 끊김, `STOP_COMMAND`(추가로 re-arm 요구), 젯슨 링크 사망,
-젯슨 재접속(`HELLO`).
+바꾸는 것은 하나뿐이다 — 관제 「자율」이 보내는 `SET_MODE(AUTO)`. **자동 복귀는
+없다**: 링크가 되살아나도, 폴백으로 잡은 권한이라도 저절로 돌아가지 않는다. 사람이
+조종하는 중에 로봇이 자기 뜻대로 움직이면 안 된다.
+
+아래는 전부 **바퀴만 0 이고 `MANUAL_ACTIVE` 는 유지된다**: 모바일
+「정지」/Space/Esc/창 blur, deadman 해제, TTL(250ms) 만료, WiFi 끊김,
+`STOP_COMMAND`(추가로 re-arm 요구), 젯슨 링크 사망, 젯슨 재접속(`HELLO`), 젯슨 링크
+복구.
 
 유일한 예외는 `ESTOP_COMMAND`·물리 E-Stop 이다. 이것은 수동 권한을 막는 게 아니라
-**벗긴다**(래치·세션 파괴). 자동 복귀는 어떤 경로로도 없다(SR-008).
+**벗긴다**(래치·세션 파괴). 자동 복귀는 어떤 경로로도 없다(SR-008). 다만 폴백 사유
+비트(`manualFallbackLatched`)는 **E-Stop 도 지우지 않는다** — 권한을 벗기는 것과
+「폴백이 발동했었다」는 사실은 다른 층이고, 여기서 지우면 정전 구간의 발동이 영영
+보고되지 않는다. 그 비트가 내려가는 곳은 `SET_MODE(AUTO)` 수락 한 곳뿐이다.
 
 ## 조향 계층에서 반드시 지키는 것
 

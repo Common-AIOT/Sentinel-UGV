@@ -96,6 +96,33 @@ MotorParseResult parseMotorFrame(const uint8_t* frame, size_t len,
                                   uint8_t& outMessageType, uint8_t& outSequence,
                                   uint8_t* outPayload, size_t payloadCap);
 
+// ==== DRIVE_STATE(0x20) 권한 확장 - 모터 전용 (S15P11A301-345) ====
+//
+// `protocol.h` 의 `DriveState`(15바이트) **뒤에 1바이트를 덧붙인다.** 필드를 끼워
+// 넣지 않는 것이 핵심이다 - 모터 프레임은 payload 를 22바이트로 0 패딩해 보내고
+// 젯슨 디코더는 자기가 아는 접두 바이트만 읽으므로(`motor_packet_codec.py` 상단
+// 주석), 뒤에 붙인 바이트는 **구 디코더에 무해하고 신 디코더에만 보인다.**
+//
+// `faultFlags` 에 비트를 넣지 않은 이유: §34-9 의 16비트가 이미 전부 할당돼
+// 있고(bit 15 는 미구현일 뿐 예약이 아니다), 애초에 이것은 결함이 아니라 **권한의
+// 출처**다. 결함 비트에 섞으면 관제 화면에서 「고장」으로 읽힌다.
+//
+// `protocol.h` 를 고치지 않은 이유: 그 헤더는 센서 보드와 공유하는 COBS 링크의
+// 것이고 `DRIVE_STATE_BYTES` 는 그쪽 길이 검증 테이블에도 쓰인다. 모터 링크만의
+// 사정을 공유 헤더로 밀어 올리면 센서 채널까지 함께 흔들린다 - `MotorDiagnostic`
+// 을 여기 따로 정의한 것과 같은 이유다.
+constexpr size_t MOTOR_DRIVE_STATE_BYTES = DRIVE_STATE_BYTES + 1;  // 15 + authorityFlags
+
+// authorityFlags bit 0. 「지금 수동 권한이 관제 승인이 아니라 링크 침묵 폴백으로
+// 잡혀 있다」는 뜻이며, **래치**다(`MotorSharedState::manualFallbackLatched`).
+// 발동은 젯슨이 침묵하는 동안 일어나므로 순간 플래그로 보내면 그 프레임을 아무도
+// 받지 못한다. 내려가는 것은 `SET_MODE(AUTO)` 수락 하나뿐이다.
+constexpr uint8_t AUTHORITY_FLAG_MANUAL_FALLBACK = 1u << 0;
+
+size_t packMotorDriveState(const DriveState& in, uint8_t authorityFlags, uint8_t* out);
+bool unpackMotorDriveState(const uint8_t* payload, size_t len, DriveState& out,
+                            uint8_t& outAuthorityFlags);
+
 // ==== DIAGNOSTIC(0x21) - 모터 전용, protocol.h의 Diagnostic/DIAGNOSTIC_BYTES와 다르다 ====
 //
 // 기존 4개 카운터에 linkSilenceMs 하나를 더했다. comm_task.cpp가 HELLO를 포함해

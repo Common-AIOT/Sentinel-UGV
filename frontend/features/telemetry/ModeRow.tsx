@@ -43,6 +43,13 @@ import { useRobot } from "@/features/robot/RobotContext";
 export default function ModeRow() {
   const { status, sendCommand, missionId } = useRobot();
   const manual = status.controlMode === "MANUAL";
+  // **3값을 2값으로 그리지 않는다** (S15P11A301-350). 종전에는 `!manual` 이 곧
+  // 「자율」이라 `null`(모름)도 자율로 보였다 — 2026-08-08 실기동에서 관제가 14분간
+  // 「자율」을 보여준 것이 정확히 그 형태다. 모드를 모르면 모른다고 말해야 한다.
+  //
+  // `aria-checked` 도 "mixed" 로 간다 — `manual` 을 그대로 주면 스크린리더가
+  // 「모름」을 「자율」로 읽어, 화면에서 고친 것을 소리에서 되돌리게 된다.
+  const unknown = status.controlMode == null;
 
   // ESTOP·ERROR 는 사람이 물리적으로 확인하고 풀어야 하는 상태다(26.5). 젯슨의
   // mode_gateway 도 이 상태에서는 프레임을 아예 보내지 않는다.
@@ -53,14 +60,23 @@ export default function ModeRow() {
 
   const toggle = async () => {
     if (disabled) {
+      // 임무가 없는데 로봇이 수동인 경우를 따로 말한다 (S15P11A301-350).
+      // 2026-08-08 실기동에서 조작자가 여기서 갇혔다 — 임무 밖에서 폰이 보드를
+      // 수동으로 승격시키면 「탐사 시작」은 INVALID_STATE 로 거부되고(젯슨이
+      // MANUAL 이므로) 토글은 비활성이라, 무엇을 눌러야 할지 알 수 없었다.
+      const strandedInManual = !missionId && !latched && manual;
       toast(
         latched
           ? "비상·결함 정지 상태에서는 모드를 바꿀 수 없습니다"
-          : "진행 중인 임무가 없습니다",
+          : strandedInManual
+            ? "로봇이 수동 조종 상태입니다"
+            : "진행 중인 임무가 없습니다",
         {
           description: latched
             ? "원인을 확인하고 해제한 뒤 다시 시도하세요."
-            : "모드 전환은 임무를 만들지 않습니다. 「탐사 시작」으로 임무를 먼저 시작하세요.",
+            : strandedInManual
+              ? "모바일 조종 화면을 닫아 수동을 해제한 뒤 「탐사 시작」을 누르세요. 해제되지 않으면 모터 보드 전원을 다시 넣으세요."
+              : "모드 전환은 임무를 만들지 않습니다. 「탐사 시작」으로 임무를 먼저 시작하세요.",
           duration: 6000,
         },
       );
@@ -100,25 +116,33 @@ export default function ModeRow() {
       <button
         type="button"
         role="switch"
-        aria-checked={manual}
+        aria-checked={unknown ? "mixed" : manual}
         aria-disabled={disabled}
-        aria-label="운행 모드 — 자율 주행과 수동 조종 전환. 자율로 돌아가는 유일한 경로다"
+        aria-label={
+          unknown
+            ? "운행 모드 — 현재 모드를 확인할 수 없습니다"
+            : "운행 모드 — 자율 주행과 수동 조종 전환. 자율로 돌아가는 유일한 경로다"
+        }
         onClick={toggle}
         className={`relative flex rounded-md border border-border bg-background p-0.5 ${
           disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer"
         }`}
         style={{ width: 148 }}
       >
-        <div
-          className={`absolute top-0.5 bottom-0.5 w-[calc(50%-2px)] rounded transition-all duration-200 ${
-            manual
-              ? "left-[calc(50%+1px)] bg-accent/20 border border-accent/40"
-              : "left-0.5 bg-primary/15 border border-primary/30"
-          }`}
-        />
+        {/* 모름일 때는 어느 쪽도 강조하지 않는다 — 아래 두 칸이 모두 흐려져
+            「둘 중 무엇인지 모른다」가 그대로 보인다. */}
+        {!unknown && (
+          <div
+            className={`absolute top-0.5 bottom-0.5 w-[calc(50%-2px)] rounded transition-all duration-200 ${
+              manual
+                ? "left-[calc(50%+1px)] bg-accent/20 border border-accent/40"
+                : "left-0.5 bg-primary/15 border border-primary/30"
+            }`}
+          />
+        )}
         <div
           className={`relative flex-1 flex items-center justify-center gap-1 py-1 z-10 transition-colors ${
-            !manual ? "text-primary" : "text-muted-foreground"
+            !manual && !unknown ? "text-primary" : "text-muted-foreground"
           }`}
         >
           <Cpu size={11} />

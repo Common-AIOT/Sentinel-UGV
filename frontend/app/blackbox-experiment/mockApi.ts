@@ -127,6 +127,8 @@ const TELEMETRY: TelemetryPoint[] = Array.from({ length: 40 }, (_, i) => ({
   memory: 52 + 6 * Math.abs(Math.sin(i / 7)),
   jetsonTemp: 48 + 4 * Math.abs(Math.cos(i / 6)),
   battery: 100 - i * 0.8,
+  // #350 추가 필드. 실험판에는 로봇 보고가 없으므로 「모름」이 맞다.
+  controlMode: null,
   // #205 추가 필드 — 이 실험판 그래프는 안 쓰므로 결측으로 둔다.
   temperature: null,
   humidity: null,

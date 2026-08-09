@@ -92,6 +92,37 @@ public class RobotStateWriter {
             WHERE r.name = ? AND m.ended_at IS NULL
             """;
 
+    /**
+     * 제어 모드(26.2)의 2개. {@code null} 은 「모름」이라 이 집합에 없다 —
+     * 저장하지 않고 옛 값을 남긴다.
+     */
+    private static final Set<String> CONTROL_MODES = Set.of("MANUAL", "AUTO");
+
+    /**
+     * 제어 모드는 <b>임무가 아니라 로봇에</b> 적는다 (S15P11A301-350).
+     *
+     * <p>2026-08-08 실기동에서 폰이 모터 보드를 수동으로 승격시킨 21:04 부터 14분간 관제
+     * 화면이 「자율」을 보여줬다. 원인은 관제가 모드를 아는 유일한 길이
+     * {@code missions.status} 였다는 것이다 — 그 경로는 {@code ended_at IS NULL} 가드가
+     * 지키는데, <b>임무가 닫힌 뒤에 수동으로 들어가면 옮겨 적을 곳이 없다.</b> 가드는
+     * 옳으므로(종료된 임무를 되살리면 안 된다) 값이 갈 자리를 따로 만든다.
+     *
+     * <p>{@code control_mode <> ?} 대신 {@code IS DISTINCT FROM} 을 쓴다. 초기값이 NULL
+     * 이라 {@code <>} 는 NULL 을 돌려주고 {@code DO UPDATE} 가 <b>영원히 실행되지 않는다</b>
+     * — 「항상 NULL 인 컬럼」이 되는데, SQL 이 호출되는 것만 보는 시험은 그것을 통과시킨다.
+     *
+     * <p>{@code status} 는 건드리지 않는다. {@code robots} 행은 이 writer 와
+     * {@code RobotPresenceWriter} 가 공유하며 각자 자기 칸만 쓴다. 습관적으로
+     * {@code SET status = EXCLUDED.status} 를 넣으면 1Hz 로 오는 이 메시지가 접속 상태를
+     * 계속 덮어쓴다.
+     */
+    private static final String UPSERT_CONTROL_MODE = """
+            INSERT INTO robots (name, status, control_mode)
+            VALUES (?, 'OFFLINE', ?)
+            ON CONFLICT (name) DO UPDATE SET control_mode = EXCLUDED.control_mode
+            WHERE robots.control_mode IS DISTINCT FROM EXCLUDED.control_mode
+            """;
+
     private final JdbcTemplate jdbc;
     private final RealtimeBroadcaster broadcaster;
 
@@ -101,6 +132,12 @@ public class RobotStateWriter {
     }
 
     public void write(MessageEnvelope envelope, RobotStateData data) {
+        // 임무 상태보다 **먼저** 쓴다. 아래의 early return 3개는 전부 임무에 관한
+        // 것인데(상태 미보고·미지값·열린 임무 없음), 제어 모드는 그 셋 모두에서
+        // 유효하다 — 임무 밖에서 사람이 폰을 잡는 것이 정확히 이 값이 필요한
+        // 대표 상황이다.
+        writeControlMode(envelope.robotId(), data.controlMode());
+
         String reported = data.missionState();
         if (reported == null || reported.isBlank()) {
             // mission_manager 가 떠 있지 않으면 젯슨도 null 을 보낸다. 값을 지어내지
@@ -130,6 +167,35 @@ public class RobotStateWriter {
         // 쓰기가 실제로 일어났을 때만 push 한다. 1Hz heartbeat 가 계속 오므로 조건
         // 없이 push 하면 초당 한 번씩 의미 없는 알림이 나간다.
         broadcaster.missionStatus(missionId, reported);
+    }
+
+    /**
+     * 제어 모드를 {@code robots} 에 옮긴다. 실패해도 임무 상태 갱신을 막지 않는다.
+     *
+     * <p><b>예외를 삼키는 것은 배포 순서 때문이다.</b> {@code MqttGateway.messageArrived}
+     * 가 이 메서드의 예외를 catch 하면 같은 메시지의 {@code missions.status} 갱신까지
+     * 통째로 날아간다 — V10 이 아직 적용되지 않은 환경에서 컬럼 없음(42703)이 나면
+     * <b>지금 잘 되는 임무 상태 표시가 회귀한다.</b> 새 기능이 기존 기능을 끌고 내려가지
+     * 않도록 여기서 끊는다.
+     *
+     * <p>{@code null}(모름)은 쓰지 않는다. 젯슨은 {@code mission_manager} 가 없으면
+     * null 을 보내는데, 그때 옛 값을 지우면 관제가 「모름」과 「자율」을 구별할 근거를
+     * 잃는다 — 값을 지어내지 않는 것과 같은 이유로, 있던 값을 지우지도 않는다.
+     */
+    private void writeControlMode(String robotName, String controlMode) {
+        if (controlMode == null || !CONTROL_MODES.contains(controlMode)) {
+            if (controlMode != null) {
+                log.warn("모르는 제어 모드를 보고받았다: controlMode={}, robotId={}",
+                        controlMode, robotName);
+            }
+            return;
+        }
+        try {
+            jdbc.update(UPSERT_CONTROL_MODE, robotName, controlMode);
+        } catch (RuntimeException e) {
+            log.warn("제어 모드를 쓰지 못했다(임무 상태 갱신은 계속한다): robotId={}, controlMode={}",
+                    robotName, controlMode, e);
+        }
     }
 
     private UUID openMissionOf(String robotName) {

@@ -256,7 +256,9 @@ class MessageContractTest {
 
         assertEquals(MessageEnvelope.TYPE_STATE, envelope.messageType());
         assertEquals("SAFE_IDLE", data.missionState());
-        // 임무 밖이라 둘 다 null 이다. RobotStateWriter 는 여기서 아무것도 하지 않는다.
+        // 임무 밖이라 둘 다 null 이다. controlMode 가 null 이면 「모름」이므로
+        // RobotStateWriter 는 robots.control_mode 를 덮지 않는다 — 있던 값을 지우면
+        // 관제가 「모름」과 「자율」을 구별할 근거를 잃는다 (S15P11A301-350).
         assertNull(data.controlMode());
         assertNull(data.activeMissionId());
         assertNotNull(data.components());

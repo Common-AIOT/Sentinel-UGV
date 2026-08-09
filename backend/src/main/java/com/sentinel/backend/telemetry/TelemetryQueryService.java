@@ -63,10 +63,24 @@ public class TelemetryQueryService {
                         rs.getObject("linear_velocity", Double.class),
                         rs.getObject("angular_velocity", Double.class)));
 
+        // 제어 모드 (S15P11A301-350). 위 셋과 달리 하이퍼테이블이 아니라 `robots` 에서
+        // 온다 — **제어 모드는 임무에도 시계열에도 매이지 않는다.** 임무가 닫힌 뒤에
+        // 사람이 폰을 잡는 것이 이 값이 필요한 대표 상황이고, 그때 telemetry 는 아예
+        // 쌓이지 않는다(2026-08-08 실기동에서 21:04~21:21 구간이 그랬다).
+        //
+        // `last_seen_at` 을 신선도로 쓰지 않는다 — 그 칸은 PRESENCE 메시지만 갱신하므로
+        // 로봇이 접속만 유지한 채 죽어도 「방금 갱신된 MANUAL」로 보인다. 신선도 판단은
+        // 프런트가 mcuTime 으로 한다.
+        List<String> mode = jdbc.query(
+                "SELECT control_mode FROM robots WHERE control_mode IS NOT NULL "
+                        + "ORDER BY last_seen_at DESC NULLS LAST LIMIT 1",
+                (rs, i) -> rs.getString("control_mode"));
+
         Env e = env.isEmpty() ? null : env.getFirst();
         Mcu m = mcu.isEmpty() ? null : mcu.getFirst();
         Motion p = motion.isEmpty() ? null : motion.getFirst();
         return new TelemetryLatestResponse(
+                mode.isEmpty() ? null : mode.getFirst(),
                 e == null ? null : e.time(),
                 e == null ? null : e.temperature(),
                 e == null ? null : e.humidity(),

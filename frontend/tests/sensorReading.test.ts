@@ -32,6 +32,7 @@ const NO_RECORDER = { recorderOk: null, recorderLastFailure: null };
 
 function latest(over: Partial<TelemetryLatest> = {}): TelemetryLatest {
   return {
+    controlMode: "AUTO",
     environmentTime: iso(1_000),
     temperature: 24.7,
     humidity: 60.0,

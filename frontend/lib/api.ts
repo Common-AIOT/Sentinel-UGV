@@ -167,6 +167,15 @@ export interface TelemetryPoint {
 
 /** 임무 무관 최신 센서 값 (#255). 시각이 그룹별로 따로 온다 — 신선도 판정은 화면 몫. */
 export interface TelemetryLatest {
+  /**
+   * 제어 모드 (#350). **이 응답에서 유일하게 시계열이 아닌 값이다** — `robots` 에서
+   * 온다. 제어 모드는 임무에도 시계열에도 매이지 않기 때문이고, 임무가 닫힌 뒤에
+   * 사람이 폰을 잡는 구간에는 telemetry 가 아예 쌓이지 않는다.
+   *
+   * `null` 은 「모름」이며 AUTO 로 뭉개면 안 된다 — 판정은
+   * `features/telemetry/sensorReading.ts` 의 `controlModeFromLatest` 한 곳에서만 한다.
+   */
+  controlMode: "MANUAL" | "AUTO" | null;
   environmentTime: string | null;
   temperature: number | null;
   humidity: number | null;

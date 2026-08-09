@@ -67,3 +67,28 @@ export function motorLinkFromLatest(d: TelemetryLatest, now: number): boolean | 
   const fresh = mcuTime !== null && now - mcuTime <= SENSOR_FRESH_MS;
   return fresh ? d.motorLinkOk ?? null : null;
 }
+
+/**
+ * 최신값 → 제어 모드 (S15P11A301-350).
+ *
+ * **세 값을 그대로 지킨다.** `"MANUAL"` / `"AUTO"` / `null`(모름). `null` 을 AUTO 로
+ * 뭉개면 안 된다 — 2026-08-08 실기동에서 관제가 14분간 「자율」을 보여준 것이
+ * 정확히 그 형태였고, 이 함수는 그것을 고치려고 만들었다.
+ *
+ * 신선도도 `mcuTime` 으로 본다. 이 값의 출처는 `robots` 라 엄밀히는 다른 행이지만,
+ * 둘 다 젯슨의 1Hz 채널이 갱신하므로 MCU 가 신선하면 이 값도 신선하다. `robots` 에는
+ * 쓸 만한 시각이 없다 — `last_seen_at` 은 PRESENCE 메시지만 갱신해서, 로봇이 접속만
+ * 유지한 채 죽어도 「방금 갱신된 MANUAL」로 보인다.
+ *
+ * 모르는 문자열은 `null` 로 떨어뜨린다. 옛 백엔드가 키를 안 보내면 `undefined` 이고
+ * 그것도 `null` 이다(`motionFromLatest` 가 겪은 그 문제다).
+ */
+export function controlModeFromLatest(
+  d: TelemetryLatest,
+  now: number,
+): "MANUAL" | "AUTO" | null {
+  const mcuTime = d.mcuTime == null ? null : Date.parse(d.mcuTime);
+  const fresh = mcuTime !== null && now - mcuTime <= SENSOR_FRESH_MS;
+  if (!fresh) return null;
+  return d.controlMode === "MANUAL" || d.controlMode === "AUTO" ? d.controlMode : null;
+}

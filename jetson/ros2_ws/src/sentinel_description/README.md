@@ -28,6 +28,19 @@ check_urdf $(ros2 pkg prefix sentinel_description)/share/sentinel_description/ur
 ros2 launch sentinel_description description.launch.py
 ```
 
+> **조인트가 지워져도 XML 은 유효하다.** S15P11A301-344 의 커밋이 주석을 다시 쓰다
+> 닫는 `-->` 로 `base_link_to_camera_link` 조인트를 삼켰고, 링크 선언은 남아 있어
+> 파일이 정상으로 보였다. `robot_state_publisher` 는 끊어진 트리를 그대로 받아
+> 기동하고 해당 TF 조회만 조용히 실패한다. 그래서 **루트가 하나인지**를 CI 에서
+> 검사한다(S15P11A301-349) — 로봇 없이도 돈다:
+>
+> ```bash
+> python3 scripts/ci/validate_urdf_tree.py
+> ```
+>
+> 아래 `check_urdf` 출력의 `root = base_footprint` 가 그 불변식이다. 루트가 둘로
+> 나오면 어떤 링크가 조인트 없이 떠 있다는 뜻이다.
+
 별도 터미널에서 트리 검증:
 
 ```bash

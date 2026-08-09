@@ -37,10 +37,21 @@ MotorSharedState autoBoard(uint32_t nowMs = 10000) {
   s.hasAcceptedSequence = true;
   s.lastAcceptedSequence = 100;
   s.lastValidDriveCommandMs = nowMs;
+  // 링크 접촉 축(S15P11A301-345 폴백 판정이 보는 값). 스트리밍 중이면 방금 왔다.
+  s.lastValidJetsonRxMs = nowMs;
+  s.hasReceivedFromJetson = true;
   s.targetDriveLeftMmps = 200;
   s.targetDriveRightMmps = 200;
   s.targetSteeringMdeg = 5000;
   s.maxSteeringRateMdps = 4000;
+  return s;
+}
+
+// 젯슨 링크가 6초째 침묵인 보드. **폴백 경로는 이 상태에서만 열린다.**
+MotorSharedState silentLinkBoard(uint32_t nowMs = 10000) {
+  MotorSharedState s = autoBoard(nowMs);
+  s.lastValidJetsonRxMs = nowMs - 6000;
+  s.lastValidDriveCommandMs = nowMs - 6000;  // 링크가 죽었으니 DRIVE_COMMAND 도 없다
   return s;
 }
 
@@ -56,52 +67,158 @@ ManualPacket packet(uint16_t sequence, bool deadman, int16_t lin, int16_t ang,
   return p;
 }
 
-// 승격 조건(2패킷·100ms)을 채워 래치를 건다. 마지막 패킷 시각을 돌려준다.
-uint32_t promote(MotorSharedState& s, uint32_t startMs) {
+// 관제가 「수동」을 눌러 권한을 넘긴다 - **폰이 권한을 얻는 정상 경로는 이것뿐이다**
+// (S15P11A301-345). 이어서 조종 패킷 2개를 넣고 마지막 패킷 시각을 돌려준다.
+uint32_t grantManual(MotorSharedState& s, uint32_t startMs) {
+  applySetMode(s, SET_MODE_MANUAL, startMs);
   s.manualSessionId = 0xABCD1234u;
   ingestManualPacket(s, packet(1, true, 1000, 0), startMs);
   ingestManualPacket(s, packet(2, true, 1000, 0), startMs + 100);
   return startMs + 100;
 }
 
-// ---- 승격 ----
+// 폴백으로 권한을 잡는다. 링크가 침묵한 보드에서 deadman run 을 채우는 것이
+// 유일한 경로다.
+uint32_t promoteByFallback(MotorSharedState& s, uint32_t startMs) {
+  s.manualSessionId = 0xABCD1234u;
+  ingestManualPacket(s, packet(1, true, 1000, 0), startMs);
+  ingestManualPacket(s, packet(2, true, 1000, 0), startMs + 100);
+  return startMs + 100;
+}
 
-void testSinglePacketDoesNotPromote() {
-  MotorSharedState s = autoBoard();
+// ---- 관제 우선 (S15P11A301-345) ----
+
+void testLiveLinkIgnoresPhoneInputEntirely() {
+  // 이 티켓이 고치는 사건 그 자체다. 폰 조종 페이지를 열어 둔 사람이 자율 주행을
+  // 세우고, 그 사실이 관제·젯슨 어느 화면에도 보이지 않았다.
+  MotorSharedState s = autoBoard(10000);
   s.manualSessionId = 0xABCD1234u;
 
-  ManualResult result = ingestManualPacket(s, packet(1, true, 1000, 0), 10000);
+  // 실제로 스틱을 밀고 있다 - 종전 규칙(2패킷·100ms)이라면 여기서 래치가 걸렸다.
+  // 그동안 젯슨도 계속 스트리밍한다(두 축 모두 갱신).
+  for (uint16_t i = 1; i <= 20; ++i) {
+    const uint32_t now = 10000 + i * 50u;
+    ingestManualPacket(s, packet(i, true, 1000, 0), now);
+    s.lastValidDriveCommandMs = now;
+    s.lastValidJetsonRxMs = now;
+  }
 
-  expectTrue(result == ManualResult::ACCEPTED, "단일 패킷도 수락은 된다");
-  expectTrue(!s.manualLatched, "패킷 하나로는 래치가 걸리지 않는다 (오발 방어)");
-  expectTrue(s.manualDriveMmps == 0, "승격 전에는 수동 구동 목표가 0 이다");
+  expectTrue(!s.manualLatched, "링크가 살아 있으면 폰 입력은 권한을 가져가지 못한다");
+  expectTrue(!s.manualFallbackLatched, "폴백도 걸리지 않았다");
+  expectTrue(s.manualDriveMmps == 0, "구동 목표는 0 이다 - 장부에만 기록된다");
+  expectTrue(s.hasManualInput && s.lastManualInputMs == 11000,
+             "기록은 남는다 (관제의 500ms 신선도 가드가 이 값을 본다)");
+  expectTrue(s.state == MotorBoardState::AUTO_ACTIVE, "보고 상태도 자율 그대로다");
+
+  DriveDecision d = arbitrateDrive(s, 11010);
+  expectTrue(d.owner == DriveOwner::JETSON, "바퀴는 계속 젯슨이 굴린다");
+  expectTrue(d.driveLeftMmps == 200, "자율 목표가 그대로 나간다");
 }
 
-void testTwoPacketsUnderHoldDoNotPromote() {
-  MotorSharedState s = autoBoard();
+void testSetModeManualIsTheGrantPath() {
+  MotorSharedState s = autoBoard(10000);
+  applySetMode(s, SET_MODE_MANUAL, 10000);
   s.manualSessionId = 0xABCD1234u;
 
-  ingestManualPacket(s, packet(1, true, 1000, 0), 10000);
-  ingestManualPacket(s, packet(2, true, 1000, 0), 10099);
+  // 관제가 승인했으므로 첫 패킷부터 즉시 바퀴가 돈다 - 2패킷·100ms 를 다시 요구하지
+  // 않는다. 그 규칙의 목적은 자율을 오발에서 지키는 것이고, 승인은 오발이 아니다.
+  ingestManualPacket(s, packet(1, true, 1000, 0), 10050);
 
-  expectTrue(!s.manualLatched, "2패킷이어도 100ms 미만이면 승격하지 않는다");
+  expectTrue(s.manualLatched, "SET_MODE(MANUAL) 이 권한을 넘긴다");
+  expectTrue(!s.manualFallbackLatched, "관제 승인은 폴백이 아니다 - 사유 비트는 0");
+  expectTrue(s.manualDriveMmps == MANUAL_MAX_DRIVE_MMPS, "첫 패킷부터 굴린다");
+  expectTrue(arbitrateDrive(s, 10060).owner == DriveOwner::MANUAL, "수동이 이긴다");
 }
 
-void testTwoPacketsOverHoldPromote() {
-  MotorSharedState s = autoBoard();
-  uint32_t last = promote(s, 10000);
+// ---- 링크 침묵 폴백 ----
 
-  expectTrue(s.manualLatched, "2패킷·100ms 를 채우면 래치가 걸린다");
-  expectTrue(s.manualDriveMmps == MANUAL_MAX_DRIVE_MMPS,
-             "lin=1000 은 0.30 m/s 로 매핑된다");
-  expectTrue(s.lastManualInputMs == last, "마지막 입력 시각이 기록된다");
-  expectTrue(s.state == MotorBoardState::MANUAL_ACTIVE,
-             "래치와 같은 순간에 보고 상태가 옮겨간다 (control_task 를 기다리지 않는다)");
+void testFallbackNeedsBothSilenceAndRealInput() {
+  MotorSharedState s = silentLinkBoard(10000);
+  s.manualSessionId = 0xABCD1234u;
+
+  // (1) 페이지가 열려만 있는 상태. `/manual/state` 폴링은 이 함수를 아예 부르지
+  //     않고, 스틱을 놓은 패킷은 run 을 세우지 못한다.
+  ingestManualPacket(s, packet(1, false, 0, 0), 10000);
+  ingestManualPacket(s, packet(2, false, 0, 0), 10100);
+  expectTrue(!s.manualLatched, "침묵해도 실제 조종 입력이 없으면 권한이 넘어가지 않는다");
+
+  // (2) 스틱을 미는 첫 패킷 하나로는 아직 아니다 (오발 방어).
+  ingestManualPacket(s, packet(3, true, 1000, 0), 10150);
+  expectTrue(!s.manualLatched, "패킷 하나로는 폴백도 걸리지 않는다");
+
+  // (3) 2패킷·100ms 를 채우면 발동한다.
+  ingestManualPacket(s, packet(4, true, 1000, 0), 10250);
+  expectTrue(s.manualLatched, "침묵 + 실제 조종이면 폴백이 발동한다");
+  expectTrue(s.manualFallbackLatched, "폴백 사유가 래치된다");
+  expectTrue(s.state == MotorBoardState::MANUAL_ACTIVE, "보고 상태가 같은 순간에 옮겨간다");
+  expectTrue(s.manualDriveMmps == MANUAL_MAX_DRIVE_MMPS, "바퀴를 준다");
 }
+
+void testFallbackSilenceThreshold() {
+  // 5초는 브리지 재접속 1사이클(2.5초 = 재시도 1.0 + 부팅 정착 1.5)의 두 배다.
+  // 경계를 잘못 잡으면 재접속마다 권한이 펄럭인다.
+  MotorSharedState s = autoBoard(10000);
+  expectTrue(!jetsonLinkSilent(s, 15000), "침묵 5000ms 는 아직 폴백 조건이 아니다");
+  expectTrue(jetsonLinkSilent(s, 15001), "5000ms 를 넘기면 침묵이다");
+
+  // 경계 바로 아래에서는 조종 run 을 채워도 권한이 넘어가지 않는다.
+  s.manualSessionId = 0xABCD1234u;
+  ingestManualPacket(s, packet(1, true, 1000, 0), 14800);
+  ingestManualPacket(s, packet(2, true, 1000, 0), 14950);
+  expectTrue(!s.manualLatched, "침묵 4950ms 에서는 폴백이 발동하지 않는다");
+}
+
+void testJetsonNeverSeenCountsAsSilentAfterBootWindow() {
+  // 젯슨 없이 켠 보드. 부팅 직후 5초는 오발 방어 창이고, 그 뒤에는 폰으로 로봇을
+  // 옮길 수 있어야 한다 - 잠그면 들어 옮기는 것 말고 복구 경로가 없다(04장 950-953).
+  MotorSharedState s;
+  expectTrue(!s.hasReceivedFromJetson, "부팅 직후엔 젯슨 접촉 이력이 없다");
+  expectTrue(!jetsonLinkSilent(s, 3000), "uptime 3초는 아직 침묵으로 세지 않는다");
+  expectTrue(jetsonLinkSilent(s, 6000), "uptime 6초면 「쭉 침묵」이다");
+}
+
+void testFallbackDoesNotReturnWhenTheLinkComesBack() {
+  MotorSharedState s = silentLinkBoard(10000);
+  uint32_t last = promoteByFallback(s, 10000);
+  expectTrue(s.manualLatched && s.manualFallbackLatched, "폴백으로 권한을 잡았다");
+
+  // 젯슨이 되살아나 다시 20Hz 로 쏜다. **자동 복귀는 없다** - 사람이 조종 중인데
+  // 로봇이 자기 뜻대로 움직이면 안 된다.
+  s.lastValidJetsonRxMs = last + 200;
+  s.lastValidDriveCommandMs = last + 200;
+  ingestManualPacket(s, packet(3, true, 1000, 0), last + 250);
+
+  DriveDecision d = arbitrateDrive(s, last + 260);
+  expectTrue(d.owner == DriveOwner::MANUAL, "링크 복구가 권한을 되찾지 않는다");
+  expectTrue(s.manualLatched, "래치가 유지된다");
+  expectTrue(s.manualFallbackLatched,
+             "사유 비트도 유지된다 - 복구 후에 관제가 이것을 봐야 한다");
+  expectTrue(!jetsonActuationAllowed(s), "젯슨 명령은 계속 기록만 된다");
+}
+
+void testFallbackReasonBitClearsOnlyOnSetModeAuto() {
+  MotorSharedState s = silentLinkBoard(10000);
+  uint32_t last = promoteByFallback(s, 10000);
+
+  // 바퀴가 서는 경로들은 사유 비트를 내리지 않는다 - 「발동했었다」는 사실이지
+  // 「지금 굴리는 중」이 아니다.
+  ingestManualPacket(s, packet(3, false, 0, 0), last + 50);
+  expectTrue(s.manualFallbackLatched, "deadman 해제는 사유 비트를 내리지 않는다");
+  arbitrateDrive(s, last + 500);  // TTL 만료 (순수 함수라 상태를 바꾸지 않는다)
+  expectTrue(s.manualFallbackLatched, "TTL 만료도 내리지 않는다");
+
+  // 관제가 권한을 되찾는 순간에만 내려간다.
+  expectTrue(applySetMode(s, SET_MODE_AUTO, last + 600) == SetModeResult::ACCEPTED,
+             "500ms 창 밖의 SET_MODE(AUTO) 는 수락된다");
+  expectTrue(!s.manualLatched, "래치가 풀린다");
+  expectTrue(!s.manualFallbackLatched, "사유 비트도 같이 내려간다");
+}
+
+// ---- run 판정 (폴백 게이트가 「실제 조종인가」를 가르는 부분) ----
 
 void testGapBreaksTheRun() {
   // 이것이 없으면 "30초 간격 두 패킷" 이 100ms 지속 조건을 만족한다.
-  MotorSharedState s = autoBoard();
+  MotorSharedState s = silentLinkBoard();
   s.manualSessionId = 0xABCD1234u;
 
   ingestManualPacket(s, packet(1, true, 1000, 0), 10000);
@@ -112,7 +229,7 @@ void testGapBreaksTheRun() {
 
 void testPromotionIsGatedOnlyOnEntry() {
   MotorSharedState s = autoBoard();
-  uint32_t last = promote(s, 10000);
+  uint32_t last = grantManual(s, 10000);
 
   // 손을 뗐다 다시 누른다. 이미 사람이 차량을 소유했으므로 첫 패킷에 즉시 반응해야
   // 한다 - 여기서 100ms 를 더 요구하면 둔한 조향일 뿐 안전 이득이 없다.
@@ -164,7 +281,7 @@ void testSequenceWraparoundIsAccepted() {
 
 void testStationarySteeringIsNotRequested() {
   MotorSharedState s = autoBoard();
-  promote(s, 10000);
+  grantManual(s, 10000);
 
   // 정지 상태에서 좌측만 누른다. steering.cpp 에 보내면 거부되고 그 거부가
   // bit 14 로 올라가 그 비트의 의미가 파괴된다.
@@ -177,7 +294,7 @@ void testStationarySteeringIsNotRequested() {
 
 void testDrivingSteeringIsRequestedAndMappedToDeltaMax() {
   MotorSharedState s = autoBoard();
-  promote(s, 10000);
+  grantManual(s, 10000);
 
   ingestManualPacket(s, packet(9, true, 500, 1000), 10150);
 
@@ -202,7 +319,7 @@ void testSetModeManualLatchesAndStopsWheels() {
 
 void testSetModeAutoIsRejectedInsideTheFreshnessWindow() {
   MotorSharedState s = autoBoard();
-  uint32_t last = promote(s, 10000);
+  uint32_t last = grantManual(s, 10000);
 
   // 499ms: 아직 사람이 조종 중이다.
   expectTrue(applySetMode(s, SET_MODE_AUTO, last + 499) == SetModeResult::REJECTED_STATE,
@@ -257,7 +374,7 @@ void testJetsonDrivesWhenNoManualLatch() {
 
 void testManualWinsOverAStreamingJetson() {
   MotorSharedState s = autoBoard(10000);
-  uint32_t last = promote(s, 10000);
+  uint32_t last = grantManual(s, 10000);
   s.lastValidDriveCommandMs = last;  // 젯슨도 계속 스트리밍 중
 
   DriveDecision d = arbitrateDrive(s, last + 10);
@@ -272,7 +389,7 @@ void testManualWinsOverAStreamingJetson() {
 
 void testDeadmanReleaseStopsWheelsButKeepsAuthority() {
   MotorSharedState s = autoBoard(10000);
-  uint32_t last = promote(s, 10000);
+  uint32_t last = grantManual(s, 10000);
   ingestManualPacket(s, packet(3, false, 0, 0), last + 20);
   s.lastValidDriveCommandMs = last + 20;
 
@@ -287,7 +404,7 @@ void testDeadmanReleaseStopsWheelsButKeepsAuthority() {
 
 void testManualTtlExpiryStopsWheelsButKeepsAuthority() {
   MotorSharedState s = autoBoard(10000);
-  uint32_t last = promote(s, 10000);
+  uint32_t last = grantManual(s, 10000);
   s.lastValidDriveCommandMs = last + 1000;  // 젯슨은 살아 있다
 
   DriveDecision fresh = arbitrateDrive(s, last + 250);
@@ -302,7 +419,7 @@ void testManualTtlExpiryStopsWheelsButKeepsAuthority() {
 
 void testManualSurvivesAStaleJetsonLink() {
   MotorSharedState s = autoBoard(10000);
-  uint32_t last = promote(s, 10000);
+  uint32_t last = grantManual(s, 10000);
   // 젯슨은 1.2초째 무응답이고(> 300ms), 폰은 100ms 전에 패킷을 보냈다(< 250ms TTL).
   s.lastValidDriveCommandMs = 9000;
 
@@ -339,7 +456,7 @@ void testLatchedBoardActuatesNothingAndHoldsSteering() {
 
 void testReArmBlocksDriveUntilRelease() {
   MotorSharedState s = autoBoard(10000);
-  uint32_t last = promote(s, 10000);
+  uint32_t last = grantManual(s, 10000);
   s.lastValidDriveCommandMs = last;
 
   // 관제·초음파 중계의 STOP_COMMAND 가 세운 것과 같은 상태.
@@ -372,7 +489,12 @@ void testJetsonActuationAllowedIsLatchOnly() {
 void testConstantsMatchTheSpec() {
   expectTrue(MANUAL_MAX_DRIVE_MMPS == 300, "수동 상한은 0.30 m/s 다 (docs/04 961)");
   expectTrue(MANUAL_PROMOTION_HOLD_MS == 100 && MANUAL_PROMOTION_PACKETS == 2,
-             "승격 조건은 2패킷·100ms 다");
+             "폴백 승격 조건은 2패킷·100ms 다");
+  expectTrue(MANUAL_FALLBACK_SILENCE_MS == 5000,
+             "폴백 침묵 문턱은 5초다 - 브리지 재접속 1사이클(2.5초)보다 커야 "
+             "재접속마다 권한이 펄럭이지 않는다 (S15P11A301-345)");
+  expectTrue(MANUAL_FALLBACK_SILENCE_MS > JETSON_WATCHDOG_TIMEOUT_MS,
+             "권한 이양 문턱은 안전 정지 워치독보다 훨씬 길어야 한다 - 둘은 다른 축이다");
   expectTrue(MANUAL_FRESHNESS_GUARD_MS == 500, "자동 전환 가드는 500ms 다");
   expectTrue(JETSON_WATCHDOG_TIMEOUT_MS == 300, "젯슨 워치독은 300ms 다 (§34-7)");
   expectTrue(MANUAL_STEERING_RATE_MDPS != 0,
@@ -384,9 +506,13 @@ void testConstantsMatchTheSpec() {
 }  // namespace
 
 int main() {
-  testSinglePacketDoesNotPromote();
-  testTwoPacketsUnderHoldDoNotPromote();
-  testTwoPacketsOverHoldPromote();
+  testLiveLinkIgnoresPhoneInputEntirely();
+  testSetModeManualIsTheGrantPath();
+  testFallbackNeedsBothSilenceAndRealInput();
+  testFallbackSilenceThreshold();
+  testJetsonNeverSeenCountsAsSilentAfterBootWindow();
+  testFallbackDoesNotReturnWhenTheLinkComesBack();
+  testFallbackReasonBitClearsOnlyOnSetModeAuto();
   testGapBreaksTheRun();
   testPromotionIsGatedOnlyOnEntry();
   testRejectionsLeaveStateUntouched();

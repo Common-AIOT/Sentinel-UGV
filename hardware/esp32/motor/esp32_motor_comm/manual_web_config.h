@@ -15,8 +15,8 @@
 #define ENABLE_MANUAL_WIFI 1
 #endif
 
-constexpr char MANUAL_WIFI_SSID[] = "***REMOVED-WIFI-SSID***";
-constexpr char MANUAL_WIFI_PASSWORD[] = "***REMOVED-WIFI-PASSWORD***";
+constexpr char MANUAL_WIFI_SSID[] = "SSID";
+constexpr char MANUAL_WIFI_PASSWORD[] = "PASSWORD";
 
 // mDNS 이름. 폰에서 `http://sentinel-manual.local/` 로 연다. iOS 는 mDNS 를 잘
 // 받지만 Android 는 버전에 따라 안 되므로, 안 되면 핫스팟 클라이언트 목록에서

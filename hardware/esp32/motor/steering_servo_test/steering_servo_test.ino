@@ -55,7 +55,9 @@ constexpr float SWEEP_DEG_PER_SECOND = 40.0f;
 constexpr uint32_t SWEEP_INTERVAL_MS = 20;
 
 float g_currentDeg = CENTER_DEG;
-bool g_signalEnabled = true;
+// 펌웨어 업로드 직후에는 자동으로 중립 펄스를 내보내지 않는다. GPIO18 외부 10kΩ
+// pull-down과 duty 0으로 대기하다가 c/l/r/u/d/s 명령이 들어왔을 때만 활성화한다.
+bool g_signalEnabled = false;
 
 float degToPulseUs(float deg) {
   const float bounded = constrain(deg, 0.0f, SERVO_TOTAL_ANGLE_DEG);
@@ -213,7 +215,9 @@ void setup() {
   ledcAttachPin(SERVO_SIGNAL_PIN, SERVO_PWM_CHANNEL);
 #endif
 
-  writeDeg(CENTER_DEG);
+  // attach 직후에도 유효한 RC 펄스를 만들지 않는다. 사용자가 c 명령을 내리면
+  // enableSignal()이 첫 출력부터 CENTER_DEG에 해당하는 동일한 펄스를 쓴다.
+  writePwm(0);
   printHelp();
 }
 

@@ -17,7 +17,10 @@
 //
 // Jetson `vehicle_kinematics` 의 `max_steering_rad` 와 같은 값이어야 한다 — 어긋나면
 // Jetson 이 보낸 명령을 펌웨어가 조용히 클램프하는 구간이 생긴다.
-constexpr int16_t STEERING_MAX_MDEG = 30000;  // 30.000°
+// **22° 는 실측이다** (2026-08-07 하드웨어 실측, S15P11A301-341). 종전 30000 은
+// 가정값이었고, 게인 분모가 이 값이라 30/30 = 1:1 로 계산돼 바퀴가 지령의 40%만
+// 꺾였다(R_min 4.41m). 젯슨 vehicle_kinematics(22.0)·esp32_bridge(22000)와 같은 값.
+constexpr int16_t STEERING_MAX_MDEG = 22000;  // 22.000° (실측 δ_max)
 
 // 후륜 목표 속도가 이 값보다 작으면 조향 목표 변경을 거부한다(§34-2). Jetson
 // `vehicle_kinematics` 의 `min_linear_mps`(0.03m/s)와 같은 값이다.

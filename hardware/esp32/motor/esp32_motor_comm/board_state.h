@@ -124,7 +124,7 @@ struct MotorSharedState {
   // 외부 10kΩ pull-down과 LEDC duty 0이 GPIO18을 LOW로 유지한다.
   bool servoArmed = false;         // 서보 PWM 출력. false 면 펄스를 끊어 서보가 free 가 된다
   uint8_t servoCenterDeg = 145;    // 서보 중립 각도. steering.cpp SERVO_CENTER_DEG 와 같은 기본값
-  uint8_t servoMaxOffsetDeg = 30;  // 좌우 최대 오프셋. δ_max 가 이 각도로 매핑된다
+  uint8_t servoMaxOffsetDeg = 55;  // 좌우 최대 오프셋(실측, S15P11A301-341). δ_max=22° 가 이 각도로 매핑된다 — 55/22 = 링키지 비 2.5
 
   // 캘리브레이션 조그 1회 요청. control_task 가 소비하며 §34-2 정지 중 조향 금지를
   // 의도적으로 우회한다 - 바퀴를 띄운 벤치에서 엔드포인트를 재는 것이 유일한 용도다.

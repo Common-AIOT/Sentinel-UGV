@@ -380,6 +380,24 @@ constexpr float MAX_VALID_DISTANCE_CM = 400.0f;
 // 사항이라(TBD-HW-011) 아직 반영하지 않는다.
 constexpr uint16_t PROXIMITY_STOP_DISTANCE_MM = 100;
 
+// **전방 보호정지 발동을 끈다** (2026-08-09, S15P11A301-353).
+//
+// 전방 HC-SR04 가 빈 공간에서 2.6~5.5cm 오측을 간헐적으로 내(15초 218표본 중
+// 9회, 커넥터 분리 시 0회 — 센서·배선 원인 확정) 위 임계에 걸릴 때마다
+// STOP_COMMAND 가 중계돼 주행이 끊겼다. 장애물 정지는 라이다 경로
+// (collision_monitor 정지 다각형, 전방 0.40m)가 담당하고 있어 초음파 발동
+// 없이도 시연 요구를 충족한다는 판단으로 **센서는 달아두되 정지 권한만 뺐다**.
+//
+// **끄는 지점이 여기여야 하는 이유**: 젯슨 쪽 중계(relay_protective_stop)만
+// 끄면 safety_gate 가 같은 토픽을 독립적으로 보고 여전히 막고, 발행을 멈추면
+// PROXIMITY_STALE 로 막는다(침묵도 차단 사유). 측정·발행은 유지한 채 발동
+// 판정만 꺼야 어느 층도 안 막힌다 — 후방 초음파가 이미 이 지위다(TBD-HW-011).
+//
+// **받아들인 리스크**: 라이다 평면(z=0.50) 아래의 낮은 장애물은 이제 아무도
+// 못 본다. 사람 다리·의자는 라이다에 잡히므로 교실 시연 기준 수용. 되살리려면
+// 이 플래그를 true 로 하고 353 완료 기준(빈 공간 15초 오측 0회)을 먼저 통과할 것.
+constexpr bool PROXIMITY_STOP_ENABLED = false;
+
 // 연속 노이즈성 실패(최소거리 미만 등) 횟수 - 이 이상 지속되면 fault로 본다.
 // echo 무응답(timeout)은 "5m 밖에 장애물 없음"으로 취급하며 fault가 아니다.
 constexpr uint32_t PROXIMITY_FAULT_STREAK_THRESHOLD = 20;
@@ -698,8 +716,10 @@ void envTaskFn(void* pvParameters) {
           s.frontMinDistanceMm = frontDistanceMm;
           s.validSensorMask |= PROXIMITY_FRONT_VALID_BIT;
           // 후방은 아직 protective_stop에 반영하지 않는다(위 PROXIMITY_STOP_DISTANCE_MM
-          // 주석 참고, TBD-HW-011) - 기존 전방 단독 안전 동작을 그대로 유지한다.
-          s.protectiveStop = (frontDistanceMm <= PROXIMITY_STOP_DISTANCE_MM) ? 1 : 0;
+          // 주석 참고, TBD-HW-011). 전방도 발동이 꺼져 있다(PROXIMITY_STOP_ENABLED,
+          // S15P11A301-353) - 거리 측정·발행은 유지하고 정지 권한만 뺐다.
+          s.protectiveStop = (PROXIMITY_STOP_ENABLED &&
+                              frontDistanceMm <= PROXIMITY_STOP_DISTANCE_MM) ? 1 : 0;
         } else {
           s.validSensorMask &= ~PROXIMITY_FRONT_VALID_BIT;
         }

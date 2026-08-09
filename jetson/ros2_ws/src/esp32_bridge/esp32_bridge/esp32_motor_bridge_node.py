@@ -68,6 +68,7 @@ Jetson 프레임 수신 여부다 - 방향이 반대라 서로를 대신하지 �
 from __future__ import annotations
 
 import json
+import struct
 import threading
 import time
 
@@ -524,26 +525,44 @@ class Esp32MotorBridgeNode(Node):
 
     def _handle_drive_state(self, payload: bytes) -> None:
         state = unpack_drive_state(payload)
+        fields = {
+            "applied_sequence": state.applied_sequence,
+            "state": _state_name(state.state),
+            "fault_flags": state.fault_flags,
+            "drive_pwm_left_permille": state.drive_pwm_left_permille,
+            "drive_pwm_right_permille": state.drive_pwm_right_permille,
+            "target_steering_mdeg": state.target_steering_mdeg,
+            "steering_actuator_cmd": state.steering_actuator_cmd,
+            "estop_active": bool(state.estop_active),
+            "driver_enabled": bool(state.driver_enabled),
+            # 수동 권한의 **출처** (S15P11A301-345). 참이면 관제가 승인한
+            # 수동이 아니라 젯슨 링크 침묵으로 폰이 관제 자리를 대신한
+            # 것이다. 구판 펌웨어(15바이트)에서는 항상 거짓이다.
+            "manual_fallback": bool(
+                state.authority_flags & AUTHORITY_FLAG_MANUAL_FALLBACK
+            ),
+        }
+
+        # ---- 임시 진단 (S15P11A301-339, 자율 미구동 조사) ----
+        # 보드의 comm_task.cpp 가 MOTOR_DRIVE_STATE_BYTES(16) 뒤 패딩 6바이트에
+        # arbitrateDrive() 의 owner/jetsonStale/decision 목표값을 실어 보낸다
+        # (motor_protocol.h 패딩 규칙상 구판 보드는 이 바이트를 아예 안 보내
+        # 0으로 채워지므로 owner=0/NONE·stale=False 로 읽혀도 혼동하지 말 것 -
+        # 이 필드가 유의미하려면 모터 보드도 이번 임시 패치가 올라가 있어야 한다).
+        # 원인 확인되면 이 블록과 보드 쪽 debug* 필드를 함께 제거한다.
+        if len(payload) >= 22:
+            owner_names = {0: "NONE", 1: "MANUAL", 2: "JETSON"}
+            fields["debug_drive_owner"] = owner_names.get(payload[16], payload[16])
+            fields["debug_jetson_stale"] = bool(payload[17])
+            fields["debug_decision_drive_left_mmps"] = struct.unpack_from(
+                "<h", payload, 18
+            )[0]
+            fields["debug_decision_drive_right_mmps"] = struct.unpack_from(
+                "<h", payload, 20
+            )[0]
+
         msg = String()
-        msg.data = json.dumps(
-            {
-                "applied_sequence": state.applied_sequence,
-                "state": _state_name(state.state),
-                "fault_flags": state.fault_flags,
-                "drive_pwm_left_permille": state.drive_pwm_left_permille,
-                "drive_pwm_right_permille": state.drive_pwm_right_permille,
-                "target_steering_mdeg": state.target_steering_mdeg,
-                "steering_actuator_cmd": state.steering_actuator_cmd,
-                "estop_active": bool(state.estop_active),
-                "driver_enabled": bool(state.driver_enabled),
-                # 수동 권한의 **출처** (S15P11A301-345). 참이면 관제가 승인한
-                # 수동이 아니라 젯슨 링크 침묵으로 폰이 관제 자리를 대신한
-                # 것이다. 구판 펌웨어(15바이트)에서는 항상 거짓이다.
-                "manual_fallback": bool(
-                    state.authority_flags & AUTHORITY_FLAG_MANUAL_FALLBACK
-                ),
-            }
-        )
+        msg.data = json.dumps(fields)
         self._drive_state_pub.publish(msg)
 
         # 폴백 래치는 **한 번만** 경고한다. 50Hz 로 오는 상태라 조건 없이 찍으면

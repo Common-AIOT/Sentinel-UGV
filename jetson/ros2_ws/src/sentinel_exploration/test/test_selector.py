@@ -165,7 +165,7 @@ def test_이득이_커도_후방이면_감쇠로_전방이_이긴다():
     assert s_front > s_rear
 
 
-def test_감쇠_계수는_전방1_정후방03():
+def test_감쇠_계수는_전방1_정후방015():
     weights = Weights(w_map=1.0, w_camera=0.0, w_dist=0.0, w_visit=0.0)
     gain = 10.0
     front = Candidate(x=1.0, y=0.0, kind='frontier', path_len_m=0.0, map_gain_m2=gain)
@@ -173,5 +173,5 @@ def test_감쇠_계수는_전방1_정후방03():
     rear = Candidate(x=-1.0, y=0.0, kind='frontier', path_len_m=0.0, map_gain_m2=gain)
     kw = dict(from_x=0.0, from_y=0.0, from_yaw=0.0, history=[])
     assert score(front, weights, **kw) == pytest.approx(10.0)
-    assert score(side, weights, **kw) == pytest.approx(6.5)   # 0.3+0.7×0.5
-    assert score(rear, weights, **kw) == pytest.approx(3.0)   # REAR_GAIN_FLOOR
+    assert score(side, weights, **kw) == pytest.approx(5.75)  # 0.15+0.85×0.5
+    assert score(rear, weights, **kw) == pytest.approx(1.5)   # REAR_GAIN_FLOOR

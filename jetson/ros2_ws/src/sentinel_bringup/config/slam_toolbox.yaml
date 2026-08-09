@@ -72,6 +72,14 @@ slam_toolbox:
     #
     # 오도메트리 정확도가 캘리브레이션(TBD-CAL-001)으로 확정된 뒤에 다시 판단한다.
     # 그때는 이동량 판정이 신뢰할 수 있으므로 0이 아닌 값의 이점이 생긴다.
+    #
+    # **2026-08-09 재판단(S15P11A301-363): 그래도 0 을 유지한다.** 정확도 조건은
+    # 충족됐지만(EKF 90° 회전에 89.02°), 위 「첫째」의 identity 경로가 여전히
+    # 살아 있고 「둘째」의 실측(정지 20초에 그래프 노드 127개 불변)이 이 값을
+    # 올릴 실익을 부정한다 — 정지 중 반복 매칭은 minimum_time_interval 이 이미
+    # 막고 있다. 지도 회전 문제(363)의 원인은 이 값이 아니라 위 매칭 탐색
+    # 범위였고, 그쪽을 고쳤다. 근거 없이 두 곳을 동시에 바꾸면 다음 실기동에서
+    # 무엇이 효과였는지 갈라낼 수 없다.
     minimum_travel_distance: 0.0
     minimum_travel_heading: 0.0
 
@@ -92,13 +100,31 @@ slam_toolbox:
     enable_interactive_mode: false
 
     # ---------------- 스캔 매칭 ----------------
-    # 오도메트리가 없으므로 스캔 매칭이 유일한 위치 추정 수단이다. 기본값보다
-    # 탐색 범위를 넓혀 초기 추정이 없는 상태를 보완한다.
+    # **전제가 바뀌었다** (S15P11A301-363). 이 블록의 값들은 「오도메트리가 없어
+    # 스캔 매칭이 유일한 단서」라는 전제로 탐색 범위를 넓혀 둔 것이었다. 지금은
+    # EKF 가 붙었고 정확도가 실측됐다 — 손으로 90° 회전 시 EKF 측정 89.02°
+    # (오차 1%), 정지 시 자이로 바이어스 분당 0.9°. 초기 추정이 이 정도로
+    # 정확하면 **탐색 범위를 넓게 두는 것이 오히려 해롭다**: 좁고 특징이 적은
+    # 공간에서 엉뚱한 각도의 벽에 더 잘 얹히기 때문이다.
+    #
+    # 2026-08-09 세 번째 실기동에서 지도가 실제 대비 약 90° 회전한 채 굳었고,
+    # 같은 벽이 두 각도로 겹친 줄무늬 아티팩트가 남았다. IMU·EKF 는 실측으로
+    # 결백이 확인됐으므로 map→odom 을 만드는 이 매칭이 원인이다.
+    #
+    # 그래서 탐색 공간을 기본값 수준(0.5 → 0.3)으로 좁히고, 각도 탐색도 함께
+    # 좁힌다. smear 는 매칭 응답을 뭉개 국소 최적을 넘게 하는 값인데, 초기
+    # 추정이 좋으면 그 뭉갬이 잘못된 각도로 끌려가는 통로가 된다.
     use_scan_matching: true
     use_scan_barycenter: true
-    correlation_search_space_dimension: 0.5
+    correlation_search_space_dimension: 0.3
     correlation_search_space_resolution: 0.01
-    correlation_search_space_smear_deviation: 0.1
+    correlation_search_space_smear_deviation: 0.03
+    # 각도 탐색 범위(rad)와 해상도. 기본값(0.349rad=20°)은 오도메트리 없는
+    # 구성을 위한 것이다. EKF 초기 추정이 1% 오차면 ±10° 로 충분하고, 이
+    # 범위를 넘는 매칭은 「다른 벽에 얹혔다」는 뜻이라 받아들이면 안 된다.
+    coarse_search_angle_offset: 0.175
+    fine_search_angle_offset: 0.00349
+    coarse_angle_resolution: 0.0349
 
     scan_buffer_size: 10
     scan_buffer_maximum_scan_distance: 10.0

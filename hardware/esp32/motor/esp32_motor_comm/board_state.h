@@ -158,6 +158,18 @@ struct MotorSharedState {
   // DRIVE_COMMAND 부재를 가려 안전 정지가 늦어진다 - 절대 합치지 말 것.
   uint32_t lastValidJetsonRxMs = 0;
   bool hasReceivedFromJetson = false;
+
+  // ---- 임시 진단 (S15P11A301-339, 자율 미구동 조사) ----
+  //
+  // arbitrateDrive() 가 이번 틱에 실제로 고른 owner 와 그 결과 applyDriveTargets()
+  // 로 넘어가는 목표값을 comm_task 가 DRIVE_STATE 패딩 바이트에 실어 Jetson으로
+  // 보낸다. AUTO_ACTIVE 로 보고되면서도 PWM 이 0으로 남는 사례에서, 젯슨 쪽에서는
+  // 이 함수 내부(owner 분기·jetsonStale 판정)가 보이지 않아 추가했다.
+  // 원인이 확인되면 이 필드와 관련 코드를 전부 제거한다.
+  uint8_t debugDriveOwner = 0xFF;       // DriveOwner 값. 0=NONE 1=MANUAL 2=JETSON
+  bool debugJetsonStale = false;
+  int16_t debugDecisionDriveLeftMmps = 0;
+  int16_t debugDecisionDriveRightMmps = 0;
 };
 
 void motorSharedStateInit();

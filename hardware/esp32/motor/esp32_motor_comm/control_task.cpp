@@ -45,6 +45,18 @@ void controlTaskFn(void* pvParameters) {
                             &jogPending, &jogMdeg](MotorSharedState& s) {
       decision = arbitrateDrive(s, now);
 
+      // ---- 임시 진단 (S15P11A301-339) ----
+      // arbitrateDrive() 내부의 jetsonStale 판정을 그대로 다시 계산한다(부작용
+      // 없는 순수 조건이라 중복 계산이 안전하다). owner 만으로는 "AUTO_ACTIVE로
+      // 보고되지만 실제로는 stale 분기로 새서 owner=NONE" 인 경우와 진짜
+      // owner=JETSON 인데 목표가 0인 경우를 구분할 수 없어서 둘 다 싣는다.
+      // board_state.h 필드 설명 참고. 원인 확인되면 이 블록 전체를 제거한다.
+      s.debugJetsonStale = s.hasAcceptedSequence &&
+          (now - s.lastValidDriveCommandMs > JETSON_WATCHDOG_TIMEOUT_MS);
+      s.debugDriveOwner = (uint8_t)decision.owner;
+      s.debugDecisionDriveLeftMmps = decision.driveLeftMmps;
+      s.debugDecisionDriveRightMmps = decision.driveRightMmps;
+
       centerDeg = s.servoCenterDeg;
       maxOffsetDeg = s.servoMaxOffsetDeg;
       armed = s.servoArmed;

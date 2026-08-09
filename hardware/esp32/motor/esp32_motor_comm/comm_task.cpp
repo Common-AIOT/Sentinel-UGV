@@ -105,9 +105,27 @@ void sendDriveState() {
   const uint8_t authorityFlags =
       snapshot.manualFallbackLatched ? AUTHORITY_FLAG_MANUAL_FALLBACK : 0;
 
-  uint8_t payload[MOTOR_DRIVE_STATE_BYTES];
-  size_t len = packMotorDriveState(state, authorityFlags, payload);
-  sendFrame(MSG_DRIVE_STATE, payload, len);
+  // MOTOR_PAYLOAD_BYTES(22) 전부를 잡아 둔다 - 아래 임시 진단이 packMotorDriveState
+  // 가 채우는 MOTOR_DRIVE_STATE_BYTES(16) 뒤 패딩 자리에 들어간다.
+  uint8_t payload[MOTOR_PAYLOAD_BYTES] = {0};
+  packMotorDriveState(state, authorityFlags, payload);
+
+  // ---- 임시 진단 (S15P11A301-339, 자율 미구동 조사) ----
+  // 구 디코더는 MOTOR_DRIVE_STATE_BYTES(16)까지만 읽어 이 뒤는 조용히 버리므로
+  // (motor_protocol.h 상단 설명과 같은 근거) 안전하게 얹을 수 있다. 원인이
+  // 확인되면 이 블록과 board_state.h 의 debug* 필드를 함께 제거한다.
+  //   [16]     debugDriveOwner   (0=NONE 1=MANUAL 2=JETSON, 0xFF=미기록)
+  //   [17]     debugJetsonStale  (0/1)
+  //   [18:20]  debugDecisionDriveLeftMmps  (int16 LE)
+  //   [20:22]  debugDecisionDriveRightMmps (int16 LE)
+  payload[16] = snapshot.debugDriveOwner;
+  payload[17] = snapshot.debugJetsonStale ? 1 : 0;
+  payload[18] = (uint8_t)((uint16_t)snapshot.debugDecisionDriveLeftMmps & 0xFF);
+  payload[19] = (uint8_t)(((uint16_t)snapshot.debugDecisionDriveLeftMmps >> 8) & 0xFF);
+  payload[20] = (uint8_t)((uint16_t)snapshot.debugDecisionDriveRightMmps & 0xFF);
+  payload[21] = (uint8_t)(((uint16_t)snapshot.debugDecisionDriveRightMmps >> 8) & 0xFF);
+
+  sendFrame(MSG_DRIVE_STATE, payload, MOTOR_PAYLOAD_BYTES);
 }
 
 // Arduino.h가 min()을 매크로로 정의하는 경우가 있어 템플릿 호출과 충돌할 수 있으므로

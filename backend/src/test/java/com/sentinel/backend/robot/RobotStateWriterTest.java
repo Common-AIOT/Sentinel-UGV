@@ -3,7 +3,11 @@ package com.sentinel.backend.robot;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.sql.Timestamp;
+import java.time.Clock;
 import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
@@ -43,6 +47,8 @@ class RobotStateWriterTest {
         private List<?> queryResult = List.of();
         /** 이 문자열을 담은 SQL 이 오면 던진다. V10 미적용 환경을 흉내낸다. */
         private String failOn;
+        /** 고아 종료 UPDATE 가 돌려줄 행 수. 0 이면 「시작 유예에 걸려 안 닫힘」이다. */
+        private int orphanCloseRows = 1;
 
         RecordingJdbc(int... counts) {
             for (int count : counts) {
@@ -52,6 +58,11 @@ class RobotStateWriterTest {
 
         RecordingJdbc openMission(UUID missionId) {
             queryResult = List.of(missionId);
+            return this;
+        }
+
+        RecordingJdbc orphanCloseRows(int rows) {
+            orphanCloseRows = rows;
             return this;
         }
 
@@ -75,6 +86,12 @@ class RobotStateWriterTest {
             // 순서가 바뀔 때마다 시험이 엉뚱한 것을 검사하게 된다.
             if (!statement.contains("UPDATE missions")) {
                 return 1;
+            }
+            // 고아 종료(S15P11A301-346)는 **상태 갱신과 다른 큐를 쓴다.** 둘이 같은
+            // 큐를 소비하면 한쪽 호출이 다른 쪽 몫을 가로채, 시험이 검사하려던 것과
+            // 다른 것을 검사하게 된다.
+            if (statement.contains("CONNECTION_LOST")) {
+                return orphanCloseRows;
             }
             return updateCounts.isEmpty() ? 0 : updateCounts.poll();
         }
@@ -104,6 +121,25 @@ class RobotStateWriterTest {
 
         boolean updated() {
             return sql.stream().anyMatch(s -> s.contains("UPDATE missions"));
+        }
+
+        /** S15P11A301-346 의 고아 임무 종료 UPDATE 가 나갔는지. */
+        boolean closedOrphan() {
+            return sql.stream().anyMatch(s -> s.contains("CONNECTION_LOST"));
+        }
+
+        String orphanSql() {
+            return sql.stream().filter(s -> s.contains("CONNECTION_LOST")).findFirst()
+                    .orElseThrow(() -> new AssertionError("고아 종료 UPDATE 가 나가지 않았다"));
+        }
+
+        Object[] orphanArgs() {
+            for (int i = 0; i < sql.size(); i++) {
+                if (sql.get(i).contains("CONNECTION_LOST")) {
+                    return args.get(i);
+                }
+            }
+            throw new AssertionError("고아 종료 UPDATE 가 나가지 않았다");
         }
 
         /** S15P11A301-350 의 robots UPSERT 가 나갔는지. */
@@ -341,5 +377,146 @@ class RobotStateWriterTest {
         new RobotStateWriter(jdbc, broadcaster).write(envelope(), state("EXPLORING", MISSION));
 
         assertEquals(List.of(MISSION + ":EXPLORING"), broadcaster.pushed);
+    }
+
+    // ── 고아 임무 종료 (S15P11A301-346) ─────────────────────────────────────
+    //
+    // 임무 중 스택이 STOP 없이 죽으면 그 임무를 닫는 주체가 아무도 없다. 서버에
+    // ended_at=null 로 영원히 남고 관제는 접속할 때마다 그것을 이어받아 「탐사중」을
+    // 표시한다. 여기서 고정하는 것은 **닫는 조건이 좁다**는 것이다 — 잘못 닫으면
+    // 진행 중인 임무가 사라진다.
+
+    /** 「임무 밖」이 얼마나 지속됐는지를 시험이 통제한다. */
+    private static RobotStateWriter writerAt(RecordingJdbc jdbc, RecordingBroadcaster b, Instant now) {
+        return new RobotStateWriter(jdbc, b, Clock.fixed(now, ZoneOffset.UTC));
+    }
+
+    private static final Instant T0 = Instant.parse("2026-08-09T05:00:00Z");
+
+    @Test
+    void orphanIsNotClosedBeforeConfirmWindow() {
+        // 기동 과도기의 한 프레임짜리 SAFE_IDLE 로 임무를 닫으면 안 된다.
+        RecordingJdbc jdbc = new RecordingJdbc(1).openMission(OPEN_MISSION);
+        RecordingBroadcaster broadcaster = new RecordingBroadcaster();
+        RobotStateData idle = state("SAFE_IDLE", null);
+
+        writerAt(jdbc, broadcaster, T0).write(envelope(), idle);
+
+        assertTrue(!jdbc.closedOrphan(), "첫 보고만으로 닫으면 안 된다");
+    }
+
+    @Test
+    void orphanIsClosedAfterSustainedAbsence() {
+        RecordingJdbc jdbc = new RecordingJdbc(1).openMission(OPEN_MISSION);
+        RecordingBroadcaster broadcaster = new RecordingBroadcaster();
+        RobotStateData idle = state("SAFE_IDLE", null);
+
+        // 같은 writer 가 시각만 달리 보도록 clock 을 옮겨 두 번 부른다.
+        MutableClock clock = new MutableClock(T0);
+        RobotStateWriter writer = new RobotStateWriter(jdbc, broadcaster, clock);
+        writer.write(envelope(), idle);          // 관측 시작
+        clock.at = T0.plusSeconds(6);            // 5초 초과
+        writer.write(envelope(), idle);
+
+        assertTrue(jdbc.closedOrphan(), "지속 확인 뒤에는 닫는다");
+        String sql = jdbc.orphanSql();
+        assertTrue(sql.contains("CONNECTION_LOST"), "정상 종료와 구분되는 사유여야 한다");
+        assertTrue(sql.contains("started_at IS NOT NULL"), "시작 유예가 SQL 에 있어야 한다");
+        assertEquals(List.of(OPEN_MISSION + ":COMPLETED"), broadcaster.pushed);
+    }
+
+    @Test
+    void endedAtIsWhenAbsenceBeganNotNow() {
+        // 종료 시각을 「지금」으로 적으면 로봇이 죽어 있던 시간이 임무 시간에 들어간다.
+        RecordingJdbc jdbc = new RecordingJdbc(1).openMission(OPEN_MISSION);
+        MutableClock clock = new MutableClock(T0);
+        RobotStateWriter writer = new RobotStateWriter(jdbc, new RecordingBroadcaster(), clock);
+        RobotStateData idle = state("SAFE_IDLE", null);
+
+        writer.write(envelope(), idle);
+        clock.at = T0.plusSeconds(30);
+        writer.write(envelope(), idle);
+
+        Object[] args = jdbc.orphanArgs();
+        assertEquals(Timestamp.from(T0), args[0], "ended_at 은 「임무 밖」이 시작된 시각이다");
+    }
+
+    @Test
+    void returningToMissionResetsTheOrphanClock() {
+        // 한 프레임이라도 임무 안이면 그 임무는 살아 있다 — 처음부터 다시 센다.
+        RecordingJdbc jdbc = new RecordingJdbc(1, 1, 1).openMission(OPEN_MISSION);
+        MutableClock clock = new MutableClock(T0);
+        RobotStateWriter writer = new RobotStateWriter(jdbc, new RecordingBroadcaster(), clock);
+
+        writer.write(envelope(), state("SAFE_IDLE", null));
+        clock.at = T0.plusSeconds(3);
+        writer.write(envelope(), state("EXPLORING", MISSION));   // 임무 안으로 복귀
+        clock.at = T0.plusSeconds(7);
+        writer.write(envelope(), state("SAFE_IDLE", null));      // 다시 시작 — 아직 3초
+
+        assertTrue(!jdbc.closedOrphan(), "복귀했으면 누적이 초기화돼야 한다");
+    }
+
+    @Test
+    void activeMissionIdIsNeverTreatedAsOrphan() {
+        // 젯슨이 missionId 를 실어 보내면 임무를 수행 중이라는 뜻이다. SAFE_IDLE 처럼
+        // 보여도 닫지 않는다.
+        RecordingJdbc jdbc = new RecordingJdbc(1, 1);
+        MutableClock clock = new MutableClock(T0);
+        RobotStateWriter writer = new RobotStateWriter(jdbc, new RecordingBroadcaster(), clock);
+
+        writer.write(envelope(), state("SAFE_IDLE", MISSION));
+        clock.at = T0.plusSeconds(60);
+        writer.write(envelope(), state("SAFE_IDLE", MISSION));
+
+        assertTrue(!jdbc.closedOrphan());
+    }
+
+    @Test
+    void justStartedMissionSurvivesTheStartGrace() {
+        // **이 유예가 없으면 방금 시작한 정상 임무를 서버가 즉시 닫는다.** START 로
+        // 임무 행을 만든 뒤 젯슨이 EXPLORING 으로 전환하기까지 1~2초 동안 로봇 보고는
+        // 아직 SAFE_IDLE 이고, 그것은 「임무 밖」과 구별되지 않는다.
+        //
+        // 유예는 SQL 의 started_at 조건이 지키므로 0행이 돌아온다. 그때 상태를
+        // 계속 관측해야 한다 — 여기서 누적을 지우면 영영 안 닫힌다.
+        RecordingJdbc jdbc = new RecordingJdbc(1, 1).openMission(OPEN_MISSION).orphanCloseRows(0);
+        RecordingBroadcaster broadcaster = new RecordingBroadcaster();
+        MutableClock clock = new MutableClock(T0);
+        RobotStateWriter writer = new RobotStateWriter(jdbc, broadcaster, clock);
+        RobotStateData idle = state("SAFE_IDLE", null);
+
+        writer.write(envelope(), idle);
+        clock.at = T0.plusSeconds(6);
+        writer.write(envelope(), idle);
+
+        // SQL 은 나갔지만 0행이다 — 임무는 살아 있고, 상태 갱신은 계속된다.
+        assertTrue(jdbc.closedOrphan(), "유예 판정은 SQL 이 한다");
+        assertTrue(broadcaster.pushed.stream().noneMatch(p -> p.endsWith(":COMPLETED")),
+                "닫히지 않았으면 COMPLETED 를 밀면 안 된다");
+    }
+
+    /** 시험에서 시간을 앞으로 돌리기 위한 clock. */
+    private static final class MutableClock extends Clock {
+        private Instant at;
+
+        MutableClock(Instant at) {
+            this.at = at;
+        }
+
+        @Override
+        public Instant instant() {
+            return at;
+        }
+
+        @Override
+        public ZoneId getZone() {
+            return ZoneOffset.UTC;
+        }
+
+        @Override
+        public Clock withZone(ZoneId zone) {
+            return this;
+        }
     }
 }

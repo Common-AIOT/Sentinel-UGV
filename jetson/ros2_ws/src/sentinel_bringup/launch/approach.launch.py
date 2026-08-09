@@ -45,16 +45,21 @@ def generate_launch_description() -> LaunchDescription:
     return LaunchDescription([
         DeclareLaunchArgument(
             'stop_distance_m',
-            default_value='0.60',
+            default_value='1.20',
             description=(
                 '이 거리에서 도착으로 보고 SAFE_POSE_REACHED 를 낸다. '
-                'collision_monitor 정지 구역(0.40m)보다 커야 한다 — 작으면 안전 체인이 '
-                '먼저 속도를 0 으로 만들어 도착 선언이 나오지 않는다.'
+                'collision_monitor 정지 구역(전방 1.05m, S15P11A301-356)보다 커야 한다 — '
+                '작으면 사람 다리가 정지 구역에 먼저 들어와 안전 체인이 속도를 0 으로 '
+                '만들고 도착 선언이 영원히 나오지 않는다. 구역을 조정하면 여기도 같이 본다.'
             ),
         ),
         DeclareLaunchArgument(
             'max_speed_mps',
-            default_value='0.10',
+            # 모듈 기본값(approach.py DEFAULT_MAX_SPEED_MPS)과 같은 값이어야 한다.
+            # 342 가 모듈만 0.25 로 고치고 여기를 놓쳐 0.10 이 덮었다 — 데드밴드
+            # (150mm/s) 아래라 실속도 0, 첫 실기동에서 APPROACH_FAILED 의 원인
+            # (S15P11A301-357).
+            default_value='0.25',
             description='24.2 피해자 접근 상한. 안전 체인과 함께 지킨다.',
         ),
         DeclareLaunchArgument(

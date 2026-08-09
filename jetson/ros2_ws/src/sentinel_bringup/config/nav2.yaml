@@ -148,7 +148,10 @@ controller_server:
       max_lookahead_dist: 0.6
       use_velocity_scaled_lookahead_dist: false
       transform_tolerance: 0.2
-      min_approach_linear_velocity: 0.05
+      # 데드밴드(150mm/s) 위여야 한다 (S15P11A301-357). 0.05 는 도착 직전 로봇을
+      # 기어가게 만드는데 그 속도는 펌웨어가 0 으로 만들어 영원히 도착하지 못한다.
+      # 0.25 는 확실히 움직이는 최저 대역(342 실측: 명령 대비 실속도 82%)이다.
+      min_approach_linear_velocity: 0.25
       approach_velocity_scaling_dist: 0.5
       use_collision_detection: true
       max_allowed_time_to_collision_up_to_carrot: 1.0
@@ -157,15 +160,14 @@ controller_server:
       # **이것은 곡률 상한이 아니라 감속 임계다** (S15P11A301-348). 반경이 이 값
       # 아래로 급해지면 RPP 가 속도를 줄이는데, 그 곡선을 여전히 명령한다.
       #
-      # 0.4 는 차동 구동 시절 값이고 이 차량과 맞지 않는다 — R_min 이 1.69m 라
-      # 0.4m 반경은 아예 못 돈다. R_min 근처(1.7~2.0)로 올리면 못 도는 곡률에
-      # 접근할 때 미리 감속해 아래 「클램프」 구간이 줄어든다.
-      #
-      # 지금 올리지 않는 이유: S15P11A301-341(링키지 비 2.5)이 펌웨어에 반영되면
-      # **실제 R_min 이 4.4m 에서 1.69m 로 바뀐다.** 그 전에 값을 정하면 두 번
-      # 만지게 되므로, 341 뒤에 실주행으로 확정한다.
-      regulated_linear_scaling_min_radius: 0.4
-      regulated_linear_scaling_min_speed: 0.1
+      # 1.8 은 341 완료 후 확정한 값이다 (S15P11A301-357). 실측 R_min 이 좌 1.37m·
+      # 우 1.76m 이므로 안전측(우회전) 위로 잡았다 — 못 도는 곡률에 접근하면
+      # 미리 감속해 조향 클램프 구간이 줄어든다. 0.4 는 차동 구동 시절 값이었다.
+      regulated_linear_scaling_min_radius: 1.8
+      # 감속 하한도 데드밴드(150mm/s) 위여야 한다 (S15P11A301-357). 0.1 이던
+      # 2026-08-09 첫 실기동에서 급곡률 감속이 이 값까지 내려가자 펌웨어가 0 으로
+      # 만들었다 — 조향은 상한에 붙고 구동만 죽어 「바퀴만 꺾고 서 있는」 증상.
+      regulated_linear_scaling_min_speed: 0.25
       # 조향 차량은 제자리에서 방향을 맞출 수 없다. true 로 두면 RPP 가
       # v=0·ω 를 내고 로봇은 앞바퀴만 꺾은 채 서 있는다.
       use_rotate_to_heading: false

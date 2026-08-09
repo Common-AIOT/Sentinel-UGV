@@ -201,11 +201,14 @@ def generate_launch_description():
         # nav2 가 아니라 탐지(enable_detector)다. 기본은 꺼짐이며 모터를 돌리는
         # 스위치(enable_safety)는 사람이 따로 켠다.
         DeclareLaunchArgument('enable_approach', default_value='false'),
-        # 접근 정지거리. 기본값은 approach.launch.py 가 갖는다(0.60m) — 여기서
-        # 다시 적으면 두 곳이 어긋난다. 빈 문자열이면 그쪽 기본값이 쓰인다.
+        # 접근 정지거리. **approach.launch.py 기본값과 같은 값이어야 한다** —
+        # 여기 선언이 그쪽 기본값을 항상 덮는다(아래 include 가 무조건 넘긴다).
+        # 실제로 어긋난 적이 있다: 357 이 그쪽만 1.20 으로 올렸는데 여기 0.60 이
+        # 남아 실효값은 그대로였다. 값의 근거(정지 구역 1.05m 와의 결합)는
+        # approach.launch.py 에 있다.
         #
         # 올리는 용도는 아래 include 주석에 있다(S15P11A301-332).
-        DeclareLaunchArgument('stop_distance_m', default_value='0.60'),
+        DeclareLaunchArgument('stop_distance_m', default_value='1.20'),
         # 안전 체인 (S15P11A301-237). Nav2 와 같은 이유로 기본 꺼짐이며, 추가로
         # **켜는 순간 바퀴가 돌 수 있는 상태가 된다.** 지금까지 데모 스택은
         # /cmd_vel 발행자가 없어서 구조적으로 못 움직였는데, 이 체인이 그 연결을
@@ -349,8 +352,8 @@ def generate_launch_description():
         # 즉시 도착을 선언해 6초 안에 첫 멘트가 나온다 — **같은 코드 경로가
         # 그대로 돈다.** 우회 플래그를 만들지 않는 이유다.
         #
-        # 기본값 0.60 은 approach.launch.py 가 갖는다. 여기서 다시 적으면 두
-        # 곳이 어긋난다.
+        # 값은 위 DeclareLaunchArgument 에서 approach.launch.py 기본값과 같게
+        # 유지한다 — 여기서 무조건 넘기므로 두 곳이 어긋나면 이쪽이 이긴다.
         _include('sentinel_bringup', 'approach.launch.py',
                  '_effective_approach', 12.0,
                  launch_arguments={

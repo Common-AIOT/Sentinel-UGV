@@ -7,11 +7,15 @@
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
+import pytest
 
 from sentinel_exploration.coverage import CameraCoverage
 from sentinel_exploration.grid import GridInfo
 from sentinel_exploration.selector import (
+    TURN_RADIUS_M,
     Candidate,
     Commitment,
     Weights,
@@ -123,3 +127,24 @@ def test_격자_밖_후보는_이득이_없다():
     grid = np.zeros((10, 10), dtype=np.int8)
     info = GridInfo(resolution=0.05, origin_x=0.0, origin_y=0.0, width=10, height=10)
     assert compute_gains(grid, info, CameraCoverage(), 99.0, 99.0) == (0.0, 0.0)
+
+
+def test_같은_이득이면_전방_후보가_이긴다():
+    # 전방 편향 (S15P11A301-357): 방위각을 회전 호 비용(R·|Δθ|)으로 환산해
+    # 거리에 가산한다. 로봇이 +x 를 보고 있을 때 정후방 후보는 같은 거리라도
+    # π·R ≈ 5.7m 어치 손해를 본다.
+    weights = Weights(w_map=0.0, w_camera=0.0, w_dist=1.0, w_visit=0.0)
+    front = Candidate(x=2.0, y=0.0, kind='frontier', path_len_m=2.0)
+    rear = Candidate(x=-2.0, y=0.0, kind='frontier', path_len_m=2.0)
+    s_front = score(front, weights, from_x=0.0, from_y=0.0, from_yaw=0.0, history=[])
+    s_rear = score(rear, weights, from_x=0.0, from_y=0.0, from_yaw=0.0, history=[])
+    assert s_front == -2.0                      # 정면은 가산 0
+    assert s_rear == pytest.approx(-2.0 - TURN_RADIUS_M * math.pi)
+    assert s_front > s_rear
+
+
+def test_yaw_없으면_편향이_없다():
+    # 시험·후방 호환: from_yaw 를 안 주면 종전 점수 그대로다.
+    weights = Weights(w_map=0.0, w_camera=0.0, w_dist=1.0, w_visit=0.0)
+    rear = Candidate(x=-2.0, y=0.0, kind='frontier', path_len_m=2.0)
+    assert score(rear, weights, from_x=0.0, from_y=0.0, history=[]) == -2.0

@@ -87,7 +87,12 @@ controller_server:
     controller_frequency: 10.0
     min_x_velocity_threshold: 0.001
     min_theta_velocity_threshold: 0.001
-    failure_tolerance: 0.5
+    # RPP 가 유효 명령을 못 내는 상태(충돌 예측 등)를 이 시간까지 참는다.
+    # 0.5 였던 두 번째 실기동에서 collision-ahead 가 뜨자마자 7/7 목표가
+    # 중단됐다 (S15P11A301-360). 일시적 예측(지도 갱신 중, 스캔 노이즈)은
+    # 몇 사이클이면 걷히므로 2초를 준다 — 진짜 막힘은 2초 뒤에도 막혀 있고,
+    # 그때 중단·재계획하는 것이 맞다.
+    failure_tolerance: 2.0
     progress_checker_plugin: "progress_checker"
     goal_checker_plugins: ["general_goal_checker"]
     controller_plugins: ["FollowPath"]

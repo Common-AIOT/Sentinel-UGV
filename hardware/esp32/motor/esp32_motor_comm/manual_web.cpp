@@ -90,6 +90,11 @@ String stateBody(const MotorSharedState& s, const char* result) {
   out += (int)s.state;
   out += ",\"lat\":";
   out += s.manualLatched ? 1 : 0;
+  // 권한이 **어디서 왔는가** (S15P11A301-345). `lat` 이 1 인데 `fb` 가 0 이면 관제가
+  // 승인한 수동이고, `fb` 가 1 이면 젯슨 링크 침묵으로 폰이 관제 자리를 대신하고
+  // 있다는 뜻이다. 화면이 그 둘을 구분해 보여 준다.
+  out += ",\"fb\":";
+  out += s.manualFallbackLatched ? 1 : 0;
   out += ",\"dm\":";
   out += s.manualDeadman ? 1 : 0;
   out += ",\"rearm\":";

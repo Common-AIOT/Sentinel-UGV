@@ -56,10 +56,26 @@ struct MotorSharedState {
   // 수동이 액추에이션 권한을 쥐고 있는가. 이것이 참인 동안 젯슨의 DRIVE_COMMAND 는
   // 기록만 되고 바퀴에 닿지 않는다.
   //
+  // **세우는 것은 관제의 SET_MODE(MANUAL) 하나뿐이다** (S15P11A301-345). 폰 입력은
+  // 이 값을 세우지 못하며, 거짓인 동안 폰 패킷은 장부에만 기록되고 바퀴에 닿지
+  // 않는다. 유일한 예외가 아래 `manualFallbackLatched` 의 링크 침묵 폴백이다.
+  //
   // **푸는 길은 SET_MODE(AUTO) 하나뿐이다.** 모바일 「정지」·deadman 해제·수동 TTL
   // 만료·WiFi 끊김·STOP_COMMAND·젯슨 재접속(HELLO)은 전부 바퀴만 0 으로 만들고 이
   // 값을 건드리지 않는다. 예외는 ESTOP 뿐이며 그것은 권한을 막는 게 아니라 벗긴다.
   bool manualLatched = false;
+  // 위 래치가 **관제 승인이 아니라 링크 침묵 폴백으로** 걸렸다 (S15P11A301-345).
+  //
+  // 순간 플래그가 아니라 래치다. 폴백은 정의상 젯슨이 침묵하는 동안 발동하므로,
+  // 발동 순간의 DRIVE_STATE 는 아무도 받지 못한다. 링크가 살아난 뒤 관제가
+  // 「그때 폰이 권한을 가져갔다」를 볼 수 있어야 하므로 사실을 붙들고 있다가
+  // `DRIVE_STATE.authorityFlags` 로 계속 보고한다.
+  //
+  // 내려가는 경로도 하나뿐이다 - `SET_MODE(AUTO)` 수락. 그것이 관제가 권한을
+  // 되찾는 순간이고, 곧 관제가 이 사실을 확인했다는 유일한 증거다. **ESTOP 은
+  // 내리지 않는다** - E-Stop 이 수동 권한을 벗기는 것과 「폴백이 발동했었다」는
+  // 사실은 다른 층이고, 여기서 지우면 정전 구간의 발동이 영원히 사라진다.
+  bool manualFallbackLatched = false;
   // 관제·초음파 중계의 STOP_COMMAND 를 받았다. 손을 뗐다가 다시 눌러야 움직인다.
   //
   // 무조건 잠그지 않는 이유: 전륜 조향에서 정지 구역 탈출은 후진뿐이고 후방 센싱이
@@ -85,7 +101,9 @@ struct MotorSharedState {
   // 것을 보냈다")가 파괴된다.
   bool manualSteeringRequested = false;
 
-  // 승격 판정용 연속 패킷 run. 100ms·2패킷을 채워야 래치가 걸린다.
+  // 연속 패킷 run. 100ms·2패킷이 「페이지가 열려만 있는가, 사람이 실제로 조종
+  // 중인가」를 가른다. S15P11A301-345 이후 이 판정이 래치를 거는 곳은 링크 침묵
+  // 폴백 하나뿐이다.
   bool manualRunActive = false;
   uint8_t manualRunPackets = 0;
   uint32_t manualRunStartedMs = 0;

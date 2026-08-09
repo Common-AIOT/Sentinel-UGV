@@ -67,6 +67,7 @@ void testFixedSizes() {
   expectTrue(MOTOR_PAYLOAD_BYTES == 22, "MOTOR_PAYLOAD_BYTES == 22 (fits DIAGNOSTIC)");
   expectTrue(MOTOR_FRAME_BYTES == 27, "MOTOR_FRAME_BYTES == 27 (2 sync+1 type+1 seq+22 payload+1 crc)");
   expectTrue(MOTOR_DIAGNOSTIC_BYTES == 22, "MOTOR_DIAGNOSTIC_BYTES == 22");
+  expectTrue(MOTOR_DRIVE_STATE_BYTES == 16, "MOTOR_DRIVE_STATE_BYTES == 16 (15 + authorityFlags)");
 }
 
 void testBuildParseRoundTripHello() {
@@ -124,6 +125,73 @@ void testBuildParseRoundTripDriveCommand() {
                  out.maxSteeringRateMdps == cmd.maxSteeringRateMdps &&
                  out.commandTimeoutMs == cmd.commandTimeoutMs,
              "DRIVE_COMMAND fields survive the sync+CRC8 framing unchanged");
+}
+
+// ---- DRIVE_STATE 권한 확장 (S15P11A301-345) ----
+
+DriveState sampleDriveState() {
+  DriveState state{};
+  state.appliedSequence = 4321;
+  state.state = 3;  // MANUAL_ACTIVE
+  state.faultFlags = 0x0001;
+  state.drivePwmLeftPermille = -400;
+  state.drivePwmRightPermille = -400;
+  state.targetSteeringMdeg = -12000;
+  state.steeringActuatorCmd = 1400;
+  state.estopActive = 0;
+  state.driverEnabled = 1;
+  return state;
+}
+
+void testMotorDriveStateRoundTrip() {
+  const DriveState state = sampleDriveState();
+
+  uint8_t payload[MOTOR_DRIVE_STATE_BYTES];
+  size_t len = packMotorDriveState(state, AUTHORITY_FLAG_MANUAL_FALLBACK, payload);
+  expectTrue(len == MOTOR_DRIVE_STATE_BYTES, "packMotorDriveState produces 16 bytes (15 + authority)");
+  expectTrue(MOTOR_DRIVE_STATE_BYTES <= MOTOR_PAYLOAD_BYTES,
+             "the extra byte still fits the fixed 22-byte payload (no frame change)");
+
+  DriveState out{};
+  uint8_t flags = 0xFF;
+  bool ok = unpackMotorDriveState(payload, MOTOR_DRIVE_STATE_BYTES, out, flags);
+  expectTrue(ok, "unpackMotorDriveState accepts its own fixed length");
+  expectTrue(out.appliedSequence == state.appliedSequence && out.state == state.state &&
+                 out.faultFlags == state.faultFlags &&
+                 out.drivePwmLeftPermille == state.drivePwmLeftPermille &&
+                 out.drivePwmRightPermille == state.drivePwmRightPermille &&
+                 out.targetSteeringMdeg == state.targetSteeringMdeg &&
+                 out.steeringActuatorCmd == state.steeringActuatorCmd &&
+                 out.estopActive == state.estopActive &&
+                 out.driverEnabled == state.driverEnabled,
+             "the 15-byte DriveState prefix round-trips unchanged");
+  expectEqU8(flags, AUTHORITY_FLAG_MANUAL_FALLBACK, "authorityFlags round-trips");
+
+  expectTrue(!unpackMotorDriveState(payload, DRIVE_STATE_BYTES, out, flags),
+             "the old 15-byte length is not accepted by the extended unpack");
+}
+
+// 이 티켓의 호환성 주장 전부가 여기에 걸려 있다. 확장 바이트는 **뒤에** 붙으므로
+// 앞 15바이트는 구 젯슨 디코더가 읽던 것과 정확히 같아야 한다 - 한 바이트라도
+// 밀리면 관제 화면의 PWM·조향값이 조용히 틀려진다.
+void testAuthorityByteIsAppendedNotInserted() {
+  const DriveState state = sampleDriveState();
+
+  uint8_t legacy[DRIVE_STATE_BYTES];
+  packDriveState(state, legacy);
+
+  uint8_t extended[MOTOR_DRIVE_STATE_BYTES];
+  packMotorDriveState(state, AUTHORITY_FLAG_MANUAL_FALLBACK, extended);
+
+  expectTrue(std::memcmp(legacy, extended, DRIVE_STATE_BYTES) == 0,
+             "the first 15 bytes are byte-identical to packDriveState (old decoders unaffected)");
+  expectEqU8(extended[DRIVE_STATE_BYTES], AUTHORITY_FLAG_MANUAL_FALLBACK,
+             "the authority byte sits at offset 15, in what used to be zero padding");
+
+  // 폴백이 아닌 평시에는 0 이다 - 구 디코더가 보던 패딩 값과 같다.
+  packMotorDriveState(state, 0, extended);
+  expectEqU8(extended[DRIVE_STATE_BYTES], 0,
+             "no fallback -> the byte reads 0, exactly the padding old firmware sent");
 }
 
 void testMotorDiagnosticRoundTrip() {
@@ -237,6 +305,8 @@ int main() {
   testFixedSizes();
   testBuildParseRoundTripHello();
   testBuildParseRoundTripDriveCommand();
+  testMotorDriveStateRoundTrip();
+  testAuthorityByteIsAppendedNotInserted();
   testMotorDiagnosticRoundTrip();
   testCorruptedCrcIsRejected();
   testBadSyncIsRejected();

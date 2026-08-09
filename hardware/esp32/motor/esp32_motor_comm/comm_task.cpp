@@ -98,8 +98,15 @@ void sendDriveState() {
   state.estopActive = (snapshot.state == MotorBoardState::ESTOP_LATCHED) ? 1 : 0;
   state.driverEnabled = motorDriverEnabled() ? 1 : 0;
 
-  uint8_t payload[DRIVE_STATE_BYTES];
-  size_t len = packDriveState(state, payload);
+  // 권한의 출처를 함께 싣는다 (S15P11A301-345). 래치이므로 링크가 죽어 있던 동안
+  // 발동한 폴백도 복구 후 관제가 볼 수 있다 - 순간 플래그였다면 그 프레임을 받을
+  // 사람이 애초에 없었다. 15바이트 뒤에 붙는 1바이트라 구 젯슨 디코더에는 보이지
+  // 않는다(motor_protocol.h 참고).
+  const uint8_t authorityFlags =
+      snapshot.manualFallbackLatched ? AUTHORITY_FLAG_MANUAL_FALLBACK : 0;
+
+  uint8_t payload[MOTOR_DRIVE_STATE_BYTES];
+  size_t len = packMotorDriveState(state, authorityFlags, payload);
   sendFrame(MSG_DRIVE_STATE, payload, len);
 }
 
@@ -294,6 +301,11 @@ void handleEstopCommand(uint8_t sequence) {
     // E-Stop 은 수동 권한을 **막는 게 아니라 벗긴다**. 래치와 세션을 함께 파괴해
     // 폰이 새 세션을 받기 전에는 아무것도 못 하게 한다. 모든 것을 무효화하는
     // 최상위 안전 장치이므로 다른 정지 경로와 다른 층에 있다.
+    //
+    // **`manualFallbackLatched` 는 여기서 지우지 않는다** (S15P11A301-345).
+    // 권한을 벗기는 것과 「폴백이 발동했었다」는 사실은 다른 층이다. 링크가 죽은
+    // 구간에서 폴백이 걸리고 사람이 E-Stop 을 눌렀다면, 여기서 지우는 순간 관제는
+    // 그 사건을 영영 알 수 없다. 내려가는 곳은 SET_MODE(AUTO) 한 곳뿐이다.
     s.manualLatched = false;
     s.manualReArmRequired = false;
     s.manualDeadman = false;

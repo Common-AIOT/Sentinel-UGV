@@ -565,6 +565,15 @@ const char CONTROL_PAGE[] PROGMEM = R"rawliteral(
       var notes = [];
       var res = resultText(body.res);
       if (res) notes.push(res);
+      // S15P11A301-345: 권한이 없으면 눌러도 바퀴가 안 돈다. 그 사실이 화면에
+      // 보이지 않으면 이번 티켓이 고치려는 「원인이 어디에도 안 보인다」를 폰
+      // 쪽에서 그대로 재현하게 된다.
+      // ESTOP/FAULT 래치(6·7)는 사유가 다르므로 여기서 말하지 않는다 - 그쪽은
+      // `BOARD_LATCHED` 결과 문구가 이미 정확히 설명한다.
+      if (!body.lat && holding() && body.st !== 6 && body.st !== 7) {
+        notes.push('관제 승인 필요 — 관제에서 「수동」을 눌러야 조종됩니다');
+      }
+      if (body.fb) notes.push('젯슨 링크 침묵 — 폴백으로 권한을 잡고 있습니다');
       if (body.rearm) notes.push('관제 정지 수신 — 손을 떼고 다시 누르세요');
       if (body.dz) notes.push('방향 전환 대기 (약 0.5초)');
       if (body.nosteer && steerPercent !== 0 && holding()) {
@@ -870,7 +879,7 @@ const char CONTROL_PAGE[] PROGMEM = R"rawliteral(
       var lin = Math.round(linMilli() * demo.spd / 100);
       var driving = Math.abs(lin) >= STEER_MIN_LIN;
       return {
-        st: 3, lat: 1, dm: holding() ? 1 : 0, rearm: 0, dz: 0,
+        st: 3, lat: 1, fb: 0, dm: holding() ? 1 : 0, rearm: 0, dz: 0,
         nosteer: driving ? 0 : 1,
         pwm: Math.round(lin * 255 / 1000),
         sdeg: driving ? -steerPercent * 10 * STEERING_MAX_DEG : demo.jog * 1000,

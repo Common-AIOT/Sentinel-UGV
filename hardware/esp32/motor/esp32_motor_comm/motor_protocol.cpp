@@ -60,6 +60,23 @@ MotorParseResult parseMotorFrame(const uint8_t* frame, size_t len,
   return MotorParseResult::OK;
 }
 
+size_t packMotorDriveState(const DriveState& in, uint8_t authorityFlags, uint8_t* out) {
+  // 앞 15바이트는 공유 packDriveState() 가 그대로 만든다. 여기서 다시 쓰지 않는
+  // 것이 중요하다 - 두 벌이 되면 필드 하나가 바뀔 때 한쪽만 고쳐진다.
+  size_t offset = packDriveState(in, out);
+  writeU8(out, offset, authorityFlags);
+  return offset;
+}
+
+bool unpackMotorDriveState(const uint8_t* payload, size_t len, DriveState& out,
+                            uint8_t& outAuthorityFlags) {
+  if (len != MOTOR_DRIVE_STATE_BYTES) return false;
+  if (!unpackDriveState(payload, DRIVE_STATE_BYTES, out)) return false;
+  size_t offset = DRIVE_STATE_BYTES;
+  outAuthorityFlags = readU8(payload, offset);
+  return true;
+}
+
 size_t packMotorDiagnostic(const MotorDiagnostic& in, uint8_t* out) {
   size_t offset = 0;
   writeU8(out, offset, in.boardRole);

@@ -39,7 +39,11 @@ constexpr uint8_t SERVO_PWM_CHANNEL = 4;
 // S15P11A301-312 부터 **런타임에 조정할 수 있다**(steeringApplyCalibration).
 // 부팅값은 여전히 아래 상수이고, 재부팅하면 반드시 여기로 돌아온다.
 constexpr float SERVO_CENTER_DEG = 145.0f;
-constexpr float SERVO_MAX_OFFSET_DEG = 30.0f;
+// **55° 는 실측이다** (2026-08-07, S15P11A301-341) — 중립 145° 에서 좌우 ±55°
+// (90~200°)가 링키지 기계 한계 안의 실사용 범위이고, 그때 앞바퀴가 22° 꺾인다.
+// 즉 링키지 비 = 55/22 = 2.5 (서보 2.5도당 바퀴 1도). 종전 30 은 벤치 가정값이라
+// 게인이 30/30 = 1:1 이 되어 바퀴가 지령의 40%만 꺾였다.
+constexpr float SERVO_MAX_OFFSET_DEG = 55.0f;
 
 float g_centerDeg = SERVO_CENTER_DEG;
 float g_maxOffsetDeg = SERVO_MAX_OFFSET_DEG;

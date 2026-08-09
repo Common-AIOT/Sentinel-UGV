@@ -68,25 +68,42 @@ launch_patterns=(
   "sentinel_bringup viz.launch.py"
 )
 
-# 정상 종료 후에도 남는 것을 훑는 목록이다. 돌고 있는 스택에서 실제로 열거한
-# 프로세스 경로를 그대로 쓴다 — 짧은 이름으로 찾으면 무관한 것을 잡는다.
+# 정상 종료 후에도 남는 것을 훑는 목록이다.
 #
-# 지금 안 떠 있는 cloud_bridge 와 foxglove_bridge 도 넣는다. 조건부로 뜨는
-# 노드를 목록에서 빼면 그 조건이 켜진 날에만 남는다. 그런 것이 가장 찾기 어렵다.
+# **열거하지 않는다 — 접두사로 덮는다** (S15P11A301-351). 종전에는 노드를 하나씩
+# 적었는데, 목록에 없는 노드가 살아남아도 이 스크립트가 「모두 내려갔습니다」라고
+# 말했다. 2026-08-09 에 실제로 10개(sentinel 5 + nav2 5)가 남은 채 그 문구가 나왔고,
+# 곧바로 demo_up.sh 가 「이미 돌고 있습니다」로 거부했다. 두 스크립트가 서로 다른
+# 기준을 갖고 있었던 것이다 — demo_up.sh 는 S15P11A301-338 에서 넓은 패턴으로 짰다.
+#
+# 목록으로 관리하면 **패키지가 늘 때마다 여기를 고쳐야 하고, 안 고치면 조용히
+# 남는다.** 없는 보호를 있다고 믿게 하는 형태다. 그래서 워크스페이스 설치 경로와
+# nav2 설치 경로를 통째로 덮는다. 새 sentinel 패키지는 자동으로 포함된다.
+#
+# `collect_pids` 가 `grep -F`(고정 문자열)를 쓰므로 정규식은 못 쓴다. 접두사
+# 문자열이면 충분하다 — 어차피 설치 경로가 고정이다.
 node_patterns=(
+  # 워크스페이스 install 아래 노드 전부.
+  #
+  # **`sentinel_` 접두사로 좁히지 않는다.** 이 워크스페이스에는 그 이름을 따르지
+  # 않는 패키지가 있다 — `esp32_bridge` 가 그렇다. 2026-08-09 검증 중에
+  # esp32_motor_bridge·esp32_sensor_bridge 둘이 살아남아 `demo_up.sh` 의 flock 을
+  # 쥔 채로 남았고, 다음 기동이 「다른 demo_up.sh 가 이미 기동 중」으로 거부됐다.
+  # 원인이 시리얼도 락 파일도 아니라 **정리 목록의 접두사**였다.
+  "/ros2_ws/install/"
+  # nav2 는 demo.launch.py 가 띄우므로 스택의 일부다. 종전 목록에 아예 없어서
+  # controller_server·behavior_server·bt_navigator·waypoint_follower·
+  # velocity_smoother 5개가 그대로 남았다.
+  "/opt/ros/humble/lib/nav2_"
+  # 아래는 위 두 접두사에 안 걸리는 것들이라 계속 열거한다.
   "lib/usb_cam/usb_cam_node_exe"
   "lib/ydlidar_ros2_driver/ydlidar_ros2_driver_node"
   "lib/robot_state_publisher/robot_state_publisher"
   "lib/tf2_ros/static_transform_publisher"
   "lib/slam_toolbox/async_slam_toolbox_node"
   "bin/mediamtx"
-  "lib/sentinel_streaming/stream_pipeline"
-  "lib/sentinel_recorder/recording_manager"
-  "lib/sentinel_recorder/map_saver"
-  "lib/sentinel_recorder/map_uploader"
-  "lib/sentinel_recorder/media_uploader"
-  "lib/sentinel_mission/mission_manager"
-  "lib/sentinel_bridge/cloud_bridge"
+  # 지금 안 떠 있는 것도 넣는다. 조건부로 뜨는 노드를 목록에서 빼면 그 조건이
+  # 켜진 날에만 남는다. 그런 것이 가장 찾기 어렵다.
   "sentinel_voice.ros_node"
   "-m src.ros_main"
   "foxglove_bridge"

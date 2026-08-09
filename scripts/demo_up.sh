@@ -66,10 +66,16 @@ fi
 #
 #   launch 부모     어떤 인자로 띄웠든 스택마다 정확히 하나 있다. 정상 경로는
 #                   이것으로 다 걸린다.
-#   sentinel_* 노드 launch 부모가 죽고 노드만 남은 상태를 덮는다. 2026-08-07 에
+#   워크스페이스 노드 launch 부모가 죽고 노드만 남은 상태를 덮는다. 2026-08-07 에
 #                   실제로 그 상태를 만났다. 패키지를 하나로 특정하지 않고
-#                   install/sentinel_*/lib/ 경로로 잡으므로 어떤 조합으로 띄워도
-#                   최소 하나는 걸린다.
+#                   ros2_ws/install/ 경로로 잡으므로 어떤 조합으로 띄워도 최소
+#                   하나는 걸린다.
+#
+#                   **`sentinel_` 로 좁히지 않는다** (S15P11A301-351). 이 워크스페이스
+#                   에는 그 이름을 안 따르는 패키지가 있다 — `esp32_bridge` 가 그렇다.
+#                   좁은 패턴이던 동안 esp32_*_bridge 둘이 살아남아 아래 flock 을 쥔
+#                   채로 남았고, 다음 기동이 「다른 demo_up.sh 가 이미 기동 중」으로
+#                   거부됐다. demo_down.sh 의 정리 기준과 같은 문자열을 쓴다.
 #
 # 패턴을 **파이썬 인터프리터에 앵커한다.** `pgrep -f` 는 명령줄 전체를 보므로 앵커가
 # 없으면 이 문자열을 인자로 가진 아무 셸이나 grep 이 함께 잡힌다(검증 중 실제로
@@ -91,7 +97,7 @@ if [[ -n "${SENTINEL_ALLOW_MULTIPLE:-}" ]]; then
 else
   py='^[^[:space:]]*python[0-9.]*[[:space:]]+[^[:space:]]*'
   running_stack="$(pgrep -f "${py}/ros2[[:space:]]+launch[[:space:]]+sentinel_bringup" 2>/dev/null || true)"
-  running_nodes="$(pgrep -f "${py}/install/sentinel_[a-z_]+/lib/" 2>/dev/null || true)"
+  running_nodes="$(pgrep -f "${py}/ros2_ws/install/" 2>/dev/null || true)"
   running_stack="$(printf '%s\n%s\n' "${running_stack}" "${running_nodes}" | sed '/^$/d' | sort -un)"
   if [[ -n "${running_stack}" ]]; then
     # PID 를 전부 늘어놓으면 13줄이 되어 정작 아래 안내가 묻힌다. 개수와 앞

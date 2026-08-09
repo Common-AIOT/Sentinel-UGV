@@ -1,7 +1,13 @@
 package com.sentinel.backend.robot;
 
+import java.sql.Timestamp;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -47,6 +53,22 @@ import com.sentinel.backend.realtime.RealtimeBroadcaster;
  * <p>ACK 와 상태 메시지의 순서는 젯슨의 단일 MQTT 연결과 서버의 Paho 콜백 한 스레드가
  * 보존한다({@code MqttGateway.messageArrived}). 즉 START ACK 뒤에 옛 SAFE_IDLE 이
  * 도착해 표시를 되돌리는 경합은 생기지 않는다.
+ *
+ * <h2>예외 하나 — 고아 임무는 이 writer 가 닫는다 (S15P11A301-346)</h2>
+ *
+ * 위 원칙의 유일한 예외다. 임무 중 스택이 STOP 없이 죽으면 <b>그 임무를 닫는 주체가
+ * 아무도 없다</b> — {@code CommandAckWriter} 는 명령 ACK 로만 움직이는데 그 명령이
+ * 영영 오지 않기 때문이다. 서버에 {@code ended_at=null} 로 영원히 남고, 관제는 접속할
+ * 때마다 그 유령 임무를 이어받아 「탐사중」으로 표시한다 — 로봇은 대기 중인데.
+ *
+ * <p>그래서 <b>로봇이 살아서 「임무 밖」이라고 말할 때만</b> 닫는다. 「응답 없음」으로는
+ * 절대 닫지 않는다 — 무선만 끊긴 경우 로봇은 여전히 주행 중이고 링크가 살아나면 그대로
+ * 이어져야 한다. 침묵은 신선도 표시의 몫이지 종료의 근거가 아니다.
+ *
+ * <p>오판을 막는 조건이 둘이고 <b>둘 다 필수다</b>: 연속 {@link #ORPHAN_CONFIRM}(기동
+ * 과도기의 한 프레임짜리 SAFE_IDLE 무시)과 {@link #START_GRACE}(방금 시작한 임무를 즉시
+ * 닫지 않기). 종료 사유는 {@code OPERATOR_STOP} 과 구분되는
+ * {@link #END_REASON_CONNECTION_LOST} 로 남긴다.
  */
 @Service
 public class RobotStateWriter {
@@ -99,6 +121,59 @@ public class RobotStateWriter {
     private static final Set<String> CONTROL_MODES = Set.of("MANUAL", "AUTO");
 
     /**
+     * 고아 임무를 닫는 사유. {@code OPERATOR_STOP} 과 <b>구분해야 한다</b> —
+     * 이력에서 정상 종료와 비정상 종료가 섞이면 「시연 중 몇 번 죽었나」를 셀 수 없다.
+     */
+    private static final String END_REASON_CONNECTION_LOST = "CONNECTION_LOST";
+
+    /**
+     * 이 시간 동안 <b>연속으로</b> 「임무 밖」을 보고해야 임무를 닫는다.
+     *
+     * <p>기동 과도기의 한 프레임짜리 {@code SAFE_IDLE} 에 반응하지 않기 위해서다.
+     * 1Hz heartbeat 이므로 5초는 5프레임이다.
+     */
+    private static final Duration ORPHAN_CONFIRM = Duration.ofSeconds(5);
+
+    /**
+     * 시작 직후 이 시간 안의 임무는 닫지 않는다.
+     *
+     * <p><b>이 유예가 없으면 방금 시작한 정상 임무를 서버가 즉시 닫는다.</b> START 로
+     * 임무 행을 만든 뒤 젯슨이 EXPLORING 으로 전환하기까지 1~2초 동안 로봇 보고는
+     * 아직 {@code SAFE_IDLE} 이고, 그것은 위 「임무 밖」 조건과 구별되지 않는다.
+     */
+    private static final Duration START_GRACE = Duration.ofSeconds(10);
+
+    /**
+     * 젯슨이 「임무 밖」이라고 말하는 상태들.
+     *
+     * <p>젯슨은 이때 {@code activeMissionId} 를 비운다
+     * ({@code message_mapper.MISSION_ACTIVE_BY_STATE}). 그런데 DB 에 열린 임무가
+     * 남아 있으면 그 임무는 <b>정의상 고아</b>다 — 젯슨이 임무를 복구했다면
+     * {@code PAUSED} + missionId 를 보고했을 것이기 때문이다(37-3 복구 규약).
+     */
+    private static final Set<String> MISSION_ABSENT_STATES = Set.of("SAFE_IDLE", "COMPLETED");
+
+    /**
+     * 고아 임무를 닫는다. <b>「응답 없음」으로는 절대 닫지 않는다.</b>
+     *
+     * <p>닫는 근거는 적극적 증거(로봇이 살아서 「임무 밖」이라고 말한 것)여야 한다.
+     * 무선만 끊긴 경우 로봇은 여전히 EXPLORING 을 수행 중이고, 링크가 살아나면 그대로
+     * 이어져야 한다 — 침묵은 신선도 표시의 몫이지 임무 종료의 근거가 아니다.
+     *
+     * <p>{@code started_at} 조건이 시작 유예다. {@code started_at IS NULL} 은 START ACK
+     * 이 아직 안 온 임무이며 그것도 닫지 않는다 — 만들어지는 중일 수 있다.
+     */
+    private static final String CLOSE_ORPHAN = """
+            UPDATE missions
+               SET status = 'COMPLETED',
+                   ended_at = COALESCE(ended_at, ?),
+                   end_reason = COALESCE(end_reason, '""" + END_REASON_CONNECTION_LOST + """
+            ')
+             WHERE id = ? AND ended_at IS NULL
+               AND started_at IS NOT NULL AND started_at < ?
+            """;
+
+    /**
      * 제어 모드는 <b>임무가 아니라 로봇에</b> 적는다 (S15P11A301-350).
      *
      * <p>2026-08-08 실기동에서 폰이 모터 보드를 수동으로 승격시킨 21:04 부터 14분간 관제
@@ -125,10 +200,24 @@ public class RobotStateWriter {
 
     private final JdbcTemplate jdbc;
     private final RealtimeBroadcaster broadcaster;
+    private final Clock clock;
+    /**
+     * 로봇별로 「임무 밖」 보고가 시작된 시각 (S15P11A301-346).
+     *
+     * <p>Paho 콜백은 한 스레드지만 이 맵은 시험에서도 쓰이므로 동시성 자료구조를
+     * 쓴다. 로봇 수만큼만 자라고, 임무 안으로 돌아오면 지운다.
+     */
+    private final Map<String, Instant> orphanSince = new ConcurrentHashMap<>();
 
     public RobotStateWriter(JdbcTemplate jdbc, RealtimeBroadcaster broadcaster) {
+        this(jdbc, broadcaster, Clock.systemUTC());
+    }
+
+    /** 시험이 시간을 통제하기 위한 생성자. 5초·10초 조건을 실시간으로 재면 시험이 느려진다. */
+    RobotStateWriter(JdbcTemplate jdbc, RealtimeBroadcaster broadcaster, Clock clock) {
         this.jdbc = jdbc;
         this.broadcaster = broadcaster;
+        this.clock = clock;
     }
 
     public void write(MessageEnvelope envelope, RobotStateData data) {
@@ -157,7 +246,21 @@ public class RobotStateWriter {
         if (missionId == null) {
             // 진행 중 임무가 없으면 옮겨 적을 곳이 없다. 로봇을 손으로 미는 것은
             // 임무 밖 행위이며 기록 대상이 아니다.
+            orphanSince.remove(envelope.robotId());
             return;
+        }
+
+        // 고아 임무 종료 (S15P11A301-346). 젯슨이 「임무 밖」인데 DB 에 임무가 열려
+        // 있으면, 그 임무를 닫는 주체가 아무도 없어 영원히 남는다 — 관제는 접속할
+        // 때마다 그것을 이어받아 「탐사중」으로 표시한다.
+        if (data.activeMissionId() == null && MISSION_ABSENT_STATES.contains(reported)) {
+            if (closeOrphanIfSustained(envelope.robotId(), missionId, reported)) {
+                return;
+            }
+        } else {
+            // 「임무 밖」이 끊기면 처음부터 다시 센다. 한 프레임이라도 임무 안이면
+            // 그 임무는 살아 있다.
+            orphanSince.remove(envelope.robotId());
         }
 
         if (jdbc.update(UPDATE_STATUS, reported, missionId, reported) == 0) {
@@ -196,6 +299,34 @@ public class RobotStateWriter {
             log.warn("제어 모드를 쓰지 못했다(임무 상태 갱신은 계속한다): robotId={}, controlMode={}",
                     robotName, controlMode, e);
         }
+    }
+
+    /**
+     * 「임무 밖」이 {@link #ORPHAN_CONFIRM} 이상 지속됐으면 임무를 닫는다.
+     *
+     * @return 닫았으면 {@code true} — 호출자는 그 임무에 상태를 더 쓰지 않는다.
+     */
+    private boolean closeOrphanIfSustained(String robotName, UUID missionId, String reported) {
+        Instant now = clock.instant();
+        Instant since = orphanSince.computeIfAbsent(robotName, key -> now);
+        if (Duration.between(since, now).compareTo(ORPHAN_CONFIRM) < 0) {
+            return false;
+        }
+
+        // 시작 유예는 SQL 이 지킨다 — started_at 이 이 시각보다 오래된 임무만 닫는다.
+        Timestamp cutoff = Timestamp.from(now.minus(START_GRACE));
+        // 종료 시각은 **지금이 아니라 「임무 밖」이 시작된 시각**이다. 그때까지가
+        // 실제 임무 구간이고, 지금으로 적으면 죽어 있던 시간이 임무 시간에 들어간다.
+        if (jdbc.update(CLOSE_ORPHAN, Timestamp.from(since), missionId, cutoff) == 0) {
+            // 유예 안이거나 이미 닫혔다. 유예 안이면 다음 heartbeat 에 다시 본다.
+            return false;
+        }
+
+        orphanSince.remove(robotName);
+        log.info("고아 임무를 닫았다: missionId={} robotId={} 보고상태={} 종료시각={} 사유={}",
+                missionId, robotName, reported, since, END_REASON_CONNECTION_LOST);
+        broadcaster.missionStatus(missionId, "COMPLETED");
+        return true;
     }
 
     private UUID openMissionOf(String robotName) {

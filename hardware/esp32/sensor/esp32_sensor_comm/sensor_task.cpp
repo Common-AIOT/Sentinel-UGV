@@ -523,23 +523,41 @@ void sensorTaskFn(void* pvParameters) {
 
   // §34-8: IMU I2C 읽기 100Hz. 엔코더도 같은 버스라 같은 주기로 함께 읽는다
   // (ENCODER_STATE 송신은 comm_task가 50Hz로 계속 내보낸다).
+  //
+  // **주기를 절대 시각으로 고정한다** (S15P11A301-339). 종전의 `vTaskDelay` 는
+  // 상대 지연이라 실제 주기가 10ms + 작업시간이 됐다. 같은 루프에서 MT6701 두 개와
+  // MPU6050 을 I2C 로 읽으므로 실측 약 34ms 였고, 0.15 m/s 에서 샘플당 모터 0.53
+  // 회전이라 MT6701 의 반회전 모호성(`countDelta`)을 넘겼다. 계측 주행에서 전진
+  // +2.0m 가 -0.245m 로 **부호까지 반전**되어 보고된 것이 그 증거다.
   constexpr uint32_t SENSOR_TASK_INTERVAL_MS = 10;
-  constexpr float SENSOR_TASK_INTERVAL_S = SENSOR_TASK_INTERVAL_MS / 1000.0f;
 
   uint32_t lastReconnectMs = 0;
+  // dt 를 실측한다. **명목값을 쓰면 안 된다** (S15P11A301-339). 종전에는
+  // `SENSOR_TASK_INTERVAL_MS / 1000.0f` 를 그대로 넘겨서, 34ms 동안 움직인 거리를
+  // 10ms 로 나눴다 — 보고 속도가 약 3.4배 부풀려졌다. 위 절대 주기 고정과 **다른
+  // 결함이다**: 감김은 countDelta 의 문제이고 이것은 나눗셈의 문제라, 하나만
+  // 고치면 다른 하나가 남는다. 주기가 밀리는 순간(I2C 재연결 등)에도 속도가
+  // 틀리지 않으려면 실측이어야 한다.
+  uint32_t lastUs = micros();
+  TickType_t xLastWakeTime = xTaskGetTickCount();
 
   for (;;) {
     const uint32_t now = millis();
+    const uint32_t nowUs = micros();
+    // micros() 는 32비트라 약 71.6분에 감긴다. 부호 없는 뺄셈이라 감기는 순간에도
+    // 차이가 맞는다 — nowUs 나 lastUs 를 signed 로 바꾸면 그 성질이 깨진다.
+    const float dtSeconds = (nowUs - lastUs) / 1e6f;
+    lastUs = nowUs;
 
     int16_t leftSpeedMmps = 0;
     int16_t rightSpeedMmps = 0;
 
     if (g_leftEncoder.online &&
-        !updateEncoderChannel(g_leftEncoder, SENSOR_TASK_INTERVAL_S, leftSpeedMmps)) {
+        !updateEncoderChannel(g_leftEncoder, dtSeconds, leftSpeedMmps)) {
       g_leftEncoder.online = false;
     }
     if (g_rightEncoder.online &&
-        !updateEncoderChannel(g_rightEncoder, SENSOR_TASK_INTERVAL_S, rightSpeedMmps)) {
+        !updateEncoderChannel(g_rightEncoder, dtSeconds, rightSpeedMmps)) {
       g_rightEncoder.online = false;
     }
 
@@ -625,7 +643,7 @@ void sensorTaskFn(void* pvParameters) {
       s.lastEncoderUpdateMs = now;
     });
 
-    vTaskDelay(pdMS_TO_TICKS(SENSOR_TASK_INTERVAL_MS));
+    vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(SENSOR_TASK_INTERVAL_MS));
   }
 }
 

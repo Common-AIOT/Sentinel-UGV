@@ -96,6 +96,14 @@ def generate_launch_description() -> LaunchDescription:
                 executable='async_slam_toolbox_node',
                 name='slam_toolbox',
                 output='screen',
+                # respawn 은 「임무마다 새 지도」의 반쪽이다 (S15P11A301-362).
+                # Humble slam_toolbox 엔 지도 리셋 서비스가 없어, mission_manager 가
+                # MISSION_START 때 이 프로세스에 종료 신호를 보내면 여기 respawn 이
+                # 빈 지도로 되살린다. map frame 원점은 그 시점의 로봇 위치가 된다.
+                # 예기치 않은 slam 죽음도 같은 경로로 복구되는 덤이 있다 — 단 그때는
+                # 지도를 잃는다(우리 지도 수명 정책상 수용).
+                respawn=True,
+                respawn_delay=1.0,
                 parameters=[
                     config,
                     {'use_sim_time': LaunchConfiguration('use_sim_time')},

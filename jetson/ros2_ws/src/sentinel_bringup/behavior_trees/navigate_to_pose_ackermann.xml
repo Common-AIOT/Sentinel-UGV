@@ -52,7 +52,11 @@
             <ClearEntireCostmap name="ClearGlobalCostmap-Subtree" service_name="global_costmap/clear_entirely_global_costmap"/>
           </Sequence>
           <Wait wait_duration="5"/>
-          <BackUp backup_dist="0.30" backup_speed="0.05"/>
+          <!-- backup_speed 는 데드밴드(150mm/s) 위여야 한다 (S15P11A301-358). 0.05 는
+               펌웨어가 0 으로 만들어 「후진 복구가 도는데 로봇이 안 움직이는」 죽은
+               기능이었다. 0.25 는 확실히 움직이는 최저 대역(342 실측)이고, 후방은
+               collision_monitor 정지 구역(뒤 범퍼 뒤 0.24m, 358)이 지킨다. -->
+          <BackUp backup_dist="0.30" backup_speed="0.25"/>
         </RoundRobin>
       </ReactiveFallback>
     </RecoveryNode>

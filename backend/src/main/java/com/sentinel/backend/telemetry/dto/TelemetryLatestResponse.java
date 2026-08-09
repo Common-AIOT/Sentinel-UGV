@@ -17,6 +17,18 @@ import java.time.Instant;
  * ESP32 가 계수하고 젯슨이 역산한 오도메트리라, 센서 보드가 빠지면 온습도와 함께 빈다.
  */
 public record TelemetryLatestResponse(
+        /**
+         * 제어 모드 MANUAL·AUTO·null (S15P11A301-350).
+         *
+         * <p><b>이 응답에서 유일하게 하이퍼테이블이 아닌 값이다</b> — {@code robots} 에서
+         * 온다. 제어 모드는 임무에도 시계열에도 매이지 않기 때문이다. 임무가 닫힌 뒤에
+         * 사람이 폰을 잡는 것이 이 값이 필요한 대표 상황인데, 그 구간에는 telemetry 가
+         * 아예 쌓이지 않는다.
+         *
+         * <p>{@code null} 은 「모름」이며 <b>AUTO 로 뭉개면 안 된다.</b> 그렇게 하면
+         * 수동 조종 중에도 화면이 「자율」을 띄우는데, 그것이 이 필드를 만든 이유다.
+         */
+        String controlMode,
         Instant environmentTime,
         Double temperature,
         Double humidity,

@@ -16,6 +16,7 @@ const FRESH_ISO = new Date(NOW - 1_000).toISOString();
 /** 배포 후 응답. 필드가 전부 있다. */
 function full(): TelemetryLatest {
   return {
+    controlMode: "AUTO",
     environmentTime: FRESH_ISO, temperature: 25, humidity: 60,
     mcuTime: FRESH_ISO, mcuConnected: true, motorLinkOk: true,
     recorderOk: true, recorderLastFailure: null,

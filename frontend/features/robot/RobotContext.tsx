@@ -15,6 +15,7 @@ import { missionStateFromServer, pickActiveMission } from "./missionStatus";
 import { api, ApiError, type CommandType } from "@/lib/api";
 import { motionFromLatest } from "@/features/telemetry/motionReading";
 import {
+  controlModeFromLatest,
   motorLinkFromLatest,
   sensorsFromLatest,
   sensorsFromMissionPoint,
@@ -148,10 +149,16 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
   /**
    * 서버 상태를 화면에 반영한다. 푸시·폴링·명령 거부 공용. COMPLETED 는 임무를 닫는다.
    *
-   * `controlMode` 도 서버 값에서 파생한다 (S15P11A301-298). 이것이 있어야
-   * **새로고침 후에도 수동 표시가 유지된다** — 종전에는 낙관적 전이만 있어
-   * 페이지를 다시 열면 자율로 보였다. 파생 규칙은 젯슨
-   * `mission_state.control_mode` 와 같다(MANUAL 이 아니면 AUTO).
+   * **`controlMode` 는 여기서 파생하지 않는다** (S15P11A301-350). S15P11A301-298 이
+   * 새로고침 후 수동 표시를 유지하려고 `missions.status` 에서 파생시켰는데, 그 칸은
+   * `ended_at IS NULL` 가드가 지켜서 **임무가 닫히면 갱신이 멈춘다.** 2026-08-08
+   * 실기동에서 임무 종료 뒤 폰이 보드를 수동으로 승격시켰고, 관제는 14분간 「자율」을
+   * 보여줬다. 지금은 `robots.control_mode` 를 `/telemetry/latest` 로 받아
+   * `controlModeFromLatest` 가 판정한다 — 임무와 무관하게 산다.
+   *
+   * 두 곳에서 같은 칸을 쓰지 않는 것이 요점이다. 파생을 남긴 채 새 경로를 더하면
+   * 임무 중에 두 값이 서로 다른 순간에 같은 칸을 덮고, 어긋났을 때 어느 쪽이 맞는지
+   * 알 수 없다 — 316 이 백엔드에서 정리한 것과 같은 원칙이다.
    */
   const applyServerStatus = useCallback((serverStatus: string) => {
     const mapped = missionStateFromServer(serverStatus);
@@ -161,7 +168,6 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
     setStatus(s => ({
       ...s,
       missionState: mapped,
-      controlMode: mapped === "MANUAL" ? "MANUAL" : "AUTO",
     }));
     if (serverStatus === "COMPLETED") {
       // 다음 explore 가 새 임무를 만들 수 있게 활성 임무를 비운다.
@@ -324,16 +330,33 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
         const sensors = sensorsFromLatest(d, Date.now());
         setSensors(sensors);
         setMotion(motionFromLatest(d, Date.now()));
-        setStatus(s => ({
-          ...s,
-          health: {
-            ...s.health,
-            mcuConnected: sensors.mcuConnected,
-            // 모터 보드 링크 (S15P11A301-317). mcuTime 과 같은 행에서 오므로 신선도
-            // 판정이 mcuConnected 와 같고, 그 판정은 sensorReading 이 갖는다.
-            motorLinkOk: motorLinkFromLatest(d, Date.now()),
-          },
-        }));
+        // 제어 모드 (S15P11A301-350). **임무와 독립된 유일한 경로다.**
+        //
+        // 종전에는 `missions.status` 에서 파생했는데(applyServerStatus), 임무가 닫히면
+        // 그 경로가 죽어 화면이 실제와 다른 모드를 표시했다 — 2026-08-08 실기동에서
+        // 14분간 「자율」이었다. 이제 서버가 `robots.control_mode` 로 직접 준다.
+        //
+        // 낙관 유예를 여기서도 지킨다. 이 폴링은 2초라 토글 직후 왕복이 끝나기 전에
+        // 한 번 더 돌고, 그때 옛 값을 덮어쓰면 **토글이 눌린 직후 되튕긴다.**
+        const serverMode = controlModeFromLatest(d, Date.now());
+        setStatus(s => {
+          const pc = pendingCommand.current;
+          const inGrace = pc != null && Date.now() - pc.at < COMMAND_GRACE_MS;
+          // 유예 안에서 서버가 아직 옛 값을 주면 낙관값을 지킨다. 유예가 지나면
+          // 서버가 이긴다 — 거부됐을 때 화면이 낙관값으로 굳지 않게 한다.
+          const keepOptimistic = inGrace && serverMode !== s.controlMode;
+          return {
+            ...s,
+            controlMode: keepOptimistic ? s.controlMode : serverMode,
+            health: {
+              ...s.health,
+              mcuConnected: sensors.mcuConnected,
+              // 모터 보드 링크 (S15P11A301-317). mcuTime 과 같은 행에서 오므로 신선도
+              // 판정이 mcuConnected 와 같고, 그 판정은 sensorReading 이 갖는다.
+              motorLinkOk: motorLinkFromLatest(d, Date.now()),
+            },
+          };
+        });
       } catch {
         // 일시적 오류는 다음 폴링에 맡긴다. 마지막 표시값은 유지된다.
       }

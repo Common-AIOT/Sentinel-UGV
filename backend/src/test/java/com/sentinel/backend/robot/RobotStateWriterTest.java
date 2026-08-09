@@ -41,6 +41,8 @@ class RobotStateWriterTest {
         private final List<Object[]> args = new ArrayList<>();
         private final Deque<Integer> updateCounts = new ArrayDeque<>();
         private List<?> queryResult = List.of();
+        /** 이 문자열을 담은 SQL 이 오면 던진다. V10 미적용 환경을 흉내낸다. */
+        private String failOn;
 
         RecordingJdbc(int... counts) {
             for (int count : counts) {
@@ -53,10 +55,27 @@ class RobotStateWriterTest {
             return this;
         }
 
+        RecordingJdbc failOn(String fragment) {
+            failOn = fragment;
+            return this;
+        }
+
         @Override
         public int update(String statement, Object... arguments) {
             sql.add(statement);
             args.add(arguments);
+            if (failOn != null && statement.contains(failOn)) {
+                throw new org.springframework.dao.InvalidDataAccessResourceUsageException(
+                        "column \"control_mode\" does not exist");
+            }
+            // 행 수는 **UPDATE missions 에만** 준다. 큐를 호출 순서대로 소비하면
+            // S15P11A301-350 이 더한 robots UPSERT 가 임무 갱신 몫의 1 을 가로채
+            // 갱신 0행 → broadcast 없음이 되고, 이 파일의 시험 셋이 조용히 거짓이 된다.
+            // 생성자에 숫자를 하나 더 넣어 통과시키면 안 된다 — write() 안의 호출
+            // 순서가 바뀔 때마다 시험이 엉뚱한 것을 검사하게 된다.
+            if (!statement.contains("UPDATE missions")) {
+                return 1;
+            }
             return updateCounts.isEmpty() ? 0 : updateCounts.poll();
         }
 
@@ -85,6 +104,20 @@ class RobotStateWriterTest {
 
         boolean updated() {
             return sql.stream().anyMatch(s -> s.contains("UPDATE missions"));
+        }
+
+        /** S15P11A301-350 의 robots UPSERT 가 나갔는지. */
+        boolean upsertedControlMode() {
+            return sql.stream().anyMatch(s -> s.contains("INSERT INTO robots"));
+        }
+
+        Object[] controlModeArgs() {
+            for (int i = 0; i < sql.size(); i++) {
+                if (sql.get(i).contains("INSERT INTO robots")) {
+                    return args.get(i);
+                }
+            }
+            throw new AssertionError("robots UPSERT 가 나가지 않았다");
         }
     }
 
@@ -170,8 +203,11 @@ class RobotStateWriterTest {
 
         new RobotStateWriter(jdbc, broadcaster).write(envelope(), state("SAFE_IDLE", null));
 
-        assertTrue(jdbc.sql.getFirst().contains("r.name = ?"), "로봇 이름으로 열린 임무를 찾는다");
-        assertEquals("SENTINEL-01", jdbc.args.getFirst()[0]);
+        // 첫 SQL 은 제어 모드 UPSERT 다(S15P11A301-350). 열린 임무 조회는 그다음이라
+        // getFirst() 로 찾지 않는다.
+        String lookup = jdbc.sql.stream().filter(s -> s.contains("r.name = ?")).findFirst()
+                .orElseThrow(() -> new AssertionError("로봇 이름으로 열린 임무를 찾지 않았다"));
+        assertTrue(lookup.contains("ended_at IS NULL"), "열린 임무만 찾는다");
         assertEquals("SAFE_IDLE", jdbc.updateArgs()[0]);
         assertEquals(List.of(OPEN_MISSION + ":SAFE_IDLE"), broadcaster.pushed);
     }
@@ -207,7 +243,7 @@ class RobotStateWriterTest {
 
         new RobotStateWriter(jdbc, broadcaster).write(envelope(), state("TELEPORTING", MISSION));
 
-        assertTrue(jdbc.sql.isEmpty());
+        assertTrue(!jdbc.updated(), "모르는 임무 상태는 쓰지 않는다");
         assertTrue(broadcaster.pushed.isEmpty());
     }
 
@@ -219,7 +255,91 @@ class RobotStateWriterTest {
 
         new RobotStateWriter(jdbc, broadcaster).write(envelope(), state(null, MISSION));
 
-        assertTrue(jdbc.sql.isEmpty());
+        assertTrue(!jdbc.updated(), "임무 상태를 지어내지 않는다");
         assertTrue(broadcaster.pushed.isEmpty());
+    }
+
+    // ── 제어 모드 (S15P11A301-350) ──────────────────────────────────────────
+
+    @Test
+    void controlModeIsWrittenWithoutAnyMission() {
+        // 이 티켓의 핵심. 2026-08-08 실기동에서 임무가 21:03 에 닫힌 뒤 21:04 에 폰이
+        // 보드를 수동으로 승격시켰고, 옮겨 적을 곳이 없어 관제가 14분간 「자율」을
+        // 보여줬다. 임무가 없어도 제어 모드는 쓰여야 한다.
+        RecordingJdbc jdbc = new RecordingJdbc(1);
+        RecordingBroadcaster broadcaster = new RecordingBroadcaster();
+
+        new RobotStateWriter(jdbc, broadcaster).write(envelope(), state("MANUAL", null));
+
+        assertTrue(!jdbc.updated(), "열린 임무가 없으므로 임무 상태는 쓰지 않는다");
+        assertTrue(jdbc.upsertedControlMode(), "그래도 제어 모드는 쓴다");
+        assertEquals("SENTINEL-01", jdbc.controlModeArgs()[0]);
+        assertEquals("MANUAL", jdbc.controlModeArgs()[1]);
+    }
+
+    @Test
+    void controlModeSurvivesUnknownMissionState() {
+        // 임무 상태가 미지값이라 early return 하는 경로에서도 제어 모드는 살아야 한다.
+        RecordingJdbc jdbc = new RecordingJdbc(1);
+
+        new RobotStateWriter(jdbc, new RecordingBroadcaster())
+                .write(envelope(), state("TELEPORTING", MISSION));
+
+        assertTrue(jdbc.upsertedControlMode());
+        assertEquals("AUTO", jdbc.controlModeArgs()[1]);
+    }
+
+    @Test
+    void nullControlModeDoesNotOverwrite() {
+        // mission_manager 가 없으면 젯슨이 null 을 보낸다. 그때 옛 값을 지우면 관제가
+        // 「모름」과 「자율」을 구별할 근거를 잃는다 — 값을 지어내지 않는 것과 같은
+        // 이유로, 있던 값을 지우지도 않는다.
+        RecordingJdbc jdbc = new RecordingJdbc(1);
+
+        new RobotStateWriter(jdbc, new RecordingBroadcaster()).write(envelope(),
+                new RobotStateData("SENTINEL-01", "EXPLORING", null, "RUNNING", MISSION, null));
+
+        assertTrue(!jdbc.upsertedControlMode(), "null 은 「모름」이므로 쓰지 않는다");
+        assertTrue(jdbc.updated(), "임무 상태는 그대로 쓴다");
+    }
+
+    @Test
+    void unknownControlModeIsNotWritten() {
+        RecordingJdbc jdbc = new RecordingJdbc(1);
+
+        new RobotStateWriter(jdbc, new RecordingBroadcaster()).write(envelope(),
+                new RobotStateData("SENTINEL-01", "EXPLORING", "TELEOP", "RUNNING", MISSION, null));
+
+        assertTrue(!jdbc.upsertedControlMode());
+    }
+
+    @Test
+    void controlModeUpsertDoesNotTouchPresenceStatus() {
+        // robots 행은 이 writer 와 RobotPresenceWriter 가 공유한다. 각자 자기 칸만 써야
+        // 하는데, SET status = EXCLUDED.status 를 습관적으로 넣으면 1Hz 로 오는 이
+        // 메시지가 접속 상태를 계속 덮는다. SQL 두 곳을 나란히 놓고 보지 않으면 안 보인다.
+        RecordingJdbc jdbc = new RecordingJdbc(1);
+
+        new RobotStateWriter(jdbc, new RecordingBroadcaster())
+                .write(envelope(), state("EXPLORING", MISSION));
+
+        String upsert = jdbc.sql.stream().filter(s -> s.contains("INSERT INTO robots"))
+                .findFirst().orElseThrow();
+        assertTrue(!upsert.contains("SET status"), "presence 의 status 를 덮지 않는다");
+        assertTrue(upsert.contains("IS DISTINCT FROM"),
+                "초기값 NULL 에서 <> 는 DO UPDATE 를 영원히 막는다");
+    }
+
+    @Test
+    void controlModeFailureDoesNotBlockMissionStatus() {
+        // V10 이 아직 적용되지 않은 환경에서 컬럼 없음(42703)이 나도 임무 상태 갱신은
+        // 계속돼야 한다. MqttGateway 가 예외를 통째로 삼키므로, 여기서 끊지 않으면
+        // 지금 잘 되는 임무 상태 표시가 회귀한다.
+        RecordingJdbc jdbc = new RecordingJdbc(1).failOn("INSERT INTO robots");
+        RecordingBroadcaster broadcaster = new RecordingBroadcaster();
+
+        new RobotStateWriter(jdbc, broadcaster).write(envelope(), state("EXPLORING", MISSION));
+
+        assertEquals(List.of(MISSION + ":EXPLORING"), broadcaster.pushed);
     }
 }

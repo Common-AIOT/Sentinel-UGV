@@ -15,6 +15,12 @@ import type { MissionState } from "./mockData";
  * `MANUAL` 은 S15P11A301-298 에서 추가됐다. 종전에는 서버가 MANUAL 을 몰라
  * (그리고 이 표에도 없어) 3초 폴링이 수동 표시를 즉시 EXPLORING 으로 덮었고,
  * 그 결과 `controlMode` 만 MANUAL 로 남아 두 값이 어긋났다.
+ *
+ * **이 표는 `missionState` 만 정한다** (S15P11A301-350). 종전에는 여기서 나온 값으로
+ * `controlMode` 까지 파생시켰는데(`MANUAL` 이면 수동, 아니면 자율), 이 표의 출처인
+ * `missions.status` 는 임무가 닫히면 갱신이 멈춘다 — 그래서 임무 밖에서 사람이 폰을
+ * 잡으면 화면이 계속 「자율」이었다. 제어 모드는 이제 `robots.control_mode` 에서
+ * 오며 판정은 `features/telemetry/sensorReading.ts` 가 갖는다.
  */
 export const SERVER_MISSION_STATE: Record<string, MissionState> = {
   CREATED: "SAFE_IDLE",

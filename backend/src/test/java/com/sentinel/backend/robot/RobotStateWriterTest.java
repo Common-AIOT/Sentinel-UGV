@@ -422,7 +422,15 @@ class RobotStateWriterTest {
         String sql = jdbc.orphanSql();
         assertTrue(sql.contains("CONNECTION_LOST"), "정상 종료와 구분되는 사유여야 한다");
         assertTrue(sql.contains("started_at IS NOT NULL"), "시작 유예가 SQL 에 있어야 한다");
-        assertEquals(List.of(OPEN_MISSION + ":COMPLETED"), broadcaster.pushed);
+        // **확인 대기 중에도 로봇 보고(SAFE_IDLE)는 반영·push 된다.** 여기서 쓰기를
+        // 억제하면 316 이 고친 「재기동 후 화면 고착」이 5초 되살아난다 — 죽은
+        // 스택이 남긴 「탐사중」이 그동안 화면에 붙어 있게 된다. 두 push 모두
+        // 사실이다: 로봇이 임무 밖이라고 말했고(SAFE_IDLE), 그 뒤 서버가 고아를
+        // 닫았다(COMPLETED). 닫힌 뒤에는 더 쓰지 않는다 — 그 억제는
+        // closeOrphanIfSustained 의 return true 가 이미 담당한다.
+        assertEquals(
+                List.of(OPEN_MISSION + ":SAFE_IDLE", OPEN_MISSION + ":COMPLETED"),
+                broadcaster.pushed);
     }
 
     @Test

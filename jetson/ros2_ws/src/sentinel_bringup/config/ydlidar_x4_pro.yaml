@@ -27,7 +27,20 @@ ydlidar_ros2_driver_node:
     abnormal_check_count: 4
     fixed_resolution: true
     reversion: false
-    inverted: false
+    # **좌우 거울상을 되돌린다** (S15P11A301-365). false 이던 동안 스캔의 좌우가
+    # 실제와 반대였고, 그 위에 지도·탐사·안전 구역이 전부 얹혀 있었다.
+    #
+    # 2026-08-09 실측(로봇 왼쪽을 막고 오른쪽을 비운 상태):
+    #
+    #                 좌 90°    우 90°
+    #   false          3.07m     1.20m   ← 실제와 반대
+    #   true           0.49m     2.58m   ← 실제와 일치
+    #
+    # 이것이 「관제에서 빈 곳으로 가는 것처럼 보이는데 실제로는 벽으로 갔다」의
+    # 실체다. 탐사는 거울상 지도에서 「트인 쪽」을 골랐고 그쪽이 실제로는 벽이었다.
+    # 앞뒤(0°·180°)는 거울 대칭에서 보존되므로, 앞뒤만 확인하는 검사는 이 결함을
+    # 통과시킨다 — 좌우로 확인해야 한다.
+    inverted: true
     auto_reconnect: true
     support_motor_dtr: false
     angle_max: 180.0

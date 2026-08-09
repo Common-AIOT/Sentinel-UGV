@@ -18,7 +18,10 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from esp32_bridge.motor_packet_codec import (  # noqa: E402
+from esp32_bridge.motor_packet_codec import (
+    DriveState,
+    pack_drive_state,
+    unpack_drive_state,  # noqa: E402
     CrcError,
     DriveCommand,
     LengthError,
@@ -36,7 +39,8 @@ from esp32_bridge.motor_packet_codec import (  # noqa: E402
     unpack_motor_diagnostic,
     unpack_set_mode,
 )
-from esp32_bridge.motor_protocol_constants import (  # noqa: E402
+from esp32_bridge.motor_protocol_constants import (
+    AUTHORITY_FLAG_MANUAL_FALLBACK,  # noqa: E402
     BOARD_MODE_AUTO,
     BOARD_MODE_MANUAL,
     BOARD_ROLE_MOTOR,
@@ -211,3 +215,60 @@ def test_resync_after_garbage_recovers_next_frame():
     assert dispatched is not None
     assert dispatched.message_type == MSG_HELLO
     assert dispatched.sequence == 99
+
+
+# ---- DRIVE_STATE 길이 호환 (S15P11A301-345) ----------------------------------
+#
+# 모터 보드와 젯슨은 **따로 배포된다.** 2026-08-09 에 센서 보드만 플래시된 상태가
+# 실제로 있었다. 그래서 15바이트(구판)와 16바이트(345) 어느 쪽이 와도 파싱이
+# 깨지지 않아야 하고, 그것을 여기서 고정한다 — 16바이트를 강제하면 구판 보드에서
+# 모터 링크가 통째로 죽는다.
+
+
+def _sample_drive_state() -> DriveState:
+    return DriveState(
+        applied_sequence=100,
+        state=4,
+        fault_flags=0,
+        drive_pwm_left_permille=160,
+        drive_pwm_right_permille=160,
+        target_steering_mdeg=0,
+        steering_actuator_cmd=1574,
+        estop_active=0,
+        driver_enabled=1,
+    )
+
+
+def test_drive_state_accepts_legacy_15_byte_payload():
+    payload = pack_drive_state(_sample_drive_state())
+    assert len(payload) == 15
+
+    parsed = unpack_drive_state(payload)
+
+    assert parsed.drive_pwm_left_permille == 160
+    # 구판은 폴백 여부를 말하지 않는다. 「모름」을 참으로 읽으면 관제가 정상
+    # 수동을 폴백으로 표시한다.
+    assert parsed.authority_flags == 0
+
+
+def test_drive_state_reads_authority_flags_from_16_byte_payload():
+    payload = pack_drive_state(_sample_drive_state()) + bytes(
+        [AUTHORITY_FLAG_MANUAL_FALLBACK]
+    )
+
+    parsed = unpack_drive_state(payload)
+
+    assert parsed.authority_flags & AUTHORITY_FLAG_MANUAL_FALLBACK
+    # 앞 15바이트 해석이 밀리지 않아야 한다.
+    assert parsed.applied_sequence == 100
+    assert parsed.steering_actuator_cmd == 1574
+
+
+def test_drive_state_ignores_frame_padding_beyond_authority_flags():
+    # 실제 프레임은 PAYLOAD_BYTES(22)로 0 패딩돼 온다. 패딩을 플래그로 읽으면
+    # 폴백이 아닌데 폴백으로 보고된다.
+    payload = pack_drive_state(_sample_drive_state()) + bytes([0]) + bytes(6)
+
+    parsed = unpack_drive_state(payload)
+
+    assert parsed.authority_flags == 0

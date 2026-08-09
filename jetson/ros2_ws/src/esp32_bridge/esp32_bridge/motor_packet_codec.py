@@ -37,6 +37,7 @@ from .motor_protocol_constants import (
     STRUCT_COMMAND_ACK,
     STRUCT_CONFIG,
     STRUCT_DRIVE_COMMAND,
+    MOTOR_DRIVE_STATE_BYTES,
     STRUCT_DRIVE_STATE,
     STRUCT_HELLO_ACK,
     STRUCT_MOTOR_DIAGNOSTIC,
@@ -183,6 +184,10 @@ class DriveState:
     steering_actuator_cmd: int
     estop_active: int
     driver_enabled: int
+    # 16번째 바이트 (S15P11A301-345). **기본값이 있는 것은 의도다** — 구판
+    # 펌웨어는 15바이트만 보내고, 그때는 「폴백 여부를 알 수 없음」이 0 이다.
+    # 이 필드가 없다고 파싱을 실패시키면 플래시 순서 하나로 모터 링크가 죽는다.
+    authority_flags: int = 0
 
 
 def pack_drive_state(state: DriveState) -> bytes:
@@ -201,8 +206,18 @@ def pack_drive_state(state: DriveState) -> bytes:
 
 
 def unpack_drive_state(payload: bytes) -> DriveState:
+    """15바이트(구판)와 16바이트(S15P11A301-345) 둘 다 받는다.
+
+    **길이로 갈라 읽는 것이 요점이다.** 16바이트를 강제하면 구판 펌웨어가 올라간
+    보드에서 모터 링크가 통째로 죽고, 15바이트만 읽으면 새 펌웨어의 폴백 사실을
+    영영 못 본다. 플래시 순서가 어느 쪽이든 안전해야 한다 — 모터 보드와 젯슨은
+    따로 배포되고, 2026-08-09 에 실제로 센서 보드만 플래시된 상태가 있었다.
+    """
     size = struct.calcsize(STRUCT_DRIVE_STATE)
-    return DriveState(*struct.unpack(STRUCT_DRIVE_STATE, payload[:size]))
+    state = DriveState(*struct.unpack(STRUCT_DRIVE_STATE, payload[:size]))
+    if len(payload) >= MOTOR_DRIVE_STATE_BYTES:
+        state.authority_flags = payload[size]
+    return state
 
 
 @dataclass

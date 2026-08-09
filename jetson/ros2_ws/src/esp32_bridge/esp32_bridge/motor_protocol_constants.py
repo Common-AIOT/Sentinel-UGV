@@ -139,6 +139,23 @@ def fault_flag_names(fault_flags: int) -> list[str]:
 STRUCT_DRIVE_COMMAND = "<BBhhhHHH"  # 14 bytes
 STRUCT_SET_MODE = "<BB"  # 2 bytes
 STRUCT_DRIVE_STATE = "<HBHhhhhBB"  # 15 bytes
+# `authority_flags` 는 그 뒤에 붙는 **16번째 바이트**다 (S15P11A301-345).
+# 위 포맷에 넣지 않고 따로 두는 것은 의도다 — 구판 펌웨어가 15바이트를 보내는
+# 동안에도 파싱이 깨지지 않아야 하고, 그러려면 길이로 갈라 읽어야 한다.
+MOTOR_DRIVE_STATE_BYTES = 16
+
+# authority_flags bit 0. 「지금 수동 권한이 관제 승인이 아니라 **젯슨 링크 침묵
+# 폴백**으로 잡혀 있다」는 뜻이다.
+#
+# 이 구분이 필요한 이유: S15P11A301-345 이후 폰 입력은 스스로 래치를 걸지 못하고
+# `SET_MODE(MANUAL)` 만이 권한을 넘긴다. 유일한 예외가 젯슨이 5초 이상 침묵할 때의
+# 폴백이며, 그때는 사람이 로봇을 세울 수 있어야 하므로 폰이 권한을 잡는다.
+# **그 사실이 관제에 보이지 않으면 「왜 자율이 안 되나」를 매번 다시 조사한다** —
+# 2026-08-08~09 에 실제로 세 번 그랬다.
+#
+# 순간 플래그가 아니라 **래치**다. 발동이 젯슨 침묵 중에 일어나므로 순간값으로
+# 보내면 그 프레임을 아무도 못 받는다. 내려가는 것은 `SET_MODE(AUTO)` 수락뿐이다.
+AUTHORITY_FLAG_MANUAL_FALLBACK = 1 << 0
 STRUCT_HELLO_ACK = "<BBBBBBHB"  # 9 bytes
 # MotorDiagnostic - protocol_constants.STRUCT_DIAGNOSTIC(20B, 센서가 쓰는 것)와
 # 다르다. link_silence_ms 하나가 더 붙어 22바이트다.

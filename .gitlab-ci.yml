@@ -253,10 +253,27 @@ test:frontend:
 #
 # MessageContractTest 는 common/samples 예제를 백엔드 DTO 로 직접 파싱합니다.
 # test:message-contract 가 Python 쪽만 검사하므로 Java 쪽 구멍을 이 테스트가 막습니다.
-# DB 가 필요한 테스트는 없으므로 Runner 에 서비스 컨테이너가 필요하지 않습니다.
+#
+# **PostgreSQL 서비스를 띄웁니다** (S15P11A301-355). 종전에는 "DB 가 필요한 테스트는
+# 없다"며 서비스를 두지 않았고, 그 대신 `--tests '*ContractTest'` 로 DB 없이 도는
+# 것만 골라 돌렸습니다. 그래서 **`@SpringBootTest` 인 BackendApplicationTests
+# (contextLoads)가 한 번도 실행되지 않았습니다** — 즉 "앱이 실제로 뜨는가" 를 CI 가
+# 검사한 적이 없습니다.
+#
+# 2026-08-09 그 구멍으로 기동 실패가 프로덕션까지 갔습니다. RobotStateWriter 에
+# 생성자가 하나 늘어 스프링이 고르지 못하게 됐는데, 컴파일은 통과하고 계약 시험도
+# 통과해 파이프라인이 초록불이었습니다. contextLoads 하나면 MR 에서 잡혔을 일입니다.
+#
+# 이미지는 **운영과 같은 TimescaleDB** 여야 합니다. V1__init_schema.sql 이
+# `CREATE EXTENSION timescaledb` 와 `create_hypertable()` 을 부르므로 평범한
+# postgres 이미지로는 Flyway 가 실패하고, 그러면 contextLoads 가 진짜 원인이 아닌
+# 이유로 빨간불이 됩니다.
 test:backend:
   stage: test
   image: eclipse-temurin:21-jdk-alpine
+  services:
+    - name: timescale/timescaledb:latest-pg15
+      alias: postgres
   rules:
     - changes:
         - backend/**/*
@@ -269,14 +286,39 @@ test:backend:
         - backend/build.gradle
     paths:
       - backend/.gradle/
+  variables:
+    # 서비스 컨테이너가 읽는 값. 시험 전용이라 비밀이 아니고 CI 변수로 뺄 이유가 없다.
+    POSTGRES_DB: sentinel_ugv
+    POSTGRES_USER: sentinel
+    POSTGRES_PASSWORD: sentinel
+    # 앱이 읽는 값. application-local.yml 의 기본값을 이것들이 덮는다(profile 은 local).
+    SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/sentinel_ugv
+    SPRING_DATASOURCE_USERNAME: sentinel
+    SPRING_DATASOURCE_PASSWORD: sentinel
+    # S3Config 가 AwsBasicCredentials 를 만드는데 SDK 가 빈 자격증명을 거부한다.
+    # 기본값(`${S3_SECRET_KEY:}`)이 빈 문자열이라 두면 contextLoads 가 DB 와 무관한
+    # 이유로 죽는다. 아무 값이나 있으면 되고, 시험은 스토리지에 접속하지 않는다.
+    S3_ACCESS_KEY: ci-dummy
+    S3_SECRET_KEY: ci-dummy
+  before_script:
+    # 서비스 컨테이너의 준비를 기다린다. GitLab 은 서비스가 뜰 때까지 기다려 주지 않는다.
+    # gradle 컴파일이 보통 더 오래 걸려 없어도 대개 통과하지만, 그것은 타이밍에 기댄
+    # 것이고 언젠가 간헐 실패로 돌아온다.
+    - apk add --no-cache postgresql-client
+    - timeout 60 sh -c 'until pg_isready -h postgres -U "$POSTGRES_USER"; do sleep 1; done'
   script:
     - cd backend
     - chmod +x gradlew
     - ./gradlew --no-daemon bootJar -x test
-    # 계약 시험 전부를 돌린다. 패턴이 '*MessageContractTest' 였을 때는 새로 추가한
-    # ServerPublishContractTest(S15P11A301-288)가 이름이 달라 CI 에서 빠졌다 —
+    # **이름으로 고르지 않는다** (S15P11A301-355). 종전 `--tests '*ContractTest'` 는
+    # 두 번 같은 함정을 만들었다 — S15P11A301-288 의 ServerPublishContractTest 가
+    # 패턴에 안 맞아 빠졌고, S15P11A301-346 의 RobotStateWriterTest 도 같은 이유로
+    # 빠졌다. 패턴을 넓히는 것으로는 끝나지 않는다. 새 시험은 계속 생기고 이름은
+    # 계속 다르다.
+    #
     # 시험을 만들어 놓고 돌지 않는 것이 없는 것보다 나쁘다(검사한다고 믿게 된다).
-    - ./gradlew --no-daemon test --tests '*ContractTest'
+    # 이제 전부 돌린다. DB 가 붙었으므로 contextLoads 도 여기 포함된다.
+    - ./gradlew --no-daemon test
 
 # Dockerfile 자체의 오류를 MR 단계에서 잡습니다 (S15P11A301-130).
 #
@@ -506,6 +548,13 @@ deploy:ec2:
     # 1. EC2 배포용 디렉토리 생성
     - ssh $EC2_USER@$EC2_HOST "mkdir -p ~/deploy"
 
+    # 1-1. 지금 돌고 있는 이미지를 기억한다 (S15P11A301-355).
+    #      아래 2-1 이 .env 를 통째로 덮으므로 **그 전에** 읽어야 한다. 4 단계에서
+    #      기동에 실패하면 이 값으로 되돌린다.
+    #      첫 배포라 .env 가 없으면 빈 값이고, 그때는 되돌릴 곳이 없으므로 실패만 알린다.
+    - PREV_IMAGE=$(ssh $EC2_USER@$EC2_HOST "grep '^DOCKER_IMAGE=' ~/deploy/.env 2>/dev/null | tail -1 | cut -d= -f2-" || true)
+    - echo "직전 이미지 = ${PREV_IMAGE:-(없음)}"
+
     # 2. 실행 파일(compose.prod.yaml) 전송
     - scp backend/compose.prod.yaml $EC2_USER@$EC2_HOST:~/deploy/compose.prod.yaml
 
@@ -527,6 +576,31 @@ deploy:ec2:
 
     # 3. EC2 접속 후 고정된 이미지 Pull 및 컨테이너 재시작
     - ssh $EC2_USER@$EC2_HOST "cd ~/deploy && docker compose -f compose.prod.yaml pull && docker compose -f compose.prod.yaml up -d"
+
+    # 4. 앱이 실제로 떴는지 확인하고, 아니면 되돌린다 (S15P11A301-355).
+    #
+    #    `docker compose up -d` 는 **컨테이너를 띄우는 데 성공하면 0 을 반환한다.**
+    #    그 안의 앱이 죽어도 상관하지 않는다. 2026-08-09 에 기동 실패한 이미지가
+    #    배포됐는데 파이프라인은 초록불이었고, 관제 화면이 「오프라인」인 것을 사람이
+    #    보고서야 알았다. 그동안 컨테이너는 `restart: always` 로 40분간 재시작만 반복했다.
+    #
+    #    90초를 기다린다(3초 × 30회). 실측 기동은 25초 안팎이고, EC2 가 느린 날의
+    #    여유까지 본 값이다.
+    - |
+      if ssh $EC2_USER@$EC2_HOST "for i in \$(seq 1 30); do curl -fsS --max-time 3 localhost:8080/actuator/health 2>/dev/null | grep -q '\"status\":\"UP\"' && exit 0; sleep 3; done; exit 1"; then
+        echo "기동 확인 — /actuator/health = UP"
+      else
+        echo "기동 실패 — 90초 안에 UP 이 되지 않았다. 아래는 백엔드 로그 마지막 40줄이다."
+        ssh $EC2_USER@$EC2_HOST "cd ~/deploy && docker compose -f compose.prod.yaml logs --tail=40 backend" || true
+        if [ -n "$PREV_IMAGE" ]; then
+          echo "직전 이미지로 되돌린다: $PREV_IMAGE"
+          ssh $EC2_USER@$EC2_HOST "cd ~/deploy && sed -i 's|^DOCKER_IMAGE=.*|DOCKER_IMAGE=$PREV_IMAGE|' .env && docker compose -f compose.prod.yaml up -d"
+        else
+          echo "되돌릴 직전 이미지를 알 수 없다(.env 가 없었다). 손으로 확인해야 한다."
+        fi
+        # Job 을 실패로 끝낸다. 초록불이 뜨면 아무도 배포가 깨진 것을 모른다.
+        exit 1
+      fi
   rules:
     # build:backend-image와 동일한 조건입니다.
     #

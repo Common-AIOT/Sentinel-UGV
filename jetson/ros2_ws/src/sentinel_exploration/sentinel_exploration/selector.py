@@ -3,7 +3,10 @@
 ## 점수
 
     score = w_map · 지도 정보량(m²) + w_camera · 카메라 미관측(m²)
-          − w_dist · 경로 길이(m)   − w_visit · 방문 감점(회)
+          − w_dist · (경로 길이 + R·|방위각|)(m) − w_visit · 방문 감점(회)
+
+방위각 항은 전방 편향이다(S15P11A301-357) — 후방 후보는 그쪽을 향해 도는
+호 길이만큼 멀게 친다. score() 의 주석에 근거가 있다.
 
 항을 전부 물리 단위(m²·m·회)로 두는 것이 의도다. 가중치가 무차원이 되어 "거리
 1m 를 정보 1m² 와 몇 대 몇으로 칠 것인가"를 그대로 말한다. 정규화 없이 셀 수와
@@ -107,12 +110,19 @@ def visit_penalty(history: list[tuple[float, float]], x: float, y: float, *, rad
     return sum(1 for hx, hy in history if (hx - x) ** 2 + (hy - y) ** 2 <= radius_sq)
 
 
+#: 전방 편향의 회전 반경 (S15P11A301-357). 방위각을 「그쪽을 향하는 데 드는
+#: 호 길이」로 환산할 때 쓴다. 실측 R_min 이 좌 1.37m·우 1.76m 라 안전측으로
+#: 잡았다 — Smac 전환(S15P11A301-358)으로 후진 계획이 생기면 낮출 수 있다.
+TURN_RADIUS_M = 1.8
+
+
 def score(
     candidate: Candidate,
     weights: Weights,
     *,
     from_x: float,
     from_y: float,
+    from_yaw: float | None = None,
     history: list[tuple[float, float]],
 ) -> float:
     if candidate.path_len_m is not None:
@@ -121,6 +131,15 @@ def score(
         # 플래너 없음(#235 전) — 직선거리에 1.5 배. 벽 우회를 뭉뚱그린 보정이며
         # 낙관(가깝다고 착각)을 줄이는 방향이다.
         distance = math.hypot(candidate.x - from_x, candidate.y - from_y) * 1.5
+    if from_yaw is not None:
+        # 전방 편향 (S15P11A301-357). NavFn 은 회전반경을 모르고 RPP 는 곡률
+        # 상한이 없어, 후방 목표가 뽑히면 조향이 상한에 붙은 채 수렴하지 못한다
+        # (2026-08-09 첫 실기동: steering_clamp_count 192, 전진 0). 후보 방위각
+        # |Δθ| 를 그쪽을 향해 도는 호 길이 R·|Δθ| 로 환산해 거리에 가산한다 —
+        # 정후방이면 약 5.7m 어치 손해라, 이득이 크게 다르지 않는 한 전방이 이긴다.
+        bearing = math.atan2(candidate.y - from_y, candidate.x - from_x) - from_yaw
+        bearing = math.atan2(math.sin(bearing), math.cos(bearing))
+        distance += TURN_RADIUS_M * abs(bearing)
     return (
         weights.w_map * candidate.map_gain_m2
         + weights.w_camera * candidate.camera_gain_m2

@@ -216,7 +216,7 @@ class ExplorationNode(Node):
         pose = self._pose()
         if pose is None:
             return
-        x, y, _ = pose
+        x, y, yaw = pose
         home_x, home_y = self._home if self._home else (x, y)
 
         # 소스 A: frontier
@@ -250,9 +250,11 @@ class ExplorationNode(Node):
             )
         best = max(
             candidates,
-            key=lambda c: score(c, self._weights, from_x=x, from_y=y, history=self._visit_history),
+            key=lambda c: score(c, self._weights, from_x=x, from_y=y, from_yaw=yaw,
+                                history=self._visit_history),
         )
-        best_score = score(best, self._weights, from_x=x, from_y=y, history=self._visit_history)
+        best_score = score(best, self._weights, from_x=x, from_y=y, from_yaw=yaw,
+                           history=self._visit_history)
         now = self._now()
 
         if self._commitment is not None:

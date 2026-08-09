@@ -28,6 +28,9 @@
 from __future__ import annotations
 
 import json
+import os
+import signal
+import subprocess
 import sys
 import time
 
@@ -66,6 +69,47 @@ DIRECTION_CHANGE_STOP_MS = 500
 # 데드타임 500ms 에 여유를 얹는다. 이 대기는 측정 창 밖이라 거리에 안 섞인다.
 SETTLE_S = 0.8
 
+# ── 경쟁 발행자 (S15P11A301-339) ──────────────────────────────────────────
+#
+# **`~/drive_command` 는 이 도구의 전용 토픽이 아니다.** `vehicle_kinematics` 가
+# `/cmd_vel` 을 변환해 같은 토픽에 20Hz 로 발행하는데, 안전 게이트가 막고 있으면
+# 그 값이 **0** 이다. 보드는 마지막에 온 값을 저장하므로 두 발행자가 섞이면
+# 명령의 대부분이 0 으로 덮인다.
+#
+# 2026-08-09 에 이것 때문에 하루를 썼다 — 측정에서 「200 을 보내는데 보드가 0 을
+# 저장한다」가 나왔고, 펌웨어 결함으로 오인해 담당자에게 디버그 계측까지 넣게
+# 했다(S15P11A301-352 도 같은 뿌리의 오진이다). 실측 비율이 증거였다:
+#
+#     이 도구 없이 5초 관측:  97프레임 전부 0
+#     이 도구와 함께:         224회 0 / 56회 200
+#
+# 그래서 측정 중에는 경쟁 발행자를 **멈춘다**(SIGSTOP). 죽이지 않는 이유는
+# 되살리기 위해서다 — `vehicle_kinematics` 는 launch 가 관리하므로 죽이면 스택을
+# 다시 올려야 한다. 멈추지 못하면 **측정을 시작하지 않는다.** 오염된 숫자를 내는
+# 것보다 아무것도 안 내는 편이 낫다.
+COMPETING_PUBLISHER = "sentinel_drive/vehicle_kinematics"
+
+
+def _competing_pids() -> list[int]:
+    """`~/drive_command` 에 함께 쏘는 노드의 PID. 자기 자신은 안 잡는다."""
+    try:
+        out = subprocess.run(
+            ["pgrep", "-f", COMPETING_PUBLISHER],
+            capture_output=True, text=True, timeout=5,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    me = os.getpid()
+    return [int(p) for p in out.split() if p.isdigit() and int(p) != me]
+
+
+def _signal_all(pids: list[int], sig: int) -> None:
+    for pid in pids:
+        try:
+            os.kill(pid, sig)
+        except (ProcessLookupError, PermissionError):
+            pass
+
 
 class Measure(Node):
     def __init__(self, speed_mps: float, duration_s: float) -> None:
@@ -74,12 +118,21 @@ class Measure(Node):
         self.duration_s = duration_s
         self.pub = self.create_publisher(String, "/esp32_motor_bridge/drive_command", 10)
         self.create_subscription(Odometry, "/wheel/odometry", self._on_odom, 50)
+        # 남이 보낸 drive_command 를 센다. 내가 발행한 것은 여기 안 잡힌다 —
+        # rclpy 는 자기 발행을 자기 구독으로 돌려주지 않는다.
+        self.create_subscription(
+            String, "/esp32_motor_bridge/drive_command", self._on_foreign_command, 20
+        )
         self.x: float | None = None
         self.samples = 0
+        self.commands_seen = 0
 
     def _on_odom(self, msg: Odometry) -> None:
         self.x = msg.pose.pose.position.x
         self.samples += 1
+
+    def _on_foreign_command(self, _msg: String) -> None:
+        self.commands_seen += 1
 
     def _command(self, mmps: int) -> None:
         self.pub.publish(String(data=json.dumps({
@@ -118,6 +171,19 @@ class Measure(Node):
         if 0 < abs(mmps) < MIN_DRIVE_SPEED_MMPS:
             print(f"실패: {mmps} mm/s 는 펌웨어 데드밴드({MIN_DRIVE_SPEED_MMPS} mm/s) 아래다.")
             print(f"  보드가 PWM 을 0 으로 만든다. {MIN_DRIVE_SPEED_MMPS / 1000:.2f} m/s 이상으로 하라.")
+            return 1
+
+        # **경쟁 발행자가 정말 조용해졌는지 확인한다.** 멈췄다고 믿지 않는다 —
+        # SIGSTOP 이 늦게 반영되거나 다른 노드가 같은 토픽에 붙어 있을 수 있고,
+        # 그러면 측정이 조용히 오염된다(위 상수 주석 참고).
+        before = self.commands_seen
+        self._spin_until(time.monotonic() + 1.0)
+        if self.commands_seen > before:
+            print(f"실패: 측정 중 다른 노드가 {COMPETING_PUBLISHER.split('/')[-1]} 로")
+            print("  drive_command 를 계속 발행하고 있다. 그 값이 이 도구의 명령을")
+            print("  덮어써 측정이 오염된다. 그 노드를 멈추고 다시 시도하라:")
+            print(f"    pkill -STOP -f {COMPETING_PUBLISHER}")
+            print(f"    (측정 뒤 되살리기: pkill -CONT -f {COMPETING_PUBLISHER})")
             return 1
 
         # **방향전환 데드타임을 비운다.** 직전 측정의 정지 명령(0) 뒤 곧바로 구동을
@@ -169,6 +235,13 @@ def main() -> None:
         print(f"★ 안전 상한: |v| ≤ {MAX_SPEED_MPS}, 지속 ≤ {MAX_DURATION_S:g}s")
         sys.exit(1)
 
+    # 경쟁 발행자를 멈춘다. **되살리는 것은 finally 가 보장한다** — 여기서 죽으면
+    # vehicle_kinematics 가 멈춘 채로 남아 자율 주행이 조용히 안 된다.
+    paused = _competing_pids()
+    if paused:
+        _signal_all(paused, signal.SIGSTOP)
+        print(f"경쟁 발행자 {len(paused)}개를 잠시 멈춘다 (측정 뒤 자동 복구): {paused}")
+
     rclpy.init()
     node = Measure(speed, duration)
     try:
@@ -181,6 +254,11 @@ def main() -> None:
     finally:
         node.destroy_node()
         rclpy.shutdown()
+        # **반드시 되살린다.** 멈춘 채로 두면 자율 주행이 조용히 안 되고, 원인이
+        # 프로세스 상태(T)라 로그에도 안 나온다.
+        if paused:
+            _signal_all(paused, signal.SIGCONT)
+            print(f"경쟁 발행자 복구 완료: {paused}")
     sys.exit(code)
 
 

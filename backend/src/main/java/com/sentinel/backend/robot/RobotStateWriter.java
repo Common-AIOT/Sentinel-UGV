@@ -11,6 +11,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
@@ -209,6 +210,19 @@ public class RobotStateWriter {
      */
     private final Map<String, Instant> orphanSince = new ConcurrentHashMap<>();
 
+    /**
+     * 컨테이너가 쓰는 생성자 (S15P11A301-355).
+     *
+     * <p><b>{@code @Autowired} 를 지우면 앱이 뜨지 않는다.</b> 스프링은 생성자가 하나뿐일
+     * 때만 그것을 자동으로 고르고, 둘 이상이면 표시된 것을 찾는다. 표시가 없으면 기본
+     * 생성자로 물러서는데 이 클래스에는 그것이 없다 —
+     * {@code NoSuchMethodException: RobotStateWriter.<init>()} 로 컨텍스트가 죽고,
+     * 이 빈에 매달린 {@code MqttGateway}·{@code MissionCommandService} 까지 연쇄로 무너진다.
+     *
+     * <p>2026-08-09 15:38 실제로 그렇게 배포돼 관제가 40분간 끊겼다. 아래 시험용 생성자가
+     * 늘어나는 순간 생성자가 1개에서 2개가 됐고, 그 한 걸음이 기동을 깨뜨렸다.
+     */
+    @Autowired
     public RobotStateWriter(JdbcTemplate jdbc, RealtimeBroadcaster broadcaster) {
         this(jdbc, broadcaster, Clock.systemUTC());
     }

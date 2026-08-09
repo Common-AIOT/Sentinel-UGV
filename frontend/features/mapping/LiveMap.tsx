@@ -121,9 +121,10 @@ function renderGrid(grid: OccupancyGrid): HTMLCanvasElement | null {
 /**
  * 로봇을 화살표로 그린다. 좌표는 이미 화면 픽셀이고 각도는 map 프레임의 yaw 다.
  *
- * 센서·EKF가 내는 REP-103 yaw 부호를 그대로 전달한다. 실차에서 시계 방향
- * `-90°` 회전이 화면에서는 반시계 방향으로 보이는 것을 확인해 `-yaw` 중복 반전을
- * 제거했다. 이 규칙은 `mapHeading.ts`의 각도별 테스트로 고정한다.
+ * **회전 부호는 `arrowRotationFromMapYaw` 가 소유한다** — 이 캔버스가 상하
+ * 반전(`renderGrid` 의 `height-1-row`)이라 화면 회전이 map yaw 의 반대 부호이며,
+ * 그 근거와 실측 이력이 `mapHeading.ts` 에 있다(S15P11A301-364). 여기서 부호를
+ * 또 만지면 두 곳이 싸운다. 센서·EKF 쪽 부호는 어느 경우에도 바꾸지 않는다.
  */
 function drawRobot(
   ctx: CanvasRenderingContext2D,

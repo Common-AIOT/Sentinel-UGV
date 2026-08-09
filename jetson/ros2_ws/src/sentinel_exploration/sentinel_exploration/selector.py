@@ -2,11 +2,12 @@
 
 ## 점수
 
-    score = w_map · 지도 정보량(m²) + w_camera · 카메라 미관측(m²)
+    score = f(방위) · [w_map · 지도 정보량(m²) + w_camera · 카메라 미관측(m²)]
           − w_dist · (경로 길이 + R·|방위각|)(m) − w_visit · 방문 감점(회)
 
-방위각 항은 전방 편향이다(S15P11A301-357) — 후방 후보는 그쪽을 향해 도는
-호 길이만큼 멀게 친다. score() 의 주석에 근거가 있다.
+방위각 두 항은 전방 편향이다(S15P11A301-357·360) — 후방 후보는 그쪽을 향해
+도는 호 길이만큼 멀게 치고, 이득도 f(전방 1.0 → 정후방 0.3)로 감쇠한다.
+score() 와 REAR_GAIN_FLOOR 의 주석에 근거가 있다.
 
 항을 전부 물리 단위(m²·m·회)로 두는 것이 의도다. 가중치가 무차원이 되어 "거리
 1m 를 정보 1m² 와 몇 대 몇으로 칠 것인가"를 그대로 말한다. 정규화 없이 셀 수와
@@ -115,6 +116,14 @@ def visit_penalty(history: list[tuple[float, float]], x: float, y: float, *, rad
 #: 잡았다 — Smac 전환(S15P11A301-358)으로 후진 계획이 생기면 낮출 수 있다.
 TURN_RADIUS_M = 1.8
 
+#: 정후방 후보의 이득 감쇠 하한 (S15P11A301-360). 357 의 거리 가산만으로는
+#: 부족했다 — 실기동에서 정후방 페널티가 w_dist 0.5 × 5.65m ≈ **3점**인데
+#: 카메라 이득은 수십 점(반경 3m 창 최대 28m² × w_camera 1.5 = 42점)이라
+#: 완전히 파묻혔고, 목표 6개가 전부 후방(방위 ±90~178°)으로 뽑혀 로봇이
+#: 좌우로 헤맸다. 그래서 이득 자체를 방위로 감쇠한다: 전방 1.0, 측면 0.65,
+#: 정후방 0.3. 곱셈이라 이득이 아무리 커도 비율은 유지된다.
+REAR_GAIN_FLOOR = 0.3
+
 
 def score(
     candidate: Candidate,
@@ -131,18 +140,29 @@ def score(
         # 플래너 없음(#235 전) — 직선거리에 1.5 배. 벽 우회를 뭉뚱그린 보정이며
         # 낙관(가깝다고 착각)을 줄이는 방향이다.
         distance = math.hypot(candidate.x - from_x, candidate.y - from_y) * 1.5
+    gain_factor = 1.0
     if from_yaw is not None:
-        # 전방 편향 (S15P11A301-357). NavFn 은 회전반경을 모르고 RPP 는 곡률
-        # 상한이 없어, 후방 목표가 뽑히면 조향이 상한에 붙은 채 수렴하지 못한다
-        # (2026-08-09 첫 실기동: steering_clamp_count 192, 전진 0). 후보 방위각
-        # |Δθ| 를 그쪽을 향해 도는 호 길이 R·|Δθ| 로 환산해 거리에 가산한다 —
-        # 정후방이면 약 5.7m 어치 손해라, 이득이 크게 다르지 않는 한 전방이 이긴다.
+        # 전방 편향 (S15P11A301-357, 강화 S15P11A301-360). NavFn 은 회전반경을
+        # 모르고 RPP 는 곡률 상한이 없어, 후방 목표가 뽑히면 조향이 상한에 붙은
+        # 채 수렴하지 못한다 (첫 실기동: steering_clamp_count 192, 전진 0).
+        #
+        # 두 겹으로 건다:
+        # 1) 회전 호 비용 — 방위각 |Δθ| 를 그쪽을 향해 도는 호 길이 R·|Δθ| 로
+        #    환산해 거리에 가산 (물리적으로 실재하는 비용).
+        # 2) 이득 감쇠 — 두 번째 실기동에서 1)만으로는 이득(수십 점)에 파묻히는
+        #    것이 확인됐다(REAR_GAIN_FLOOR 주석). 전방 1.0 → 정후방 0.3 으로
+        #    이득 자체를 깎는다. Smac(358)이 후진을 계획해도 후방 목표가
+        #    느린 것은 여전하므로(후진 0.3m/s + 방향전환 데드타임) 유지한다.
         bearing = math.atan2(candidate.y - from_y, candidate.x - from_x) - from_yaw
         bearing = math.atan2(math.sin(bearing), math.cos(bearing))
         distance += TURN_RADIUS_M * abs(bearing)
+        gain_factor = (REAR_GAIN_FLOOR
+                       + (1.0 - REAR_GAIN_FLOOR) * (1.0 + math.cos(bearing)) / 2.0)
     return (
-        weights.w_map * candidate.map_gain_m2
-        + weights.w_camera * candidate.camera_gain_m2
+        gain_factor * (
+            weights.w_map * candidate.map_gain_m2
+            + weights.w_camera * candidate.camera_gain_m2
+        )
         - weights.w_dist * distance
         - weights.w_visit * visit_penalty(history, candidate.x, candidate.y)
     )

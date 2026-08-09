@@ -264,6 +264,12 @@ class ExplorationNode(Node):
                 and committed.payload is not None
                 and not cluster_alive(self._grid, committed.payload)
             )
+            # 소멸 판정에도 최소 나이를 건다 (S15P11A301-360). 지도가 2초마다
+            # 갱신되며 군집이 일시적으로 소멸 판정을 받는데, 이것이 약속의
+            # min_age(5초)를 우회해 실기동에서 목표가 2~4초마다 갈렸다 —
+            # 「좌우 왔다갔다」의 한 축. 갓 약속한 목표는 지도 노이즈 한 번으로
+            # 버리지 않는다. 진짜 소멸이면 3초 뒤에도 소멸이다.
+            vanished = vanished and (now - self._commitment.committed_at) >= 3.0
             if not vanished and not self._commitment.should_replace(best_score, now):
                 self._publish_status('DRIVING', unseen_count=len(unseen))
                 return

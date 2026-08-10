@@ -18,7 +18,7 @@
 |---|---|---|---|---|
 | MT6701 좌/우 엔코더 | `ENCODER_STATE` | 50Hz | `/wheel/odometry` | `DRIVE_ENCODER_FAULT` |
 | MPU6050 IMU | `IMU_STATE` (0x26) | 100Hz | `/imu/data_raw` | `IMU_SENSOR_FAULT` |
-| HC-SR04 초음파 | `PROXIMITY_STATE` | ~15Hz | `/range/front`, `/proximity/protective_stop` | `PROXIMITY_SENSOR_FAULT` |
+| HC-SR04 초음파 ×2 | `PROXIMITY_STATE` | ~15Hz | `/range/front`, `/range/rear`, `/proximity/protective_stop` | `PROXIMITY_SENSOR_FAULT` |
 | DHT-11 온습도 | `ENVIRONMENT_STATE` | ~1Hz | `/environment/temperature`, `/environment/relative_humidity` | `ENVIRONMENT_SENSOR_FAULT` |
 | 두 보드 공통 | `DIAGNOSTIC` | 5Hz | `/diagnostics` | — |
 
@@ -253,11 +253,15 @@ I2C 버스 전체를 스캔해 발견된 주소를 출력한다(이 스케치는
 
 ```sh
 ros2 topic echo /range/front
+ros2 topic echo /range/rear
 ros2 topic echo /proximity/protective_stop
 ```
 
-- 센서 앞에서 물체를 가까이/멀리 움직이며 `range`(단위 **m**)가 따라 변하는지 확인한다.
-- 300mm(현재 `PROXIMITY_STOP_DISTANCE_MM` 임시값, §35 캘리브레이션 대상) 이내로 접근하면 `/proximity/protective_stop`이 `true`로 바뀌는지 확인한다.
+- 전방·후방 센서 앞에서 물체를 가까이/멀리 움직이며 각 `range`(단위 **m**)가 따라 변하는지 확인한다.
+- 판정 상수는 `PROXIMITY_STOP_DISTANCE_MM=100`이지만 현재
+  `PROXIMITY_STOP_ENABLED=false`라 `/proximity/protective_stop`은 항상
+  `false`다. 전방·후방 `range`가 물체를 따라 변하는지만 확인한다. 과거 전방 장착
+  발동 기록은 0.15~0.18m이며, 센서 오측을 제거하고 플래그를 복원한 뒤 다시 잰다.
 - `ros2 run tf2_ros tf2_echo base_footprint ultrasonic_front_link`로 TF가 풀리는지 확인한다(`sentinel_description`이 떠 있어야 한다). 안 풀리면 collision_monitor가 이 Range를 쓰지 못한다.
 
 **`PROXIMITY_SENSOR_FAULT: 0`은 초음파가 정상이라는 증거가 아니다.** 보드는 에코 무응답을 "5m 밖에 장애물 없음"으로 해석해 **성공으로 처리하고** fail streak을 리셋한다(4m 지점 장애물로 오인하지 않으려는 의도된 설계). 그래서 센서가 완전히 죽어 있어도 fault가 서지 않고 15Hz로 계속 발행되며, 브리지는 그 값을 `+Inf`로 바꿔 내보낸다. 즉 **배선이 끊긴 센서와 "앞이 비어 있음"의 관측값이 같다.**
@@ -511,15 +515,17 @@ URL:      ws://localhost:8766
 
 아래 넷은 상수라 직선으로 그려진다. **값이 아니라 파라미터 로드 확인용**이며, `esp32_bridge.yaml`을 고쳤는데 반영이 안 될 때 여기서 잡는다.
 
-#### 근접 정지 — `/proximity/protective_stop` (std_msgs/Bool, latched)
+#### 근접 정지 상태 — `/proximity/protective_stop` (std_msgs/Bool, latched)
 
 | 패널 | message path | 무엇을 보나 |
 |---|---|---|
-| **State Transitions** | `/proximity/protective_stop.data` | true/false 전이 시점이 막대로 보인다. 이 신호에 가장 맞는 패널이다 |
-| Indicator | `/proximity/protective_stop.data` | 현재 상태만 크게 |
-| Plot | `/proximity/protective_stop.data` | 0/1 계단으로 그려진다. `range`와 한 화면에 겹쳐 보고 싶을 때만 |
+| **State Transitions** | `/proximity/protective_stop.data` | 현재 펌웨어에서는 전이 없이 `false`가 유지되는지 확인 |
+| Indicator | `/proximity/protective_stop.data` | 현재 상태. 플래그 복원 전에는 항상 꺼짐 |
+| Plot | `/proximity/protective_stop.data` | `range`가 변해도 0을 유지해야 한다 |
 
-latched(`TRANSIENT_LOCAL`)라 접속하자마자 마지막 값이 한 번 온다. 그 뒤로는 상태가 바뀔 때만 오는 것이 아니라 초음파 갱신마다 계속 발행된다.
+latched(`TRANSIENT_LOCAL`)라 접속하자마자 마지막 값이 한 번 온다. 초음파 갱신마다
+계속 발행되지만 현재 값은 항상 `false`다. `true`가 한 번이라도 나오면 플래그나
+플래시 대상이 현재 코드와 다른 것이다.
 
 #### DHT-11 온습도 — `/environment/*` (~1Hz)
 
@@ -606,13 +612,26 @@ ros2 topic pub -r 50 /esp32_motor_bridge/drive_command std_msgs/msg/String \
 
 - `drive_state`의 `target_steering_mdeg`가 15000 으로 **서서히** 수렴하는지 본다. 계단으로 뛰면 슬루레이트가 안 걸린 것이다(CTRL-25). `steering_actuator_cmd`는 서보 펄스폭(µs)이다.
 - `+15000`에서 앞바퀴가 **좌**로 꺾이는지 눈으로 본다. 반대면 `steering.cpp`의 `SERVO_DIRECTION_SIGN`을 `-1`로 바꾼다 — 부호가 뒤집힌 채 자율주행에 들어가면 회피가 장애물 쪽으로 향한다.
-- `±22000`을 넘는 값(예: 40000)을 보내 `drive_state`가 22000에서 포화하는지 확인한다. Jetson 최종 송신 필터가 먼저 자르므로 펌웨어의 `STEERING_COMMAND_INVALID`(bit 14)는 서지 않는 것이 정상이다. Jetson 로그와 `/diagnostics`의 `MOTOR_COMMAND_LIMITS.filtered_command_count`가 증가해야 한다. 펌웨어 자체의 30000 한계는 브리지를 우회한 별도 벤치 시험에서 확인한다(CTRL-14).
+- `±22000`을 넘는 값(예: 40000)을 보내 `drive_state`가 22000에서 포화하는지 확인한다. Jetson 최종 송신 필터가 먼저 자르므로 펌웨어의 `STEERING_COMMAND_INVALID`(bit 14)는 서지 않는 것이 정상이다. Jetson 로그와 `/diagnostics`의 `MOTOR_COMMAND_LIMITS.filtered_command_count`가 증가해야 한다. 펌웨어 자체 한계도 22000이며 브리지를 우회한 별도 벤치 시험에서 확인한다(CTRL-14).
 - **정지 상태(`target_drive_*_mmps: 0`)에서 조향각을 바꿔 보낸다.** 서보가 움직이지 않고 `STEERING_COMMAND_INVALID`가 서면 정상이다(§34-2 — 정지 조향은 회두를 만들지 못하고 타이어·서보에만 부담이다).
 - 조향을 준 상태에서 Ctrl-C로 발행을 멈춘다. 구동은 300ms 안에 멈추고 **조향각은 그대로 유지**돼야 한다(CTRL-26, §34-7). 중립으로 튀면 정지 경로 어딘가가 조향을 건드리는 것이다.
 
-## 13단계 — mm/s ↔ PWM, 조향 매핑, 거리 매핑은 아직 임시값
+## 13단계 — mm/s ↔ PWM, 조향 매핑, 거리 매핑 확인
 
-`safety_stub.cpp`의 `MAX_DRIVE_SPEED_MMPS`(현재 600), `steering.cpp`의 `SERVO_CENTER_DEG`(145)·`SERVO_MAX_OFFSET_DEG`(30)·`STEERING_MAX_MDEG`(30000), `sensor_task.cpp`의 `LEFT/RIGHT_GEAR_RATIO`(82.0)·`WHEEL_DIAMETER_MM`(120)·`PROXIMITY_STOP_DISTANCE_MM`(300), `config/esp32_bridge.yaml`의 `max_drive_mmps`(300)·`max_steering_mdeg`(22000)·`meters_per_tick_left/right`·`track_width_m`, `sentinel_drive`의 `wheelbase_m`(0.683)·`max_steering_deg`(22)는 함께 관리해야 한다. Jetson 한계가 현재 운용 한계이고 ESP32의 더 넓은 포화값은 최후 방어다. 10~12단계에서는 부호·방향·응답성만 확인하고, 절대 속도(mm/s)·조향각·절대 거리의 정확도는 실측 캘리브레이션 이후에 판단한다.
+현재 코드값은 `MAX_DRIVE_SPEED_MMPS=1310`, `SERVO_CENTER_DEG=145`,
+`SERVO_MAX_OFFSET_DEG=55`, `STEERING_MAX_MDEG=22000`, 펌웨어 엔코더 환산의
+`WHEEL_DIAMETER_MM=120`, `PROXIMITY_STOP_DISTANCE_MM=100`,
+`PROXIMITY_STOP_ENABLED=false`다. Jetson은 별도로
+`max_drive_mmps=300`, `max_steering_mdeg=22000`, 바퀴 지름 0.25m 기반
+`meters_per_tick_left/right=5.846e-07`, `track_width_m=0.53`,
+`wheelbase_m=0.683`, `max_steering_deg=22`를 사용한다.
+
+서로 다른 값이 모두 오류인 것은 아니다. Jetson 300mm/s는 운용 상한이고 ESP32의
+1310mm/s는 최후 포화 경계다. 조향은 양쪽 모두 바퀴 22°를 상한으로 쓰고 펌웨어가
+서보 55°로 변환한다. 다만 `control_page.h`의 미리보기용 `STEERING_MAX_DEG=30`과
+`sentinel_drive` 시험 fixture 30°는 현재 상수와 동기화되지 않았다. 펌웨어의
+120mm 바퀴 지름은 보드가 보고하는 `speed_mmps`에만 쓰며, ROS 오도메트리는 tick과
+0.25m 실측 지름을 사용한다.
 
 조향은 개루프라 **매핑 정확도가 곧 조향 정확도**이며(§34-8), 실제 조향각을 재는 센서가 없어 이 값이 틀려도 시스템은 아무 오류도 내지 않는다.
 
@@ -620,7 +639,7 @@ ros2 topic pub -r 50 /esp32_motor_bridge/drive_command std_msgs/msg/String \
 
 여기부터는 바퀴를 내리고 바닥에서 실제로 주행시킨다. 순서를 바꾸면 원인 구분이 불가능해진다(앞 단계가 틀린 채로 뒤 값을 맞추면 오차가 서로를 상쇄한다).
 
-1. **거리 스케일** — 3m 직선을 좌·우 각각 5회 주행하고 `/wheel/odometry`의 `pose.pose.position.x`와 줄자 실측을 비교한다. 합격 기준 오차 ±5%, 좌우 편차 ±3%p. 어긋난 만큼 `meters_per_tick_left`/`meters_per_tick_right`를 개별로 나눠 보정한다(좌우를 따로 두는 이유가 이 편차 보정이다).
+1. **거리 스케일** — 단거리에서는 `200mm/s×5초`에 줄자 38cm·오도메트리 36.8cm로 오차 3%를 확인했다. 이어서 3m 직선을 좌·우 각각 5회 주행하고 `/wheel/odometry`와 줄자를 비교한다. 합격 기준 오차 ±5%, 좌우 편차 ±3%p다. 어긋난 만큼 `meters_per_tick_left`/`meters_per_tick_right`를 개별로 보정한다.
 2. **휠베이스 `L`과 `δ_max`** — 전·후 차축 중심 거리를 자로 재 `sentinel_drive`의 `wheelbase_m`에 넣고, 조향을 `δ_max`로 고정한 채 저속으로 원을 한 바퀴 돌려 `R_min`을 실측한다(§35-3). 좌·우 각각 5회, 대칭 오차 ±10% 이내. **제자리 360° 회전은 전륜 조향에서 불가능하므로 이 원주행이 대체 기동이다.** 트랙폭 `W`(`track_width_m`)는 오도메트리 yaw 계산에 계속 쓰이지만 그 yaw 는 EKF 입력이 아니다 — 후륜 스크럽 때문에 신뢰할 수 없고 yaw 의 주 소스는 IMU 다(§35-3). **1번이 끝나기 전에는 손대지 않는다** — 거리 스케일이 틀리면 `L`·`R_min` 역산도 반드시 틀리게 나온다.
 3. 확정값을 `config/esp32_bridge.yaml`에 기록하고, 기동 시 임시값 경고가 더 이상 뜨지 않는지 확인한다. `docs/TBD.md`의 TBD-CAL-001도 함께 갱신한다.
 

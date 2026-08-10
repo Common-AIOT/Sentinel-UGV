@@ -57,9 +57,9 @@ class MediaUploaderNode(Node):
         self.declare_parameter('encoder_bitrate_kbps', 2500)
         # 이벤트 영상의 AAC 트랙(S15P11A301-131). 오디오를 끈 구성에서는 0을 준다.
         self.declare_parameter('audio_bitrate_kbps', 64)
-        # 백엔드에 /uploads/{mediaId}/complete 가 아직 없다(27.4·31-7이 요구하는데도).
-        # 켜면 업로드까지만 하고 완료 등록을 건너뛴다. 업로드 경로를 먼저 검증하기
-        # 위한 것이며, 서버가 AVAILABLE을 모르므로 다시보기 목록에 나타나지 않는다.
+        # 개발·장애 진단 시 업로드까지만 검증하고 완료 등록을 건너뛸 수 있다.
+        # 운영 기본값은 false다. 켜면 서버가 AVAILABLE을 모르므로 다시보기 목록에
+        # 나타나지 않는다.
         self.declare_parameter('skip_complete', False)
 
         self.pending = PendingStore(

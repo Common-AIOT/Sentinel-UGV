@@ -28,26 +28,37 @@ Next.js **App Router** 기반 통합 관제 웹(GCS)입니다. 실시간 영상,
 ## 실행
 
 ```bash
-npm install
+npm ci
 npm run dev     # http://localhost:3000
 npm run build   # 프로덕션 빌드 + 타입체크
 npm run lint
+npm run test
 ```
 
 ## 백엔드 연동
 
-`features/robot/RobotContext.tsx`의 `USE_MOCK`가 `true`면 목 시뮬레이션으로 동작합니다. 실제 백엔드 연동은 `USE_MOCK`를 끄고 `API` 엔드포인트를 배선하며 진행합니다. 브라우저에 노출 가능한 값만 `NEXT_PUBLIC_` 환경 변수로 정의합니다.
+`features/robot/RobotContext.tsx`의 `USE_MOCK`가 `true`면 메인 관제 화면은 목
+시뮬레이션으로 동작합니다. REST·STOMP 클라이언트와 임무 이력 화면은 구현되어 있으므로
+실제 관제 배포에서는 이 상수를 `false`로 바꿔 서버 상태를 사용합니다. 브라우저에 노출
+가능한 값만 `NEXT_PUBLIC_` 환경 변수로 정의합니다.
 
-> ⚠️ **`USE_MOCK`는 환경 변수가 아니라 `export const`로 코드에 박힌 상수다**(`RobotContext.tsx:27`).
+> ⚠️ **`USE_MOCK`는 환경 변수가 아니라 `export const`로 코드에 박힌 상수다**(`RobotContext.tsx`).
 > 끄려면 코드를 고쳐 배포해야 하며, 배포 설정으로는 갈리지 않는다. 시연·심사용 배포에서
 > 목 데이터가 섞이지 않도록 배포 전에 값을 확인한다.
 
-백엔드 주소는 환경 변수로 주입합니다. 값이 없으면 로컬 개발 기준(`http://localhost:8080`)으로 동작합니다.
+`frontend/.env.example`을 `frontend/.env.local`로 복사해 주소를 설정합니다. API 주소가
+없으면 localhost에서 `http://localhost:8080`, 그 밖의 호스트에서는
+`https://api.sentinel-ugv.xyz`를 사용합니다.
 
-| 변수 | 운영 값 | 용도 |
+| 변수 | 코드 기본값·동작 | 용도 |
 |---|---|---|
-| `NEXT_PUBLIC_API_BASE_URL` | `https://api.sentinel-ugv.xyz` | REST API |
-| `NEXT_PUBLIC_WS_URL` | `wss://api.sentinel-ugv.xyz/ws` | STOMP/WebSocket |
+| `NEXT_PUBLIC_API_BASE_URL` | 로컬 `http://localhost:8080`, 배포 `https://api.sentinel-ugv.xyz` | REST 기준 주소. `/api` 접미사는 붙이지 않음 |
+| `NEXT_PUBLIC_LOCAL_STREAM_URL` | 미설정 시 LOCAL 경로 숨김 | 로컬 MediaMTX WHEP |
+| `NEXT_PUBLIC_REMOTE_STREAM_URL` | 미설정 시 REMOTE 경로 숨김 | 원격 MediaMTX WHEP |
+| `NEXT_PUBLIC_MAP_WS_URL` | `wss://jetson.sentinel-ugv.xyz:8765` | Foxglove WebSocket 실시간 지도 |
+
+STOMP 주소는 `NEXT_PUBLIC_API_BASE_URL`에서 스킴을 `ws`/`wss`로 바꾸고 `/ws`를
+붙여 자동 생성합니다. `NEXT_PUBLIC_WS_URL`은 코드에서 읽지 않습니다.
 
 로컬은 `frontend/.env.local`에 두고, 배포는 **Vercel 프로젝트 환경 변수**(Settings → Environment Variables)에 등록합니다. CI는 `vercel deploy --prod`만 호출하므로 GitLab 변수로는 주입되지 않습니다.
 

@@ -55,29 +55,21 @@ ros2 launch sentinel_bringup slam.launch.py
 (32장 장애 격리), SLAM은 지도 크기에 따라 메모리를 계속 쓰므로 필요할 때만
 올립니다.
 
-### 오도메트리가 없는 임시 구성입니다
+### `odom → base_footprint` 발행자는 구성에 따라 하나입니다
 
-엔코더가 ESP32 연동(S15P11A301-84·85) 이후이므로 `ekf_node`의 `/odometry/filtered`가
-없습니다. 그런데 `slam_toolbox`는 **`odom → base_frame` TF를 요구합니다.** 없으면
-"Failed to compute odom pose"를 반복하고 지도를 만들지 않습니다.
+현재 엔코더 브리지와 EKF가 모두 구현되어 있습니다. `demo.launch.py`는
+`slam_toolbox`가 요구하는 `odom → base_footprint`를 다음 셋 중 하나만 발행하게
+구성합니다.
 
-그래서 launch가 `odom → base_footprint`를 static identity로 발행합니다. 그러면
-로봇의 실제 이동이 전부 `map → odom`에 담기고, 스캔 매칭만으로 위치를 추정합니다.
+| ESP32 | EKF | 발행자 |
+|---|---|---|
+| 꺼짐 | 무관 | SLAM launch의 static identity |
+| 켜짐 | 꺼짐 | `esp32_sensor_bridge` 휠 오도메트리 |
+| 켜짐 | 켜짐 | `ekf_node` (`/odometry/filtered`) |
 
-한계가 두 가지입니다.
-
-**제자리 회전에서 정확도가 떨어집니다.** 스캔 매칭은 벽 모양이 비슷한 방향을
-구분하지 못하는데, 오도메트리가 있으면 회전량을 초기 추정으로 줄 수 있습니다.
-그래서 `do_loop_closing`을 켜 누적 오차를 잡습니다.
-
-**`odom`이 로봇 이동을 표현하지 않습니다.** Nav2가 붙으면 `odom`을 속도 추정에
-쓰는데 그 값이 항상 0입니다. 엔코더가 붙으면 이렇게 전환합니다.
-
-```bash
-ros2 launch sentinel_bringup slam.launch.py publish_static_odom:=false
-```
-
-static TF와 `ekf_node`가 같은 변환을 발행하면 TF 트리가 충돌하므로 반드시 끕니다.
+패키지별 launch를 직접 조합할 때는 같은 TF를 두 발행자가 동시에 내지 않도록
+`publish_static_odom`과 `publish_odom_tf`를 함께 확인합니다. 전체 데모 진입점을 쓰면
+이 배타가 자동 적용됩니다.
 
 ### pose는 SLAM이 없으면 null입니다
 
@@ -218,8 +210,9 @@ ros2 launch sentinel_bringup demo.launch.py
  4s  slam · streaming(TLS WHEP)
  8s  recorder(recording_manager + media_uploader) · mission
 10s  bridge (MQTT wss://api.sentinel-ugv.xyz:443/mqtt)
+12s  voice
 14s  detector (ai/detection wrapper — S15P11A301-155)
-16s  viz (Foxglove, 기본 꺼짐 — S15P11A301-176)
+16s  viz (Foxglove, 기본 켜짐 — 관제 실시간 지도 입력)
 ```
 
 단계별 지연을 두는 이유는 부팅 직후 전부 동시에 뜨면 CPU·메모리 경합으로 NVMM
@@ -283,10 +276,11 @@ LaunchConfiguration은 launch context **전역**이라, lidar.launch가 설정�
 
 ### 실시간 시각화 (S15P11A301-176)
 
-개발 중에 지도·스캔·상태를 눈으로 보려면 켭니다. **기본은 꺼져 있습니다.**
+Foxglove WebSocket은 관제 웹의 실시간 지도 입력이라 **기본으로 켜집니다.** 지도 없이
+제한 기동할 때만 명시적으로 끕니다.
 
 ```bash
-./scripts/demo_up.sh enable_viz:=true
+./scripts/demo_up.sh enable_viz:=false
 ```
 
 노트북에서 **Foxglove Studio 데스크톱 앱**으로 접속합니다.
@@ -311,10 +305,10 @@ ws://jetson.sentinel-ugv.xyz:8765
 추정 오차가 누적된 것입니다. 오도메트리 없이 스캔 매칭만 쓰는 구성의 한계이며
 (각도 오차가 거리에 비례해 커집니다) 엔코더가 붙으면 줄어듭니다.
 
-기본이 꺼져 있는 이유는 데모 구성이 아니라 개발 도구이기 때문입니다. WebSocket
-서버가 토픽을 직렬화하느라 CPU를 쓰고, Orin Nano에서는 `x264enc`와 YOLO가 이미
-코어를 다 씁니다(S15P11A301-131에서 오디오 손실로 겪었습니다). 인증이 없으므로
-공개망에 노출하지 않습니다 — LAN 개발용입니다.
+현재 기본 활성화의 대가는 인증 없는 읽기 노출입니다. `viz.launch.py`는 토픽을 지도·pose·
+scan·TF·URDF로 제한하고 TLS를 쓰지만 읽기 인증은 없습니다. 운영 주소를 공개할 때는
+방화벽·프록시 인증을 추가해야 하며, 단순히 `enable_viz=false`로 바꾸면 관제 지도도
+함께 사라집니다.
 
 설치가 안 된 기기에서는 시각화만 건너뛰고 나머지 스택은 정상 기동합니다.
 
@@ -346,8 +340,9 @@ recorder   상한=580MB → recorder.yaml이 실제로 로드됨 (충돌 수정�
 
 ## EKF (S15P11A301-236)
 
-엔코더 `vx` 와 IMU `vyaw` 를 융합해 `odom → base_footprint` 를 낸다. 목적은
-캐스터 슬립이 갉아먹는 yaw 보정이다. 설계 근거는 `docs/04-자율주행.md` 23.2.
+엔코더 `vx`와 IMU `vyaw`를 융합해 `odom → base_footprint`를 낸다. 전륜 조향에서는
+후륜 좌우 속도 차로 yaw를 구할 근거가 없으므로 IMU가 주 yaw 소스다. 설계 근거는
+`docs/04-자율주행.md` 23.2다.
 
 ```bash
 # 데모 스택과 함께 (센서 보드 필수 — enable_ekf 는 enable_esp32 와 AND 로 묶인다)
@@ -358,9 +353,9 @@ ros2 launch sentinel_bringup ekf.launch.py
 ros2 topic echo /odometry/filtered --once
 ```
 
-**기본은 꺼짐이다.** IMU 기판 장착 방향이 확정되기 전에 켜면 EKF 가 회전을 반대로
-융합할 수 있고, 그 오류는 SLAM 의 `map→odom` 보정이 덮어서 화면에 안 보인다.
-장착 후 23.2 「켜기 전 확인」 3단계를 먼저 밟는다.
+**기본은 꺼짐이다.** 센서 태스크 주기 수정과 단거리 엔코더 스케일 검증은 끝났지만,
+MPU6050 bias·공분산·90°/360° 회전과 원주행을 다시 측정해야 한다. 그 전에는 수동
+시험에서만 명시적으로 켠다.
 
 `odom → base_footprint` 발행자는 항상 정확히 하나다 — 배타표는 23.2.
 
@@ -376,5 +371,5 @@ ros2 topic hz /pose/fused
 ros2 topic echo /pose/fused --once
 ```
 
-`enable_ekf` 기본값은 장착 방향, 정지 표류율, 90도 및 360도 회전 검증을 마칠 때까지
-`false`를 유지한다.
+`enable_ekf` 기본값은 수정된 펌웨어 기준 정지 표류율과 90°·360° 회전/원주행 검증을
+마칠 때까지 `false`를 유지한다.

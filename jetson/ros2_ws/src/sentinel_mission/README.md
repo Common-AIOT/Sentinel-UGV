@@ -152,9 +152,11 @@ ros2 run sentinel_mission mission_manager --ros-args \
 `auto_start`는 기본 false입니다. 26.4가 "재시작 후 진행 중이던 임무를 자동 주행으로
 복구하지 않는다"고 정했습니다. 개발 중 편의로 켤 수 있지만 운영에서는 끕니다.
 
-## AI 없이 검증하기
+## 독립 회귀 검증하기
 
-탐지 노드(#99~#102)와 주행·음성이 아직 없으므로 입력을 모사합니다.
+탐지(`ai/detection`)·주행·음성(`ai/voice`) 실행 경로는 모두 구현되어 있습니다.
+아래 도구는 장비와 모델 없이 mission 상태 머신만 결정적으로 검증하도록 입력을
+모사합니다.
 
 ```bash
 ros2 run sentinel_mission simulate_inputs --scenario normal

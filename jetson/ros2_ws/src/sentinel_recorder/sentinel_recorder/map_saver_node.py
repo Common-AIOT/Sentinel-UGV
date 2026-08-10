@@ -8,11 +8,11 @@
                                       /map.yaml
                                       /report.json   업로드 대기 표시
 
-## 업로드는 아직 하지 않는다
+## 업로드와 분리한다
 
-지도 업로드 API가 백엔드에 없다(2026-07-30 확인 — Swagger에 maps 엔드포인트
-0건). `report.json`의 `uploadState: UPLOAD_PENDING`이 그 경계이고, API가 생기면
-이 디렉터리를 훑는 업로더만 붙이면 된다. 저장 코드는 바뀌지 않는다.
+이 노드는 `report.json`의 `uploadState: UPLOAD_PENDING`까지 기록합니다. 함께
+실행되는 별도 `map_uploader`가 이 디렉터리를 훑어 백엔드 지도 업로드 API를 호출하고,
+완료 등록 뒤 상태를 `AVAILABLE`로 바꿉니다.
 
 31-10이 "업로드 대기 영상·지도"를 로컬 보존 대상으로 정했으므로, 업로드가 없어도
 저장 자체가 요구사항이다. 망이 끊긴 채 임무가 끝나도 지도를 잃지 않는다.

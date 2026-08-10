@@ -233,9 +233,8 @@ class UploadClient:
         그때 오류로 처리하면 영원히 `UPLOAD_PENDING`에 갇힌다. 그래서 409를
         성공으로 취급한다.
 
-        **404는 엔드포인트 미구현을 뜻할 수 있다.** 백엔드에 `/complete`가 아직
-        없으므로(27.4·31-7이 요구하는데도) 그 경우를 구분해 알린다. 재시도해도
-        같으므로 retryable=False다.
+        **404는 현재 배포가 완료 API를 제공하지 않거나 해당 media 행이 없다는
+        뜻일 수 있다.** 자동 재시도로 복구되지 않으므로 retryable=False다.
         """
         body: dict[str, Any] = {
             'encounterId': encounter_id,
@@ -292,9 +291,9 @@ class UploadClient:
     ) -> UploadOutcome:
         """발급 → 업로드 → 완료를 한 번에 한다.
 
-        `skip_complete`는 백엔드에 `/complete`가 없는 동안 업로드 경로만 검증하기
-        위한 것이다. 운영에서는 쓰지 않는다. 켜면 서버가 `AVAILABLE`을 모르므로
-        다시보기 목록에 나타나지 않는다.
+        `skip_complete`는 개발·장애 진단에서 업로드 경로만 검증하기 위한 것이다.
+        운영에서는 쓰지 않는다. 켜면 서버가 `AVAILABLE`을 모르므로 다시보기 목록에
+        나타나지 않는다.
         """
         presigned, object_key = self.request_upload_url(
             encounter_id=encounter_id,

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Mission Manager 입력 모사 (S15P11A301-133 검증용).
 
-탐지 노드(#99~#101)와 주행·음성이 아직 없으므로 `/perception/person_candidates`와
-`/mission/signal`을 직접 발행해 `mission_manager_node`를 검증한다.
+실제 탐지·주행·음성 스택과 분리해 상태 머신만 결정적으로 회귀 검증하도록
+`/perception/person_candidates`와 `/mission/signal`을 직접 발행한다.
 
 `sentinel_recorder`의 `trigger_encounter`와 역할이 다르다. 그쪽은 녹화 노드만
 단독으로 시험하기 위해 `/perception/encounter`를 직접 발행한다. 이쪽은 그 상위

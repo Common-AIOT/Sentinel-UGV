@@ -18,7 +18,8 @@
 | `ENCODER_STATE` | `/wheel/odometry` | `nav_msgs/Odometry` | `odom`→`base_footprint`, 후륜 tick 정운동학(yaw 는 IMU 가 주 소스, 아래 참고) |
 | `IMU_STATE` | `/imu/data_raw` | `sensor_msgs/Imu` | `imu_link`, 원시 gyro/accel, 100Hz |
 | `PROXIMITY_STATE` | `/range/front` | `sensor_msgs/Range` | `ultrasonic_front_link`, ULTRASOUND |
-| `PROXIMITY_STATE` | `/proximity/protective_stop` | `std_msgs/Bool` | 보드 로컬 보호 정지, TRANSIENT_LOCAL |
+| `PROXIMITY_STATE` | `/range/rear` | `sensor_msgs/Range` | `ultrasonic_rear_link`, 관측 전용(보호 정지 미연결) |
+| `PROXIMITY_STATE` | `/proximity/protective_stop` | `std_msgs/Bool` | 보드 판정 필드, TRANSIENT_LOCAL. 현재 펌웨어 발동 비활성으로 항상 `false` |
 | `ENVIRONMENT_STATE` | `/environment/temperature` | `sensor_msgs/Temperature` | DHT-11 판독 성공 시에만 |
 | `ENVIRONMENT_STATE` | `/environment/relative_humidity` | `sensor_msgs/RelativeHumidity` | 0~1 비율(deci-percent 아님) |
 
@@ -66,13 +67,18 @@ v   = (d_R + d_L) / 2Δt ,  ω = (d_R − d_L) / WΔt
 
 - **속도를 보드가 보낸 mm/s가 아니라 tick 차분에서 구한다.** 보드의 mm/s는 `sensor_task.cpp`에 하드코딩된 기어비·바퀴 지름으로 계산되므로, 캘리브레이션 값을 Jetson 파라미터 한 곳에만 두려면 tick이 유일한 입력이어야 한다. 재플래싱 없이 재튜닝된다.
 - **Δt를 프레임 도착 시각이 아니라 `senderUptimeMs`에서 구한다.** USB 직렬 도착 지터가 그대로 속도 잡음이 되는 것을 막는다.
-- **`publish_odom_tf`는 기본 `false`다.** 지금은 `slam.launch.py`가 `odom → base_footprint`를 static identity로 발행하고 있어(그쪽 docstring 참고) 동시에 켜면 두 발행자가 같은 TF를 다툰다. `publish_static_odom:=false`로 static을 끈 뒤 true로 올리거나, Phase 3에서 `ekf_node`가 `/odometry/filtered`로 TF를 소유하게 한 뒤 계속 false로 둔다.
+- **패키지 설정의 `publish_odom_tf` 기본값은 `false`다.** 전체 `demo.launch.py`는 ESP32가 있고 EKF가 꺼진 조합에서만 이를 `true`로 덮어쓴다. ESP32가 없으면 SLAM static identity, EKF가 켜지면 EKF가 같은 TF를 소유해 네 조합 모두 발행자가 정확히 하나다.
 - 보드가 재부팅하면 tick 카운터가 0으로 돌아간다. 기준점만 다시 잡고 **pose는 유지한다** — odom 프레임은 연속이어야 한다(REP-105). 재부팅 동안의 이동량은 유실된다.
 - tick 점프(I2C 글리치)는 `max_wheel_speed_mps`로 걸러 `/diagnostics`의 `rejected_sample_count`로 센다.
 
 - **`ω`(`angular_z`)는 EKF 입력이 아니다.** 전륜 조향 차량에서 후륜 좌·우 속도 차는 회두의 근거가 되지 못한다 — 조향 링크가 회두를 정하고 후륜은 같은 속도로 구동되므로 선회 중 내·외측 후륜이 노면에 **스크럽**한다(§35-3). yaw 의 주 소스는 IMU 자이로이고 `ekf_node`가 엔코더 `vx` + IMU `vyaw` 로 융합한다(23.2). 여기서 계속 계산하는 이유는 `x·y` 적분에 자세가 필요하고, §35-3 의 네 값(엔코더 yaw · 조향각 yaw · IMU yaw · 실제 회전량) 비교에 쓰기 때문이다.
 
-> ⚠️ **캘리브레이션 값이 전부 임시값이다(TBD-CAL-001, §35-3).** `meters_per_tick`은 `sensor_task.cpp`의 실측 전 상수(바퀴 지름 120mm·기어비 82)에서 유도했고, 트랙폭 `W = 0.30`은 근거 없는 자리값이다. 그대로면 노드가 기동 시 경고를 띄운다. 3m 직선 5회(좌·우 개별)와 **`δ_max` 원주행**(제자리 360° 회전은 전륜 조향에서 불가능하다 — §35-3 이 정한 대체 기동)으로 확정하기 전까지 거리·각도 **절대값을 신뢰하면 안 된다.**
+> ⚠️ **기하 기본값은 실측으로 교체됐지만 주행 캘리브레이션은 끝나지 않았다.**
+> `meters_per_tick_left/right=5.846e-07`은 바퀴 지름 0.25m·기어비 82,
+> `track_width_m=0.53`은 실측값이다. 다만 좌·우 3m 직선 5회와 `δ_max` 원주행으로
+> 개별 거리 스케일·실효 트랙폭·최소 회전반경을 재확인하기 전까지 절대 정확도를
+> 보장하지 않는다. 2026-08-09 펌웨어가 샘플 주기와 실측 `dt`를 수정했으므로 그 이전
+> 주행 측정은 재사용하지 않는다.
 
 ## 모듈
 
@@ -116,8 +122,10 @@ ros2 launch esp32_bridge esp32_bridge.launch.py \
 
 ## 열린 리스크
 
-- udev 별칭(`/dev/sentinel_mcu_motor`, `/dev/sentinel_mcu_sensor`)이 이 저장소에 아직 없다. CP2102 클론 보드는 `idVendor:idProduct:serial`이 겹칠 수 있어 별칭만으로 역할을 보장할 수 없으므로, `HELLO_ACK.board_role`(핸드셰이크 로그의 role 불일치 오류)로 실제 역할을 확인하는 쪽을 우선 신뢰한다.
-- 센서 ESP32 워치독을 먹일 주기적 Jetson→센서 트래픽이 프로토콜 표에 없어 HELLO 재전송을 keep-alive로 임시 채택했다 - `docs/03-제어-캘리브레이션.md` §34-7에 addendum 반영 필요.
-- `HELLO_ACK`/`DIAGNOSTIC`/`COMMAND_ACK`/`CONFIG` 페이로드는 문서 §34-5에 없어 이번 작업에서 새로 정의했다(`protocol_constants.py`/`hardware/esp32/jetson-comm/src/protocol.h` 주석 참고) - 문서 addendum 필요.
-- 오도메트리 캘리브레이션(TBD-CAL-001)이 전부 임시값이다. 특히 트랙폭 `W`는 실측 근거가 아예 없어 각속도 절대값이 무의미하다. 위 "오도메트리와 TF" 절 참고.
-- `ultrasonic_front_link`(= `/range/front`의 `frame_id`)를 `sentinel_description`에 추가했지만 origin은 전부 0인 placeholder다. collision_monitor가 Range를 점으로 바꿀 때 이 TF를 쓰므로, 실측(§35-7, TBD-HW-006) 전까지 정지 거리가 센서 돌출량만큼 어긋난다.
+- udev 별칭은 `scripts/udev/99-sentinel-mcu.rules`에 구현되어 있지만 CH340 두 보드에 시리얼 번호가 없어 USB 물리 경로를 기준으로 합니다. 최종 역할 판정은 `HELLO_ACK.board_role`을 우선합니다.
+- 후방 초음파는 `/range/rear`까지 오지만 정지 판정에는 포함되지 않습니다. 전방 판정도
+  현재 `PROXIMITY_STOP_ENABLED=false`라 `/proximity/protective_stop`은 항상
+  `false`입니다. 전방 신뢰도 복구와 후방 임계·Nav2 통합은 별도 실측이 필요합니다.
+- 오도메트리 단거리 스케일은 주기 수정 뒤 줄자와 3% 안에서 일치했습니다. 좌·우 3m
+  개별 스케일·정역방향과 장시간 재현은 추가 측정이 남아 있습니다.
+- IMU 공분산은 정지 하한만 측정됐고 주행 진동을 포함한 값은 아직 확정하지 않았습니다.

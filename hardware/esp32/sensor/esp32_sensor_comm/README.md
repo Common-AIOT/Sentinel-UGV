@@ -11,9 +11,10 @@
 - `HELLO`/`HELLO_ACK` 핸드셰이크, `CONFIG` "not implemented" 응답
 - `ENCODER_STATE`(50Hz)/`IMU_STATE`(100Hz)/`ENVIRONMENT_STATE`(~1Hz)/`PROXIMITY_STATE`(~15Hz)/`DIAGNOSTIC`(5Hz) 송신(실측값)
 - 300ms 통신 워치독(§34-7) — 로컬 액추에이터가 없어 정지 동작은 없고 `COMM_LOST`/`FAULT_COMM_TIMEOUT_SENSOR`만 보고
-- MT6701 좌/우 구동 엔코더 I2C 실측, MPU6050 차체 IMU I2C 실측, DHT-11 1-wire 판독,
-  HC-SR04 `pulseIn` 거리 측정(전방·후방 ×2, TBD-HW-010·S15P11A301-324)과
-  로컬 `protective_stop` 판단 — `sensor_task.cpp`.
+- MT6701 좌/우 구동 엔코더 I2C, MPU6050 차체 IMU I2C, DHT-11 1-wire 판독,
+  HC-SR04 `pulseIn` 거리 측정(전방·후방 ×2)과
+  로컬 `protective_stop` 판단 코드 — `sensor_task.cpp`. 현재는 전방 센서 오측 때문에
+  `PROXIMITY_STOP_ENABLED=false`로 발동만 비활성화했다.
   엔코더는 **후륜 2개뿐**이며 `measured_steering_mdeg`는 항상 0으로 보고한다 —
   2026-08-06 전륜 조향이 복구됐지만 DS51150 서보가 내부 폐루프라 외부 각도
   피드백이 없어 조향은 개루프다(§6.3·34-5).
@@ -22,14 +23,14 @@
   상태 전이(환경/근접 한정)
 
 포함하지 않음(후속 티켓):
-- 엔코더 감속비·바퀴 지름, 초음파 안전거리(전방·후방 모두) 등 실측 캘리브레이션값(§35-3, §35-4) — 현재는 임시값
-- 후방 HC-SR04를 `protective_stop`에 반영하는 것 — 배선·방향별 임계 실측·안전
-  체인 통합(TBD-HW-011, TBD-CAL-001)이 끝나기 전까지 `protective_stop`은
-  전방 단독 판단을 유지한다. 후방 거리는 `PROXIMITY_STATE.rear_min_distance_mm`으로
-  값만 보고한다(Jetson `/range/rear` 발행, S15P11A301-324).
-- IMU 축 정렬 실측 검증(`sensor_task.cpp`의 `IMU_AXIS_SOURCE`/`IMU_AXIS_SIGN`은 기판
-  실크스크린 축이 곧 전방/좌측/상방이라는 가정의 항등 설정). 이제 `/imu/data_raw`로 값을
-  볼 수 있으므로 판정 절차는 `esp32_bridge/TESTING.md` 10-4 (d)에 있다.
+- 엔코더 장거리·좌우·정역방향 재계측. 주기 수정 뒤 단거리 오도메트리는 줄자와
+  3% 안에서 일치했지만, Jetson은 실물 바퀴 250mm를 쓰고 펌웨어 `speed_mmps`는
+  아직 `WHEEL_DIAMETER_MM=120`을 사용하므로 보드 속도값은 통일이 필요하다.
+- 초음파 보호 정책 복원 — 전방은 빈 공간 오측을 제거하고 15초 0회를 확인한 뒤에만
+  플래그를 켠다. 후방은 방향별 임계·정지거리와 안전 체인 통합을 결정하기 전까지
+  `rear_min_distance_mm`과 Jetson `/range/rear`로 값만 보고한다.
+- IMU 축 정렬은 4기동으로 REP-103 항등 매핑이 맞음을 확인했다. 펌웨어 주기 수정 후
+  bias·공분산·진동과 90°/360° 회전은 다시 측정한다.
 
 Jetson 쪽 `IMU_STATE` 수신·`/imu/data_raw` 발행은 S15P11A301-244에서 구현됐다. `status_flags`
 계약이 그쪽 발행 여부를 그대로 결정하므로 이 스케치를 고칠 때 함께 본다 — `BUS_ERROR`면
@@ -70,13 +71,13 @@ Jetson 쪽 `IMU_STATE` 수신·`/imu/data_raw` 발행은 S15P11A301-244에서 �
 - IMU를 붙이지 않고 이 펌웨어를 올리면 `FAULT_IMU_SENSOR_FAULT`가 계속 보고된다(1초
   주기로 재접속을 시도한다). 엔코더·환경·근접 스트림과 `DEGRADED` 판정에는 영향이 없다.
 
-## HC-SR04 배선 (전방·후방, TBD-HW-010)
+## HC-SR04 배선 (전방·후방)
 
 | HC-SR04 | ESP32 | 비고 |
 |---|---|---|
 | `VCC` | `5V` | |
 | `GND` | `GND` | |
-| `TRIG`(전방) | `GPIO18` | 전방과 별도 핀 쌍. 실제 도통 시험 전 임시값(부록 J는 TBD-HW-010 확정 전까지 TBD) |
+| `TRIG`(전방) | `GPIO18` | 코드 배정. 실물 도통 재확인 필요 |
 | `ECHO`(전방) | `GPIO39` | 5V 신호 — 분압/레벨 변환 필요(입력 전용 핀) |
 | `TRIG`(후방) | `GPIO5` | 3.3V 출력 그대로 구동 가능 |
 | `ECHO`(후방) | `GPIO36` | 5V 신호 — 분압/레벨 변환 필요(입력 전용 핀) |
@@ -91,12 +92,17 @@ Jetson 쪽 `IMU_STATE` 수신·`/imu/data_raw` 발행은 S15P11A301-244에서 �
   보고되고 Jetson이 `/range/rear`(`sensor_msgs/Range`)로 발행하지만,
   `protective_stop`에는 아직 반영되지 않는다 — 방향별 정지 임계 실측과 안전
   체인 통합은 TBD-HW-011·TBD-CAL-001로 남아 있다.
+- 전방도 현재는 `PROXIMITY_STOP_ENABLED=false`라 거리 측정·발행만 하고
+  `protective_stop`은 항상 0이다. 빈 공간에서 15초 218표본 중 9회 발생한
+  2.6~5.5cm 오측을 제거하기 전에는 플래그를 복원하지 않는다(S15P11A301-353).
 - 전방·후방 각각의 연속 실패는 공통 `FAULT_PROXIMITY_SENSOR_FAULT` 비트로
   보고된다(방향 구분 없음, 기존 비트를 그대로 확장).
 
 ## 워치독 관련 유의사항 (§8)
 
-프로토콜 메시지 표에는 Jetson→센서 보드로 가는 주기적 트래픽이 `HELLO`/`CONFIG`뿐이라, Jetson 쪽 `esp32_sensor_bridge_node`가 이 보드의 워치독을 살아있게 하려면 `HELLO`를 ~5-10Hz로 keep-alive 삼아 재전송해야 한다(gap-fill, 문서 addendum 필요).
+Jetson의 `esp32_sensor_bridge_node`는 `keepalive_period_s=0.15` 기본값으로 HELLO를 약
+6.7Hz 재전송해 센서 보드의 300ms 통신 워치독을 유지한다. 포트가 끊기면 같은 타이머가
+재연결을 계속 유도한다.
 
 ## 디버그 주의
 

@@ -60,9 +60,10 @@ ros2 launch sentinel_streaming streaming.launch.py enable_record_branch:=true
 하고, JSON은 `common/schemas`와 CI라는 검증 장치를 이미 갖고 있습니다.
 `sentinel_streaming`도 `~/status`·`~/segment_boundary`에 같은 방식을 씁니다.
 
-## AI 없이 검증하기
+## 독립 회귀 검증하기
 
-탐지 노드(S15P11A301-43)가 아직 없으므로 트리거 도구로 같은 신호를 만듭니다.
+실제 탐지 노드는 `ai/detection`에 구현되어 있습니다. 아래 트리거 도구는 AI 모델과
+카메라를 띄우지 않고 녹화 경로만 결정적으로 검증할 때 같은 신호를 만듭니다.
 
 ```bash
 # VID-03  사전 3초 확인
@@ -125,7 +126,8 @@ S15P11A301-304의 PTS 동률 결함은 19건이 쌓일 때까지 드러나지 �
 부팅 복구가 찾은 `CORRUPT`는 사유만 남기고 `lastFinalizeOk`는 건드리지 않습니다.
 지난 기동의 잔해이지 이번 기동의 마감 결과가 아니기 때문입니다.
 
-백엔드 적재와 화면 표시는 아직 없습니다(S15P11A301-309에 위임).
+백엔드는 두 값을 `robot_metrics`에 적재하고 텔레메트리·임무 이력 API로 반환합니다.
+프론트엔드는 이를 `정상`·`실패`·`판정 근거 없음`으로 구분해 표시합니다.
 
 ## 영상 내용을 검증하는 방법
 
@@ -330,10 +332,10 @@ missions/{missionId}/encounters/{encounterId}/event.mp4
 31-10이 "업로드 대기 영상·**지도**"를 로컬 보존 대상으로 정했습니다. 망이 끊긴 채
 임무가 끝나도 지도를 잃지 않습니다.
 
-**업로드는 아직 하지 않습니다.** 지도 업로드 API가 백엔드에 없습니다(2026-07-30
-확인, Swagger에 maps 엔드포인트 0건). `report.json`의
-`uploadState: UPLOAD_PENDING`이 그 경계이고, API가 생기면 이 디렉터리를 훑는
-업로더만 붙이면 됩니다 — 저장 코드는 바뀌지 않습니다.
+저장 직후 `report.json`은 `uploadState: UPLOAD_PENDING`으로 시작합니다. 별도
+`map_uploader` 프로세스가 `POST /api/v1/maps/uploads`로 URL을 발급받아 PGM·YAML을
+업로드하고, `POST /api/v1/maps/uploads/{mapId}/complete`까지 성공하면 `AVAILABLE`로
+바꿉니다. 망이 끊기면 파일과 `PENDING` 상태를 보존했다가 다음 주기에 재시도합니다.
 
 `missionId`가 없으면 `no-mission/`에 저장합니다. 백엔드 `maps` 행은 만들 수 없지만
 (`mission_id`가 NOT NULL FK) 개발 중 관제 없이 젯슨만 띄운 지도도 사람이 열어볼

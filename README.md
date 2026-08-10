@@ -70,11 +70,25 @@
 
 ## 개발 시작
 
-1. 작업 전 Jira 이슈를 생성합니다.
-2. 최신 `develop`에서 `<type>/<scope>/<jira-key>-<description>` 형식의 브랜치를 만듭니다.
-3. 담당 모듈의 `README.md`에 정의된 환경을 구성합니다.
-4. 공통 메시지를 변경할 때는 `common/`과 관련 문서를 함께 갱신합니다.
-5. 테스트 결과와 하드웨어 영향을 Merge Request에 기록합니다.
+모듈마다 실행 환경이 다르므로 아래 README에서 시작합니다.
+
+| 대상 | 실행·검증 문서 |
+|---|---|
+| 관제 API | [backend/README.md](backend/README.md) |
+| 관제 웹 | [frontend/README.md](frontend/README.md) |
+| Jetson 전체 스택 | [jetson/README.md](jetson/README.md) |
+| ESP32 펌웨어·배선 | [hardware/README.md](hardware/README.md) |
+| 사람 탐지 | [ai/detection/README.md](ai/detection/README.md) |
+| 음성 상호작용 | [ai/voice/README.md](ai/voice/README.md) |
+| 공통 메시지 계약 | [common/README.md](common/README.md) |
+
+환경변수는 루트 [`.env.example`](.env.example)을 참고하되, 실제 로딩 위치에 맞게
+`backend/.env.local` 또는 `frontend/.env.local`로 나눠 둡니다. Jetson 런타임 값은
+환경변수가 아니라 ROS 파라미터 YAML과 `~/.config/sentinel/secrets.yaml`에서 관리합니다.
+
+작업 전에는 Jira 이슈를 만들고 최신 `develop`에서
+`<type>/<scope>/<jira-key>-<description>` 형식의 브랜치를 생성합니다. 공통 메시지를
+바꾸면 `common/`의 스키마·샘플과 생산자/소비자 테스트를 함께 갱신합니다.
 
 전체 개발 기준은 [통합 명세서](docs/README.md)와 [Git 컨벤션](docs/git_convention.md)을 참고하세요.
 
@@ -94,4 +108,15 @@
 
 ## 프로젝트 상태
 
-MVP 기능 구현이 진행 중이며 통합 시연을 준비하고 있습니다. 구현 기준은 통합 명세서(`docs/`), 협업 기준은 Git 컨벤션을 따릅니다.
+2026-08-09 코드 기준으로 센서·주행 명령 체인, 임무 상태 머신, 사람 탐지·접근,
+음성 상호작용, 스트리밍·이벤트 녹화, MQTT·REST·STOMP 관제 경로가 구현되어 있습니다.
+다만 안전상 다음 항목은 기본 기동에서 명시적으로 꺼져 있거나 범위가 제한됩니다.
+
+- `enable_nav2`, `enable_exploration`, `enable_approach`, `enable_safety`, `enable_ekf`는 기본 `false`입니다. 특히 `enable_safety:=true`는 실제 모터 명령 경로를 연결합니다.
+- 프런트엔드의 `USE_MOCK`는 현재 `true`인 코드 상수입니다. 실제 관제 연동 배포 전 반드시 확인합니다.
+- 자동 복귀(`RETURNING`)는 미구현입니다. 임무 종료 후 로봇은 종료 지점에서 정지합니다.
+- 전·후방 초음파 거리는 `/range/front`·`/range/rear`로 발행합니다. 전방 `protective_stop`은 빈 공간 오측 때문에 펌웨어에서 발동을 껐고, 후방은 정지 판정과 Nav2 후진 안전 체인에 연결하지 않았습니다.
+- 서보-바퀴 조향비 `55°/22°`와 엔코더 샘플 주기 수정은 반영됐습니다. 다만 회전반경 실차 인수와 명령 대비 실속도가 약 38~40%인 mm/s→PWM 매핑 보정은 남아 있습니다.
+
+구현 상태의 세부 근거와 남은 검증은 [통합 명세서](docs/README.md)와
+[TBD 대장](docs/TBD.md)을 기준으로 합니다.

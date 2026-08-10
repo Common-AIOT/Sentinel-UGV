@@ -36,21 +36,23 @@ watchdog 정지·종료 정지·제자리 회전 거부 모두 **마지막 조�
 정지가 곧 정차가 아니라 관성으로 더 가기 때문이며, 그때 중립으로 꺾으면 피하려던
 장애물 쪽으로 밀려 나갈 수 있다. 중립으로 가는 예외는 ESP32 부팅 직후 하나뿐이다.
 
-## 파라미터 (잠정값)
+## 파라미터
 
 | 파라미터 | 기본 | 확정 |
 |---|---|---|
-| `wheelbase_m` | 0.50 | TBD-HW-008 실측. 틀리면 직진은 맞고 선회 반경만 어긋난다 |
-| `max_steering_deg` | 30.0 | TBD-HW-008 실측(§35-3). **`steering.cpp` 의 `STEERING_MAX_MDEG`(30000)와 같아야 한다** |
+| `wheelbase_m` | 0.683 | 2026-08-06 실측. 전·후 차축 중심 거리 |
+| `max_steering_deg` | 22.0 | 앞바퀴 실제 조향각 실측. 서보 회전각이 아님 |
 | `max_drive_mmps` | 300 | RS540 실측 전 보수적 상한 (24.2 수동 상한과 동일) |
 | `min_linear_mmps` | 30 | v_min. `steering.cpp` 의 `STEERING_MIN_DRIVE_MMPS` 와 같은 값 |
 | `max_steering_rate_mdps` | 60000 | §35-4 「조향 튜닝」 실측. 0 을 보내면 서보가 자기 최대 속도로 꺾는다 |
 | `cmd_vel_timeout_s` | 0.3 | ESP32 watchdog(300ms)과 별개의 ROS 측 1차 방어선 |
 | `mode` | 2 (AUTO) | 03-204: SAFE_IDLE=0, MANUAL=1, AUTO=2 |
 
-펌웨어와 값을 맞춰야 하는 파라미터가 둘(`max_steering_deg`, `min_linear_mmps`)이다.
-어긋나면 Jetson 이 보낸 명령을 펌웨어가 조용히 클램프·거부하고 `/diagnostics` 에
-`STEERING_COMMAND_INVALID` 만 올라온다.
+`max_steering_deg`와 펌웨어 `STEERING_MAX_MDEG`는 모두 앞바퀴 각 상한이므로 현재
+22°로 맞춰져 있다. 펌웨어는 `SERVO_MAX_OFFSET_DEG=55`와의 비로 바퀴 22°를 서보
+55°에 매핑한다. 코드 반영은 끝났지만 외부 조향각 센서가 없는 개루프이므로
+`scripts/steering_measure.py`로 실제 회전반경이 `R_min≈1.69m`인지 인수해야 한다.
+참고로 이 패키지 단위 시험의 로컬 30° fixture는 아직 현재 기본값과 동기화되지 않았다.
 
 ## 시험
 

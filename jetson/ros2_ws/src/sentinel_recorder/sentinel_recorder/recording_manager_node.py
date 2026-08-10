@@ -14,8 +14,8 @@
 ## 트리거
 
 `/perception/encounter`의 `std_msgs/String`에 담긴 JSON이며 계약은
-`common/schemas/encounter.schema.json`이다. AI 탐지 노드(S15P11A301-43)가 아직
-없으므로 개발 중에는 `tools/trigger_encounter.py`로 같은 형식을 발행해 검증한다.
+`common/schemas/encounter.schema.json`이다. 실제 탐지 스택과 분리해 이 노드만
+회귀 검증할 때는 `trigger_encounter`로 같은 형식을 발행한다.
 
 `phase`만 보고 전이한다. 사람 수와 위치는 보고서용이다.
 

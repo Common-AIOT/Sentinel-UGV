@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """encounter 신호를 손으로 발행한다 (S15P11A301-123 검증 도구).
 
-AI 탐지 노드(S15P11A301-43)가 아직 없어 녹화 트리거가 없다. 이 도구가 같은
-계약(`common/schemas/encounter.schema.json`)으로 신호를 만들어 녹화 경로를
-검증한다. AI가 붙으면 이 도구는 개발용으로만 남는다.
+AI 탐지 스택을 띄우지 않고 녹화 경로만 독립 검증할 때 쓴다. 실제 노드와 같은
+계약(`common/schemas/encounter.schema.json`)으로 신호를 만들며 운영 실행 경로에는
+포함되지 않는 개발용 도구다.
 
 ## 쓰는 법
 

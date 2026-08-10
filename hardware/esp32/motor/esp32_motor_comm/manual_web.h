@@ -21,8 +21,8 @@
 
 #include <cstdint>
 
-// 기본 빌드는 수동 WiFi/HTTP 채널을 비활성화한다. 필요할 때만
-// manual_web_config.h의 ENABLE_MANUAL_WIFI를 1로 설정해 다시 활성화한다.
+// 현재 기본 빌드는 manual_web_config.h의 ENABLE_MANUAL_WIFI=1로 수동 WiFi/HTTP
+// 채널을 활성화한다. 자율 전용 빌드가 필요하면 컴파일 시 0으로 명시한다.
 
 // WiFi STA 시작(**비블로킹**)과 WebServer/mDNS 등록. setup() 에서 태스크 생성 전에
 // 한 번 호출한다.

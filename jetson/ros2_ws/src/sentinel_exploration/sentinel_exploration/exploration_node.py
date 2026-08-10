@@ -72,6 +72,9 @@ class ExplorationNode(Node):
         self.declare_parameter('camera_hfov_deg', 52.0)   # BRIO 100 대각 58° 의 수평 환산. 실측 전 잠정
         self.declare_parameter('detect_range_m', 5.0)      # 누운 사람 기준. 실측 전 잠정
         self.declare_parameter('max_radius_m', 12.0)
+        # 목표 최소 거리 (S15P11A301-369). 이보다 가까운 후보는 버린다.
+        # 근거는 `_drop_too_close` 주석에 있다.
+        self.declare_parameter('min_goal_distance_m', 1.5)
         self.declare_parameter('min_frontier_cells', 6)
         self.declare_parameter('coverage_done_m2', 1.5)
         self.declare_parameter('sweep_sectors', 9)
@@ -229,14 +232,15 @@ class ExplorationNode(Node):
         candidates = self._drop_blacklisted([
             Candidate(x=c.rep_x, y=c.rep_y, kind='frontier', payload=c) for c in clusters
         ])
+        candidates = self._drop_too_close(candidates, x, y)
 
         # 소스 B: 관측 후보. frontier 소진은 지도 완성이지 수색 완료가 아니다.
         unseen = self._coverage.unseen_free(self._grid, self._info)
         if not candidates:
-            candidates = self._drop_blacklisted([
+            candidates = self._drop_too_close(self._drop_blacklisted([
                 Candidate(x=ox, y=oy, kind='observation')
                 for ox, oy in observation_candidates(unseen)
-            ])
+            ]), x, y)
 
         if not candidates:
             self._navigator.cancel()
@@ -315,6 +319,40 @@ class ExplorationNode(Node):
         목표로 2초마다 다시 보낸다 — 겉보기 증상은 "탐사가 도는데 제자리"다.
         """
         return [c for c in candidates if not self._blacklist.is_blocked(c.x, c.y)]
+
+    def _drop_too_close(
+        self, candidates: list[Candidate], from_x: float, from_y: float
+    ) -> list[Candidate]:
+        """너무 가까운 목표를 버린다 (S15P11A301-369).
+
+        **전륜 조향 차량은 가까운 목표를 못 간다.** R_min 이 1.69m 이므로 옆이나
+        비스듬히 있는 0.3~1m 목표는 어떤 호로도 닿지 않는다 — 후진 계획이 붙어도
+        여러 번의 전·후진 선회가 필요해 사실상 제자리 기동이다.
+
+        2026-08-09 실기동에서 그 대가가 그대로 나왔다: 탐사가 로봇에서 **0.36m**
+        떨어진 (0.26,0.25) 를 목표로 잡고 **95초 동안 붙들고 있었다**. Nav2 는
+        목표를 거부하지도 실패로 끝내지도 않아(실패 0건) 로봇은 그냥 서 있었고,
+        겉보기 증상은 「탐사를 시작해도 움직이지 않는다」 하나였다.
+
+        버려도 손해가 없다 — 그 자리는 어차피 로봇의 라이다 반경 안이라 지나가며
+        관측된다. frontier 는 로봇이 움직이면 따라서 갱신된다.
+        """
+        floor = float(self.get_parameter('min_goal_distance_m').value)
+        if floor <= 0.0:
+            return candidates
+        kept = [
+            c for c in candidates
+            if math.hypot(c.x - from_x, c.y - from_y) >= floor
+        ]
+        if candidates and not kept:
+            # 전부 걸러졌다면 그 사실을 남긴다 — 조용히 빈 목록을 돌려주면
+            # 「후보 없음(DONE)」과 구별되지 않는다.
+            self.get_logger().info(
+                f'후보 {len(candidates)}개가 모두 {floor:.1f}m 안이라 버렸다 — '
+                '조향 차량은 가까운 목표에 닿지 못한다(S15P11A301-369)',
+                throttle_duration_sec=10.0,
+            )
+        return kept
 
     def _goal_yaw(self, candidate: Candidate, unseen: list[tuple[float, float]]) -> float:
         """도착 자세의 yaw 를 미관측 방향으로 잡는다 — 도착 즉시 정면이 유효 관측이다."""

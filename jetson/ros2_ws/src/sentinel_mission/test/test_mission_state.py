@@ -378,11 +378,18 @@ def test_interaction_states_forbid_movement():
 
 
 def test_person_approaching_is_speed_limited():
-    """30.3이 접근 속도를 0.10m/s 이하로 제한한다."""
+    """접근 상한은 데드밴드 위·순항 아래여야 한다 (S15P11A301-368).
+
+    30.3 은 0.10m/s 이하로 적었지만 그 속도는 펌웨어 데드밴드(150mm/s) 아래라
+    로봇이 못 움직인다. 「사람 앞에서 천천히」라는 의도는 순항(0.30)보다 낮은
+    0.25 로 지켜진다.
+    """
     machine = MissionStateMachine(start_state=MissionState.PERSON_APPROACHING)
     assert machine.movement_allowed
     assert machine.speed_limit is not None
-    assert machine.speed_limit <= 0.10
+    assert machine.speed_limit is not None
+    assert machine.speed_limit >= 0.15, "데드밴드(150mm/s) 아래면 실속도가 0 이다"
+    assert machine.speed_limit < 0.30, "순항보다 느려야 「접근」이다"
 
 
 # ----------------------------------------------------------------------

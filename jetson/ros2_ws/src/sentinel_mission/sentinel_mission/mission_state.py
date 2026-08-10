@@ -126,8 +126,20 @@ class Phase(str, Enum):
 MOVEMENT: dict[MissionState, tuple[bool, float | None]] = {
     MissionState.SAFE_IDLE: (False, None),
     MissionState.EXPLORING: (True, None),
-    # 30.3이 접근 속도를 0.10m/s 이하로 제한한다.
-    MissionState.PERSON_APPROACHING: (True, 0.10),
+    # 접근 속도 상한. **0.10 → 0.25** (S15P11A301-368).
+    #
+    # 30.3 이 0.10m/s 이하로 적었고 그 값이 여기 있었는데, **그 속도로는 로봇이
+    # 물리적으로 못 움직인다.** 펌웨어 데드밴드가 150mm/s 라 0.10(=100mm/s)은
+    # 보드가 0 으로 만든다(S15P11A301-342 실측). 2026-08-09 실기동에서 사람이
+    # 프레임에 들어오자 조향만 까딱이고 로봇이 서 있었던 원인이 이것이다 —
+    # approach 노드 기본값을 0.25 로 올려도(357) 여기 상한이 다시 0.10 으로
+    # 깎았다(`approach.py` 의 `min(max_speed, speed_limit)`).
+    #
+    # 0.25 는 「확실히 움직이는 최저 대역」의 실측값이다(명령 대비 실속도 82%,
+    # 실속도 약 0.2m/s). 명세 30.3 의 의도는 「사람 앞에서 천천히」이며 그 의도는
+    # 0.25 로도 지켜진다 — 순항 0.30 보다 낮고, 실제 접근 정지는 stop_distance
+    # (1.20m)와 collision_monitor 정지 구역이 담보한다. 03장 표도 함께 고쳤다.
+    MissionState.PERSON_APPROACHING: (True, 0.25),
     MissionState.INTERACTING: (False, None),
     MissionState.POST_RECORDING: (False, None),
     MissionState.REPORTING: (False, None),

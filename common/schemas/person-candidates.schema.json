@@ -21,7 +21,7 @@
         "additionalProperties": false,
         "properties": {
           "trackId": {
-            "description": "ByteTrack 추적 식별자(25.4). 짧은 가림으로 바뀔 수 있으며 병합은 탐지 노드가 시도한다.",
+            "description": "BoT-SORT 추적 식별자(25.4). 짧은 가림으로 바뀔 수 있으며 병합은 탐지 노드가 시도한다.",
             "type": "integer",
             "minimum": 0
           },

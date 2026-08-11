@@ -1,6 +1,8 @@
 # Detection — 객체탐지와 쓰러짐 판정
 
-카메라 영상에서 **사람을 찾고, 추적하고, 쓰러졌는지 판정해** 관제로 보고하는 서브프로젝트입니다.
+카메라 영상에서 **사람을 찾고, 추적하고, 쓰러졌는지 판정하는** 서브프로젝트입니다.
+독립 실행에서는 자세 판정 이벤트와 증빙을 로컬에 저장하고, ROS 통합 실행에서는
+확정된 사람 후보만 Mission Manager에 전달합니다.
 재난 현장의 요구조자 탐색이 목적이라 **놓치는 것(false negative)을 가장 큰 리스크로 둡니다.**
 
 ```
@@ -11,9 +13,10 @@
 Pose는 매 프레임 돌지 않습니다. 같은 사람이 3프레임 연속 잡히면 그때부터 **약 2 FPS**로만
 실행합니다(명세 `07-AI-탐지.md` 25.2). Orin Nano 8GB를 SLAM·Nav2·WebRTC와 나눠 쓰기 때문입니다.
 
-## 무엇을 내놓는가
+## 독립 실행에서 무엇을 내놓는가
 
-사람이 약 1초간 안정적으로 관측되면 `ENCOUNTER_CONFIRMED` 이벤트를 만듭니다.
+`python -m src.main` 독립 실행에서는 사람이 약 1초간 안정적으로 관측되면 로컬
+`events.jsonl`에 `ENCOUNTER_CONFIRMED` 이벤트를 만듭니다.
 
 ```jsonc
 {
@@ -32,14 +35,14 @@ Pose는 매 프레임 돌지 않습니다. 같은 사람이 3프레임 연속 �
   `POSSIBLE_FALLEN` · `POSE_UNKNOWN` 이 사라졌습니다. 관제 화면을 만들 때 2값 기준으로 하세요.
 - **의료 판정이 아닙니다.** `fallenScore`(0~1)와 `signalCount`(판정에 실제로 쓴 신호 수)를
   함께 주는 이유가 그것입니다. `signalCount` 가 낮으면 근거가 얇다는 뜻입니다.
-- 시야를 벗어난 사람의 **재식별은 하지 않습니다.** `trackIds` 는 nullable 이고 중복 판정은
-  Mission Manager 가 위치·시간 기준(1m / 15초)으로 합니다.
+- 시야를 벗어난 사람의 **정밀 재식별은 하지 않습니다.** 독립 실행 이벤트는 같은
+  track에 대해 15초 쿨다운을 적용합니다.
 
 산출물은 `--output` 아래에 실행별 타임스탬프 폴더로 쌓입니다.
 
 ```
 runs/<이름>/20260805_143012/
-├── events.jsonl      # 이벤트 (관제 보고 봉투와 같은 형식)
+├── events.jsonl      # 독립 실행용 로컬 이벤트. ROS·관제 보고로 자동 전송되지 않음
 ├── events/           # 이벤트 증빙 이미지 (골격·bbox overlay 포함)
 └── frames.jsonl      # --frame-log 를 줬을 때만. 용량이 큽니다
 ```
@@ -110,6 +113,13 @@ python -m src.ros_main --config configs/pipeline.jetson.yaml \
 (계약: `common/schemas/person-candidates.schema.json`).
 **encounter 는 발행하지 않습니다** — 그 권한은 Mission Manager 에 있습니다
 (명세 `04-자율주행.md` 26.1 단일 권한 원칙).
+
+ROS 통합 출력은 `observedAt`, `frameId`, 그리고 후보별 `trackId`, `confidence`,
+`box`, `position`입니다. 현재 `human_localizer`가 없어 `position`은 항상 `null`이며,
+독립 실행 이벤트의 `poseStatus`, `fallenScore`, `signalCount`는 이 토픽이나 관제
+encounter에 실리지 않습니다. Mission Manager는 활성 encounter가 있으면 새 후보의
+track ID를 그 encounter에 합치지만, encounter 사이의 1m/15초 지도 기반 중복 제거는
+현재 구현되어 있지 않습니다.
 
 ## 자주 걸리는 것
 

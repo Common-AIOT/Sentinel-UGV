@@ -559,7 +559,7 @@ class MissionStateMachine:
         # "몇 명을 발견했는가"가 흔들리지 않는다.
         #
         # trackId 자체가 갈리는 것은 여기서 고칠 문제가 아니다. 25.4가 "정밀
-        # 재식별은 범위에서 제외한다"고 했고 ByteTrack이 붙으면 개선된다.
+        # 재식별은 범위에서 제외한다"고 했고 BoT-SORT도 정밀 재식별을 보장하지 않는다.
         encounter.person_count = max(encounter.person_count, len(track_ids))
 
         # 사후 3초 안에 다시 보이면 상호작용으로 되돌린다(32-5 REDETECTED).

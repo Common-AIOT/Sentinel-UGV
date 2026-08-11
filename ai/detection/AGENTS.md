@@ -16,24 +16,24 @@
 | 공통 JSON 봉투 / ENCOUNTER_CONFIRMED | 31-5, 31-6 | ✅ |
 | FALLEN을 의료 판정에 쓰지 않음 | 25.6 | ✅ |
 
-### ✅ 명세 이탈 2건 — 2026-08-05 팀 승인됨
+### 현재 명세 이탈 1건과 해소된 이력 — 2026-08-11 재감사
 
 아래 내용은 사유·영향·되돌리는 법의 기록으로 남긴다.
 새로 합류하는 사람이 "명세와 코드가 왜 다른가"를 물을 때 이 절이 답이다.
 
-> **2026-08-06: 이탈 3건 중 ReID가 빠져 2건이 됐다.** 젯슨 미채택으로 최종 시연
-> 범위에서 제외되면서 개발 PC 프로파일까지 껐다. 아래 이탈 2 참고.
+> **2026-08-11:** 명세가 BoT-SORT로 정정되어 추적기 이탈은 해소됐다. 현재 남은
+> 이탈은 아래 Pose crop 1건이다. ReID는 최종 시연 범위에서 제외되어 두 프로파일
+> 모두 꺼져 있다.
 
-**이탈 1. 추적기: ByteTrack → BoT-SORT**
+**해소됨. 추적기: ByteTrack → BoT-SORT**
 
-명세는 ByteTrack을 지정한다(`docs/07-AI-탐지.md` 25.1·25.2).
-현재 구현은 BoT-SORT를 쓴다.
+명세와 현재 구현 모두 BoT-SORT를 쓴다(`docs/07-AI-탐지.md` 25.1·25.2).
 
 - 사유: UGV는 주행하며 촬영하므로 카메라 움직임 보정(GMC)이 필요한데 ByteTrack에는 없다.
 - 영향: 출력은 동일하게 `trackId`이며 백엔드·DB가 보는 값은 바뀌지 않는다. 경미.
 - 주의: 추적·그룹화는 명세 17.2에서 **AI B 담당**이다. 중복 구현 전 담당자와 확인한다.
 
-**이탈 2. Pose를 전체 화면이 아니라 person crop으로 실행한다 (2026-07-30)**
+**현재 이탈 1. Pose를 전체 화면이 아니라 person crop으로 실행한다 (2026-07-30)**
 
 명세 `docs/07-AI-탐지.md` 25.2는 "YOLO26n Pose 조건부 실행 (약 2 FPS)"이다.
 현재 구현은 person bbox를 crop해서 사람별로 Pose를 돌린다.
@@ -225,7 +225,7 @@ Optional small LLM
 
 **이벤트 트리거는 "사람을 찾은 것"이지 "쓰러진 것"이 아니다.** 프로젝트 명세를 따른다.
 
-> "YOLO와 ByteTrack이 한 명 이상의 사람을 약 1초간 안정적으로 확인하면 encounter를 생성하고
+> "YOLO와 BoT-SORT가 한 명 이상의 사람을 약 1초간 안정적으로 확인하면 encounter를 생성하고
 > 탐사를 일시정지한다" (`docs/01-프로젝트-개요.md` 사용자 시나리오, `docs/04-자율주행.md` 8.1)
 
 재난 현장에서는 서 있거나 앉아 있는 요구조자도 구조 대상이므로 자세로 거르지 않는다.
@@ -266,7 +266,7 @@ LiDAR fusion
 Fire Extinguisher / Exit / Danger Sign 클래스 탐지  ← 다음 스프린트로 이월
 ```
 
-### Tracking(ByteTrack) 채택 결정 (2026-07-29 변경)
+### Tracking(ByteTrack) 최초 채택 결정 (2026-07-29, 이후 BoT-SORT로 대체)
 
 **기존 계획에서 Tracking은 Drop 항목이었으나, 채택으로 변경했다.**
 
@@ -285,7 +285,8 @@ Fire Extinguisher / Exit / Danger Sign 클래스 탐지  ← 다음 스프린트
 현재 구현은 detection 내부의 persistence 정확도 확보를 위한 것이며,
 사람 위치 추정(LiDAR 결합)·그룹화는 여전히 AI B 범위다. 중복 구현 전에 담당자와 확인한다.
 
-multi-person은 ByteTrack 도입으로 자연히 지원된다(별도 작업 아님).
+multi-person은 추적기 도입으로 자연히 지원된다(별도 작업 아님). 현재 추적기는
+BoT-SORT다.
 
 "이월" 표시 항목은 폐기가 아니라 **다음 스프린트 예정**이라는 뜻이다. 이번 주에 구현하지는 않되,
 설계가 이를 막지 않도록 한다(§11 CLASS_MAP 확장성).
@@ -647,7 +648,7 @@ ai/detection/
 
 ```text
 src/schemas.py            # 데이터 구조 + 명세 31-5 봉투 생성
-src/object_detector.py    # Detect + ByteTrack
+src/object_detector.py    # Detect + BoT-SORT
 src/pose_estimator.py     # crop → Pose → 원본 좌표 복원
 src/posture_classifier.py # 규칙 기반 자세 판정
 src/persistence.py        # trackId별 지속 시간 관리
@@ -1699,7 +1700,7 @@ INT8
 LiDAR fusion
 ```
 
-Tracking(ByteTrack)은 Drop에서 제외되어 **Must에 포함**된다(§6 채택 결정).
+Tracking(현재 BoT-SORT)은 Drop에서 제외되어 **Must에 포함**된다(§6 채택 결정).
 
 ---
 

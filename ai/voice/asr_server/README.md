@@ -56,7 +56,7 @@ curl -sS http://127.0.0.1:18100/v1/asr \
 | 503 | `MODEL_NOT_READY`, `MODEL_INFERENCE_FAILED` | 모델 준비/추론 실패, 재시도 가능 |
 
 오류 본문은 모두 `{"error":{"code", "message", "request_id", "retryable"}}`
-형식이다. Jetson은 이 오류를 요구조자의 `NO_RESPONSE`로 바꾸면 안 된다.
+형식이다. Jetson은 이 오류를 요구조자의 `NO_VOICE_DETECTED`로 바꾸면 안 된다.
 
 ## L40S Device3 실행
 

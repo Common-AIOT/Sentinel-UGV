@@ -53,10 +53,10 @@ class PoseScheduler:
     전역 예산은 자격을 갖춘 track들에 **라운드로빈**으로 배분한다. 가장 오래 갱신되지
     않은 사람이 먼저 차례를 받으므로, 특정 한 명만 계속 갱신되고 나머지가 굶는 일이 없다.
 
-    crop 방식은 유지한다. 명세 문언은 "전체 화면 분석"이지만 전체 화면 Pose는 멀리 있는
-    작은 사람의 keypoint 품질을 떨어뜨린다. person false negative를 최우선 리스크로
-    두는 원칙(AGENTS.md §23)에 따라 **예산만 명세에 맞추고 crop은 유지**한다.
-    이 해석 차이는 AGENTS.md §0에 기록한다.
+    crop 방식은 명세 기술 사항이다(docs/07-AI-탐지.md 25.2 「Pose 실행 범위」).
+    전체 화면 Pose는 멀리 있는 작은 사람의 keypoint 품질을 떨어뜨리므로, person
+    false negative를 최우선 리스크로 두는 원칙(AGENTS.md §23)에 따라 crop을 쓴다.
+    같은 절이 "약 2 FPS"가 사람당이 아니라 파이프라인 전체 예산임을 함께 규정한다.
     """
 
     def __init__(

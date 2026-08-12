@@ -24,10 +24,14 @@ VISION Encounter
 | `assets/` | 승인된 사전 녹음 안내 WAV |
 | `denoise/` | 관제 청취본 후처리. STT 입력에는 사용하지 않음 |
 | `evaluation/` | ASR shadow, Jetson 자원과 파이프라인 평가 |
+| `prompts/` | GMS 정보 추출 프롬프트 원문 |
 | `tools/` | 환경·오디오·사전 녹음 자산 점검과 코퍼스 수집 |
 | `tests/` | 하드웨어 없이 실행 가능한 계약·상태 머신 단위 테스트 |
+| `docs/` | 실측 런북(전체 스택 RAM 프로브 등) |
+| `results/` | 측정 집계 요약. 원음·전사 원문은 넣지 않는다 |
 
-가중치, 개인 음성, 측정 `results/`, `.env`와 API 키는 커밋하지 않는다.
+가중치, 개인 음성, 원본 전사, `.env`와 API 키는 커밋하지 않는다. `results/`에는
+사람 음성이 포함되지 않은 집계 요약(JSON·CSV)만 커밋한다.
 
 ## 환경 설정
 
@@ -44,9 +48,13 @@ cp .env.example .env
 ```bash
 cd ai/voice
 python -m unittest discover -s tests -v
+python -m pytest tests/test_integration.py -v
 python -m tools.validate_guide_assets
 python -m tools.check_env
 ```
+
+`tests/test_integration.py`만 pytest 형식(모듈 레벨 test 함수·`parametrize`)이라
+`unittest discover`가 수집하지 못한다. 두 명령을 모두 실행해야 전체가 돈다.
 
 ## GPU ASR 서버
 
@@ -346,8 +354,10 @@ ros2 launch sentinel_bringup voice.launch.py \
 ros2 launch sentinel_bringup demo.launch.py
 ```
 
-음성 노드는 `/encounter/start`를 받아 세션을 시작하고 결과를
-`/interaction/report`로 발행한다. 별도 터미널에서 확인할 수 있다.
+음성 노드는 `/perception/encounter`의 `APPROACHED`를 받아 세션을 시작하고, 결과를
+`/interaction/report`로, 종료 안내 재생을 마친 뒤 `DIALOGUE_ENDED`를
+`/mission/signal`로 발행한다. 진행 중 세션은 `/mission/status`의 ESTOP·ERROR·
+MANUAL·PAUSED에서 중단한다. 별도 터미널에서 확인할 수 있다.
 
 ```bash
 source /opt/ros/humble/setup.bash

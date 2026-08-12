@@ -38,7 +38,7 @@ class GuideAsset:
 
 
 # 문구 v2 (2026-08-01, S15P11A301-146 확정). 합니다체 통일, "관제" 금지("구조대"),
-# 공백 제외 8자 이상(에코 가드 하한). 문서 §6-1 표와 한 글자도 달라선 안 된다.
+# 공백 제외 8자 이상(에코 가드 하한). 문서 08장 33.3 표와 한 글자도 달라선 안 된다.
 GUIDE_ASSETS: dict[GuideCode, GuideAsset] = {
     GuideCode.INTRO: GuideAsset(
         GuideCode.INTRO,

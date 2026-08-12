@@ -108,7 +108,10 @@ OOM 또는 P95 지연 상승 시 동시성을 늘리지 말고, 먼저 기존 �
 cd ai/voice
 python -m unittest tests.test_asr_server -v
 python -m unittest discover -s tests -v
+python -m pytest tests/test_integration.py -v
 ```
+
+`test_integration.py`는 pytest 형식이라 `unittest discover`가 수집하지 못한다.
 
 실제 L40S 전사, P50/P95, WER/CER와 핵심 슬롯 평가는
 `S15P11A301-269`, 전체 자원·E2E 판정은 기존 `S15P11A301-261`에서 기록한다.

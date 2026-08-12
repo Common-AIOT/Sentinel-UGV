@@ -2,8 +2,13 @@
 
 관제 보고 페이로드는 프로젝트 통신 명세(docs/05-통신-서버-영상.md 31-5, 31-6)의
 공통 봉투와 ENCOUNTER_CONFIRMED 구조를 따른다. 현재 detection 단독으로 채울 수 없는
-필드(mapPose, encounterId, missionId 등)는 None으로 두되 구조는 명세와 일치시킨다.
+필드(mapPose, missionId 등)는 None으로 두되 구조는 명세와 일치시킨다.
 값을 지어내지 않는다(AGENTS.md §31).
+
+**이 구조로 만든 기록은 로컬 `events.jsonl` 전용이다.** 팀 토픽으로 나가는 것은
+`candidates.py` 의 `/perception/person_candidates` 뿐이다. 구조를 명세와 맞춘 것은
+사람이 대조하기 쉬우라고 한 선택이지 발행 대기 큐가 아니다 — 그래서 발급 권한이
+없는 `encounterId` 는 아예 넣지 않는다(`build_encounter_data`).
 """
 
 from __future__ import annotations
@@ -233,20 +238,21 @@ def build_envelope(
     }
 
 
-def build_encounter_data(
-    persons: list[PersonObservation],
-    *,
-    encounter_id: str,
-) -> dict[str, Any]:
-    """명세 31-6 ENCOUNTER_CONFIRMED의 data 블록.
+def build_encounter_data(persons: list[PersonObservation]) -> dict[str, Any]:
+    """명세 31-6 ENCOUNTER_CONFIRMED의 data 블록 — **로컬 기록 전용**.
 
     detection 단독으로 확보할 수 없는 필드는 None으로 둔다.
     - mapPose: SLAM/Nav2의 TF 변환 필요 (명세 25.2)
     - recordingState / preBufferSec: 이벤트 녹화 파이프라인 필요 (명세 32-6)
     이 필드들은 통합 시 cloud_bridge_node 또는 상위 노드가 채운다.
+
+    **`encounterId`는 넣지 않는다.** 발급 권한이 없기 때문이다 — encounter 는
+    Mission Manager 가 만들어 팀 토픽으로 내보내는 것이고, 여기서 만든 값은
+    로컬 `events.jsonl` 밖으로 나가지 않는다. 이름이 같으면 다음 사람이 두
+    계보를 같은 것으로 보고 조인한다(0건이 조용히 나온다). 로컬 식별자가
+    필요하면 호출부가 `_local.localEventId` 로 붙인다.
     """
     return {
-        "encounterId": encounter_id,
         "mapPose": None,
         "personCount": len(persons),
         "persons": [

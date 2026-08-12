@@ -518,9 +518,12 @@ class InferencePipeline:
         image_path = self.image_store.save(image, track_id=track_id)
 
         self._sequence += 1
-        data = build_encounter_data(confirmed, encounter_id=new_uuid())
+        data = build_encounter_data(confirmed)
         # 명세가 정의하지 않은 로컬 부가 정보는 별도 키로 분리해 봉투를 오염시키지 않는다.
         data["_local"] = {
+            # 이 파일 안에서 한 줄을 가리키는 식별자다. 팀 계약의 encounterId 가
+            # 아니다 — 그것은 Mission Manager 만 발급한다(schemas.build_encounter_data).
+            "localEventId": new_uuid(),
             "frameIndex": result.frame_index,
             "source": result.source,
             "eventImage": str(image_path) if image_path else None,

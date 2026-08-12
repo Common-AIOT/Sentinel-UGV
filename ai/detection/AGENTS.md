@@ -201,7 +201,8 @@ Optional small LLM
   [`../../docs/07-AI-탐지.md` 25.4](../../docs/07-AI-탐지.md#254-detect-파인튜닝-평가와-미채택-결정).
   **다시 시도하기 전에 그 문서의 4절(평가 방법의 함정)을 반드시 읽는다.**
 - threshold 실측 조정 (ISSUE-06)
-- **성능 미달**: Jetson 실측 9.45FPS로 목표 약 15FPS에 못 미친다.
+- **성능 목표 달성**: 목표 약 15FPS 를 젯슨 실기에서 충족했다(2026-08-09 젯슨 담당 확인).
+  ~~9.45FPS~~ 는 `global_budget` 적용 전 수치라 폐기했다.
   imgsz 축소 → TensorRT 변환 순서로 조정한다(§7.1, §35 11번).
 - **MQTT 발행 미구현** — detection은 후보까지만 만들고, MQTT는 `cloud_bridge_node`가 담당한다(§17).
 - `schemas.py`의 encounter 생성 코드가 Mission Manager 권한과 겹친다(§35 18번).
@@ -468,12 +469,13 @@ python -m src.main --source 0 --config configs/pipeline.jetson.yaml --output run
 | JetPack / L4T | 6.x / R36.4.7 |
 | Python / torch | 3.10.12 / 2.8.0 (`cuda.is_available()` True) |
 | ultralytics / opencv / lap | 8.4.107 / 4.11.0 / 0.5.13 |
-| **처리량 (직접 오픈)** | **9.45 FPS** — 사람 4명 상시, 스트리밍 동시 구동, **Pose 예산 수정 전** |
+| ~~처리량 (직접 오픈)~~ | ~~9.45 FPS~~ — **폐기(2026-08-09).** 사람 4명 상시, 스트리밍 동시 구동, **Pose 예산 수정 전** |
 | 처리량 (토픽 구독) | 11.15~11.31 FPS, 디코딩 실패 0 |
 | 후보 발행 | 5.02Hz, 133 스키마 위반 0건 |
 
 **2차 실측(2026-07-31)에서 TensorRT로 16.23 FPS까지 올렸다.** 상세는 아래 §7.3.
-다만 이는 **AI 단독** 수치이며 통합 상태 재측정 전까지 목표 달성으로 보지 않는다.
+이는 **AI 단독** 수치다. 통합 상태는 2026-08-09 젯슨 담당이 실기에서 목표 충족을
+확인했다 — 조건이 명시된 실측 로그가 나오면 §7.3 에 붙인다.
 
 **실기기에서 드러난 제약 3가지**
 - 표준 JetPack에 `lap`이 없다 → `pip install lap` (aarch64 wheel 있음)
@@ -1890,14 +1892,14 @@ AI-Hub 데이터가 끝내 확보되지 않아도 아래는 반드시 충족한�
 | 9 | ~~`requirements.txt`에 `lap`·`onnxruntime` 미반영~~ → **해결.** `lap`은 추가했다(없으면 추적이 ImportError). **`onnxruntime`은 넣지 않는다** — ReID 전용이었고 2026-08-06 두 프로파일 모두에서 꺼졌다. 다시 켤 때 필요한 마커·aarch64 주의사항은 `requirements.txt` 주석에 남겼다 | 해결됨 | — | §7 |
 | 10 | ~~자세 임계값이 실측 근거 없는 임의값~~ → **2026-08-05 부분 해결.** 자세·형상 임계값 5개 + 가중치 3개는 E-FPDS 정답 2,658건과 대조해 검증했다(쓰러짐 0.919 / 비쓰러짐 0.032로 분리). **변경 불필요** | 해결됨 | — | `docs/07-AI-탐지.md` 25.2 |
 | 10b | **부동(inactivity) 신호 3개는 미검증** — `inactivity_boost`, `motion.still_ratio`, `motion.full_still_seconds`. E-FPDS가 정지 이미지라 측정에서 빠졌다. **검증하려면 영상 입력 도구를 새로 만들어야 한다**(삭제된 `calibrate_posture.py`는 `*.png`만 읽어 애초에 불가). 2026-08-06 팀 판단으로 **알려진 한계로 수용**했고 명세 25.2에 명시했다. 오탐·미탐이 보고되면 여기부터 본다 | 수용된 한계 | — | §15, `../../docs/07-AI-탐지.md` 25.2 |
-| 11 | **Detect 상시 15FPS 미달** — Jetson 실측 9.45FPS(사람 4명, 스트리밍 동시 구동). 계측·벤치 도구는 준비 완료, **Jetson 실측 대기** | **성능 미달 확정** | ISSUE-06 | §7.2 |
+| 11 | ~~Detect 상시 15FPS 미달~~ → **2026-08-09 해결.** 젯슨 담당이 실기에서 목표 충족 확인. 종전 9.45FPS 는 `global_budget` 적용 전 수치라 폐기 | 해결됨 | — | §7.2 |
 | 12 | ~~Linux/aarch64 실행 이력 없음~~ → **2026-07-30 해결: Jetson 실기기 검증 완료** | 해결됨 | — | §7.1 |
 | 13 | ~~JetPack 버전 미확인~~ → **해결: JetPack 6.x / L4T R36.4.7, torch 2.8.0 확인** | 해결됨 | — | §7.1 |
 | 14 | ~~ROS2 노드 래핑 미착수~~ → **해결: `src/ros_main.py`(S15P11A301-153)** | 해결됨 | — | §10 |
 | 15 | ~~`ai/detection/README.md` 부재~~ → **2026-08-05 해결.** 진입점 신설. `ai/README.md`의 `detection/` 항목은 287 재편에서 팀이 이미 추가했다 | 해결됨 | — | §8, §29 |
 | 16 | 모델 가중치가 Git에 없어 clone만으로는 실행 불가 | 배포 | Runbook 3장으로 완화됨 | §7.1 |
 | 17 | ~~데이터셋 선정 기록 미작성~~ → **2026-07-31 해결**, 287에서 `../../docs/07-AI-탐지.md`로 통합 | 해결됨 | — | §11.1 |
-| 18 | `schemas.py`의 `build_encounter_data()`가 여전히 encounter를 만든다. **encounter 발급 권한은 Mission Manager 단독**(명세 26.1) | **중복 소지** | 에이전트 + Mission 담당 | §10, §17 |
+| 18 | ~~`build_encounter_data()` 가 encounter 를 만든다~~ → **2026-08-09 해결.** `encounterId` 발급을 없애고 로컬 식별자를 `_local.localEventId` 로 분리했다. 발급 권한은 Mission Manager 단독 | 해결됨 | — | §10, §17, `../../docs/07-AI-탐지.md` 25.2 |
 | 19 | `src.main` 경로는 로봇에서 카메라를 열 수 없다(`usb_cam` 점유). 단독 검증 전용임을 코드가 강제하지 않는다 | 오용 위험 | 에이전트 | §10 |
 | 20 | Jetson 가용 RAM 700MB 이하에서 `CUBLAS_STATUS_ALLOC_FAILED` 재현 | 운영 제약 | Jetson 담당 | Runbook 13장 |
 | 21 | ~~기준 벤치 영상 부재~~ → **2026-07-31 해결: JetPack 영상 기반 결정적 재생성 절차**(04 25.7) | 해결됨 | — | §7.3 |

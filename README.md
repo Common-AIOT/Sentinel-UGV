@@ -38,7 +38,7 @@
 ![MinIO](https://img.shields.io/badge/MinIO-C72E49?style=for-the-badge&logo=minio&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white)
 
-[실행](#로봇-스택-실행) · [모듈별 시작](#개발-시작) · [문서](#개발-문서) · [안전](#안전-원칙) · [상태](#프로젝트-상태) · [트러블슈팅](docs/TROUBLESHOOTING.md) · [TBD](docs/TBD.md)
+[시연](#시연) · [실행](#로봇-스택-실행) · [모듈별 시작](#개발-시작) · [문서](#개발-문서) · [안전](#안전-원칙) · [상태](#프로젝트-상태) · [트러블슈팅](docs/TROUBLESHOOTING.md) · [TBD](docs/TBD.md)
 
 </div>
 
@@ -52,6 +52,32 @@ Jetson Orin Nano에서 ROS 2, SLAM, Nav2, 사람 탐지와 안전 제어를 수�
 시연 시나리오 **「탐사 시작 → 자율 탐사 → 사람 발견 → 접근 → 음성 대화 → 보고 → 임무 종료」**
 전 구간이 실기동으로 동작합니다. 구현 완료 범위와 미구현·제한은 [프로젝트 상태](#프로젝트-상태)에
 분리해 적었고, 전체 기준은 통합 명세서 [v2.1](docs/README.md)입니다.
+
+## 시연
+
+<!-- 시연 영상 — VIDEO_ID 두 곳을 YouTube 영상 ID로 바꾸고 이 주석을 푼다.
+     GitLab 마크다운은 <iframe> 을 sanitize 하므로 플레이어는 심을 수 없고 썸네일
+     링크가 유일한 방법이다. img.youtube.com 을 쓰면 레포에 파일을 추가하지 않아도
+     되고, 영상을 다시 편집해 올려도 ID 가 같으면 포스터가 따라온다.
+<div align="center">
+  <a href="https://youtu.be/VIDEO_ID">
+    <img src="https://img.youtube.com/vi/VIDEO_ID/maxresdefault.jpg" width="720" alt="Sentinel UGV 시연 영상">
+  </a>
+</div>
+-->
+
+<!-- 관제 화면 — 캡처를 frontend/docs/screen-gcs-main.webp 로 넣고 이 주석을 푼다.
+     그 폴더에는 같은 화면의 와이어프레임 4장이 이미 있어 설계와 결과가 나란히 놓인다.
+     넣기 전에 호스트명·IP 가 찍혔는지 확인한다 — API·MediaMTX·8765 가 모두 무인증이라
+     화면에 보이는 주소가 그대로 접근 경로다(06장 36-4).
+<div align="center">
+  <img src="frontend/docs/screen-gcs-main.webp" width="860" alt="Sentinel UGV 관제 화면 — 실시간 영상·지도·상태">
+</div>
+-->
+
+시연 영상과 관제 화면 캡처는 추가 예정입니다. 관제 화면 설계는
+[frontend/docs/wireframe.md](frontend/docs/wireframe.md), 시연 시나리오 전문은
+[01장 4.2 핵심 시연 시퀀스](docs/01-프로젝트-개요.md#42-핵심-시연-시퀀스)입니다.
 
 ## 시스템 구성
 

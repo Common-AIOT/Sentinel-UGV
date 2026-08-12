@@ -63,7 +63,13 @@ class MapUploaderNode(Node):
         super().__init__('map_uploader')
 
         self.declare_parameter('map_directory', '/var/lib/sentinel/maps')
-        self.declare_parameter('backend_base_url', 'https://sentinel-ugv.xyz')
+        # apex 도메인이 아니라 API 호스트다. sentinel-ugv.xyz는 Vercel 프론트이고
+        # 모든 API 요청이 404가 된다 — 프론트가 200을 주므로 망 문제로 보이지도
+        # 않는다. S15P11A301-171에서 이 노드가 밟은 함정이며, media_uploader는
+        # 그때 고쳤는데 원인이 된 여기가 남아 있었다.
+        self.declare_parameter(
+            'backend_base_url', 'https://api.sentinel-ugv.xyz'
+        )
         self.declare_parameter('auth_token', '')
         self.declare_parameter('poll_period_seconds', 15.0)
         # 한 주기에 올리는 지도 수. 지도는 이벤트 영상보다 작지만(수백 KB)

@@ -370,8 +370,8 @@ def generate_launch_description():
         _include('sentinel_recorder', 'map_saver.launch.py',
                  'enable_recorder', 8.0),
         # media_uploader는 recorder.launch.py에 없어서 여기서 띄운다.
-        # backend_base_url 기본값이 apex 도메인이라 API 호스트로 바로잡는다 —
-        # 실물 검증(S15P11A301-140)에서 매번 손으로 넘기던 값이다.
+        # backend_base_url 은 노드 기본값이 이미 API 호스트라 넘기지 않는다 —
+        # 종전 주석이 말하던 apex 기본값은 노드 쪽에서 고쳐졌다.
         TimerAction(period=8.0, actions=[
             Node(
                 package='sentinel_recorder',
@@ -379,9 +379,6 @@ def generate_launch_description():
                 name='media_uploader',
                 output='screen',
                 condition=IfCondition(LaunchConfiguration('enable_recorder')),
-                parameters=[{
-                    'backend_base_url': 'https://api.sentinel-ugv.xyz',
-                }],
             ),
         ]),
         _include('sentinel_mission', 'mission.launch.py',

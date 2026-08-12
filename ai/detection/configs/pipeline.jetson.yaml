@@ -8,7 +8,7 @@
 #
 # ⚠️ 자원 전제
 # Orin Nano 8GB는 SLAM·Nav2·WebRTC와 메모리·연산을 나눠 쓴다
-# (docs/04-자율주행-AI.md, ai/README.md). 비전이 자원을 독점하면 주행이 멈춘다.
+# (docs/07-AI-탐지.md, ai/README.md). 비전이 자원을 독점하면 주행이 멈춘다.
 # 명세 목표는 Detect 상시 약 15FPS, Pose 조건부 약 2FPS다(25.6).
 
 # 이 프로파일은 TensorRT 엔진만 받는다 (S15P11A301-329).

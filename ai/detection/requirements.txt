@@ -38,7 +38,15 @@ lap
 # since ReID runs once per person per frame. Verify with:
 #     python -c "import onnxruntime as ort; print(ort.get_available_providers())"
 
-# Versions retained from the existing shared environment
+# Versions retained from the existing shared environment.
+#
+# Only numpy and PyYAML are imported by this package directly. pillow, requests,
+# scipy and tqdm are transitive dependencies of ultralytics -- they are listed
+# here to PIN their versions, not because our code imports them.
+#
+# Do not drop them as "unused" (S15P11A301-380). Removing a line here does not
+# remove the package; it removes the pin, and the next clean install resolves to
+# whatever ultralytics happens to allow.
 numpy==1.26.4
 pillow==12.3.0
 PyYAML==6.0.3

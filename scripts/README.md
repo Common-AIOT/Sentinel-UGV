@@ -569,6 +569,28 @@ grep NEXT_PUBLIC_LOCAL_STREAM_URL frontend/.env.local
 값을 고친 뒤에는 dev 서버를 다시 시작해야 한다. Next.js는 `NEXT_PUBLIC_` 값을
 빌드 시점에 코드에 넣기 때문이다.
 
+## 개발용 시뮬레이터
+
+| 스크립트 | 하는 일 |
+|---|---|
+| `telemetry_sim.py` | 젯슨 없이 백엔드 수집 경로를 검증한다 (S15P11A301-103) |
+
+`common/samples`의 검증된 예제를 템플릿으로 삼아 실제 젯슨과 같은 토픽·QoS·Retain으로
+MQTT에 발행한다. 젯슨 실데이터가 없는 동안 백엔드를 검증하는 용도이고, 젯슨 담당자가
+접속 설정을 확인할 때도 그대로 쓴다. `paho-mqtt>=2.1`이 필요하다.
+
+```bash
+python scripts/telemetry_sim.py                      # 로컬 브로커
+python scripts/telemetry_sim.py --host api.sentinel-ugv.xyz --port 443 \
+    --transport websockets --path /mqtt --tls \
+    --username sentinel-01 --password '****'         # EC2 브로커
+```
+
+> 이 스크립트는 마감 감사(S15P11A301-378) 전까지 어느 문서에도 없었다.
+> `validate_repository.sh` 의 README 동기화 검사가 `scripts/*.sh`만 보기 때문에 `.py`
+> 도구는 걸리지 않는다. `scripts/`에 파이썬 도구를 추가하면 검사가 잡아 주지 않으므로
+> 직접 여기 적는다.
+
 ## CI
 
 | 스크립트 | 하는 일 |

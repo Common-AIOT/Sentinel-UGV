@@ -13,11 +13,13 @@
 ![Detect](https://img.shields.io/badge/Detect-15%20FPS-455A64?style=flat-square)
 ![영상](https://img.shields.io/badge/%EC%98%81%EC%83%81-15FPS%20%C2%B7%201500kbps-455A64?style=flat-square)
 
+![EKF](https://img.shields.io/badge/EKF%20yaw-%EC%98%A4%EC%B0%A8%201.1%25-455A64?style=flat-square)
+
 **로봇 · 인식**
 
 ![ROS 2](https://img.shields.io/badge/ROS%202%20Humble-22314E?style=for-the-badge&logo=ros&logoColor=white)
 ![Jetson](https://img.shields.io/badge/Jetson%20Orin%20Nano-76B900?style=for-the-badge&logo=nvidia&logoColor=white)
-![YOLO](https://img.shields.io/badge/YOLO26%20%C2%B7%20BoT--SORT-111F68?style=for-the-badge&logo=ultralytics&logoColor=white)
+![YOLO](https://img.shields.io/badge/YOLO26%20%C2%B7%20BoT--SORT-111F68?style=for-the-badge)
 ![Nav2](https://img.shields.io/badge/Nav2%20Smac%20%C2%B7%20SLAM%20Toolbox-22314E?style=for-the-badge&logo=ros&logoColor=white)
 ![ESP32](https://img.shields.io/badge/ESP32%20%C3%972-E7352C?style=for-the-badge&logo=espressif&logoColor=white)
 
@@ -38,7 +40,7 @@
 ![MinIO](https://img.shields.io/badge/MinIO-C72E49?style=for-the-badge&logo=minio&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white)
 
-[할 수 있는 것](#할-수-있는-것) · [시연](#시연) · [실행](#로봇-스택-실행) · [모듈별 시작](#개발-시작) · [문서](#개발-문서) · [안전](#안전-원칙) · [상태](#프로젝트-상태) · [트러블슈팅](docs/TROUBLESHOOTING.md) · [TBD](docs/TBD.md)
+[할 수 있는 것](#할-수-있는-것) · [시연](#시연) · [시스템 구성](#시스템-구성) · [실행](#로봇-스택-실행) · [모듈별 시작](#개발-시작) · [문서](#개발-문서) · [안전](#안전-원칙) · [상태](#프로젝트-상태) · [팀](#팀) · [트러블슈팅](docs/TROUBLESHOOTING.md) · [TBD](docs/TBD.md)
 
 </div>
 
@@ -55,6 +57,10 @@ Jetson Orin Nano에서 ROS 2, SLAM, Nav2, 사람 탐지와 안전 제어를 수�
 [v2.1](docs/README.md)입니다.
 
 ## 시연
+
+<div align="center">
+  <img src="docs/assets/ugv-views.png" width="960" alt="Sentinel UGV 실물 — 전면·좌측면·우측면·후면">
+</div>
 
 <!-- 시연 영상 — VIDEO_ID 두 곳을 YouTube 영상 ID로 바꾸고 이 주석을 푼다.
      GitLab 마크다운은 <iframe> 을 sanitize 하므로 플레이어는 심을 수 없고 썸네일
@@ -76,6 +82,9 @@ Jetson Orin Nano에서 ROS 2, SLAM, Nav2, 사람 탐지와 안전 제어를 수�
 </div>
 -->
 
+차체는 BMW M7 유아전동차 베이스에 LiDAR·카메라를 고정 마운트로 올린 구성입니다. 상단 원통이
+YDLIDAR X4 Pro, 전면 중앙이 BRIO 100입니다. 조향 기하가 있어 제자리 회전은 하지 못합니다.
+
 시연 영상과 관제 화면 캡처는 추가 예정입니다. 관제 화면 설계는
 [frontend/docs/wireframe.md](frontend/docs/wireframe.md), 시연 시나리오 전문은
 [01장 4.2 핵심 시연 시퀀스](docs/01-프로젝트-개요.md#42-핵심-시연-시퀀스)입니다.
@@ -86,6 +95,16 @@ MVP 필수 기능([01장 2.2](docs/01-프로젝트-개요.md#22-mvp-필수-기�
 남은 둘은 **MVP-13 자동 복귀**(home pose 저장까지만 되어 있고 복귀 주행이 없다)와 **MVP-06의 사람
 map 좌표 추정**(encounter 생성은 되지만 위치가 로봇 위치로 남는다 — 부분 구현이므로 셈에서 뺐다)이며,
 사유는 [끝내지 못한 것](#끝내지-못한-것)에 적었습니다. 아래 수치는 전부 실기동 실측입니다.
+
+| 무엇을 | 어떻게 | 실측 |
+|---|---|---|
+| 미지 공간 자율 탐사 | SLAM Toolbox + Frontier, Nav2 Smac Hybrid-A\* + RPP | 순항 0.30m/s(실속도 99%), `R_min` 좌 1.37m·우 1.76m |
+| 사람 탐지·추적·자세 | YOLO26n Detect + BoT-SORT, 조건부 Pose | Detect 약 15FPS, 쓰러짐 판정 E-FPDS 2,658건 대조 |
+| 안전거리 접근 | bearing-only 주행 | 1.5~2.0m 정지, 접근 0.25m/s |
+| 음성 상호작용 | Silero VAD → 원격 Qwen3-ASR → GMS 구조화 → 사전 녹음 안내 | STT 실패를 무응답으로 분류하지 않음 |
+| 실시간 관제 | WebRTC 영상 · Foxglove 지도 · 2Hz 텔레메트리 | 영상 15FPS·1500kbps |
+| 이벤트 기록 | 발견 전 3초 + 상호작용 + 후 3초 MP4 → S3 | 링 버퍼 8초 순환(약 1.6MB) |
+| 다층 안전 | watchdog 300ms · 수동 TTL 250ms · `collision_monitor` · `safety_gate` | 물리 E-Stop **미도입**([안전 원칙](#안전-원칙)) |
 
 **미지 공간을 스스로 돌아다닙니다**
 
@@ -125,6 +144,10 @@ map 좌표 추정**(encounter 생성은 되지만 위치가 로봇 위치로 남
 - 자동 시험 **941건**이 CI에서 돕니다 — ROS 2 682 · 프런트 171 · 백엔드 55 · 탐지 33.
 
 ## 시스템 구성
+
+<div align="center">
+  <img src="docs/assets/architecture.svg" width="1000" alt="Sentinel UGV 시스템 구성 — 센서·ESP32·Jetson·원격 GPU·관제·관제 웹의 데이터 흐름">
+</div>
 
 - **차량**: BMW M7 유아전동차 베이스. 후륜 좌·우 RS540 2개(BTS7960 2개)가 전·후진, 전륜 타이로드에
   직결된 DS51150 서보가 조향을 담당합니다. 조향 기하가 있어 **제자리 회전은 하지 못합니다**
@@ -348,3 +371,19 @@ Jetson에서 스택을 올리고 내리는 진입점은 **둘뿐**입니다. 다
 
 구현 상태의 세부 근거와 남은 검증은 [통합 명세서](docs/README.md)와
 [TBD 대장](docs/TBD.md)을 기준으로 합니다.
+
+## 팀
+
+역삼역역무실관제센터 · SSAFY 15기 자율 프로젝트
+
+| 역할 | 담당 | 맡은 것 |
+|---|---|---|
+| ROS2 · 주행 | | SLAM·Nav2 구성, 임무 상태 머신, TF, 안전 체인 |
+| 임베디드 · 기구 | | ESP32 펌웨어 2종, 구동·조향 계통, 배선·기구, 실측 캘리브레이션 |
+| AI · 탐지 | | YOLO 탐지·추적, 조건부 Pose 쓰러짐 판정, Jetson 최적화 |
+| AI · 음성 | | VAD·ASR·LLM 파이프라인, 원격 ASR 서버, 잡음 제거 |
+| 백엔드 · 영상 | | 관제 API, MQTT·STOMP, TimescaleDB·S3, 스트리밍·이벤트 녹화 |
+| 프런트엔드 | | 관제 웹, 실시간 영상·지도, 임무 명령·이력 |
+
+> 담당 칸은 이름 공개 여부를 팀에서 정한 뒤 채웁니다. 역할 구분은 [TBD 대장](docs/TBD.md)의
+> 담당 표기(`ROS2·주행 A`, `임베디드·기구 B`, `AI A`, `AI B`, `백엔드·영상 A`)를 따릅니다.

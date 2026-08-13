@@ -6,7 +6,6 @@ import {
   INITIAL_MOTION,
   type SensorReading,
   type MotionReading,
-  type DetectionEvent,
   type RobotStatus,
   type MissionState,
 } from "./mockData";
@@ -23,9 +22,7 @@ import {
 import {
   createStompClient,
   missionEventsTopic,
-  missionEncountersTopic,
   type MissionEventMessage,
-  type EncounterChangedMessage,
 } from "@/lib/realtime";
 import type { Client, StompSubscription } from "@stomp/stompjs";
 
@@ -87,20 +84,13 @@ interface RobotContextValue {
   sensors: SensorReading;
   // 주행 지표 (#300). 엔코더(ESP32) 기반이라 보드가 빠지면 비는 것이 정상이다.
   motion: MotionReading;
-  // Detections — 실 encounter 폴링이 채운다. 상단 배지의 출처다.
-  detections: DetectionEvent[];
   // Control
-  sendControl: (x: number, y: number) => void;
   sendCommand: (type: string) => Promise<void>;
   // Mission
   missionId: string | null;
   // 명령 결과 알림 (S15P11A301-207) — 거부·실패·무응답을 화면이 설명한다.
   commandAlert: string | null;
   dismissCommandAlert: () => void;
-  // Video
-  videoConnected: boolean;
-  videoQuality: "1080p" | "720p";
-  setVideoQuality: (q: "1080p" | "720p") => void;
   // WS connection
   wsConnected: boolean;
 }
@@ -110,9 +100,6 @@ const RobotCtx = createContext<RobotContextValue | null>(null);
 export function RobotProvider({ children }: { children: React.ReactNode }) {
   const [sensors, setSensors] = useState<SensorReading>(INITIAL_SENSORS);
   const [motion, setMotion] = useState<MotionReading>(INITIAL_MOTION);
-  const [detections, setDetections] = useState<DetectionEvent[]>([]);
-  const [videoConnected, setVideoConnected] = useState(false);
-  const [videoQuality, setVideoQuality] = useState<"1080p" | "720p">("1080p");
   const [wsConnected, setWsConnected] = useState(false);
   const [status, setStatus] = useState<RobotStatus>({
     connected: false,
@@ -223,7 +210,6 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
     // 접속만으로 탐사가 시작되면 안 된다.
     // wsConnected 는 더 이상 목이 아니다 — 실제 STOMP 연결 상태(아래)가 결정한다.
     const connectTimer = setTimeout(() => {
-      setVideoConnected(true);
       setStatus(s => ({
         ...s,
         connected: true,
@@ -231,7 +217,9 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
         missionState: missionIdRef.current ? s.missionState : "SAFE_IDLE",
         safetyState: "READY",
         // mcuConnected 는 이제 실측(#205 센서 폴링)만 쓴다 — 목으로 꾸미지 않는다.
-        health: { ...s.health, lidarOk: true, cameraOk: true },
+        // lidarOk·cameraOk 를 true 로 꾸미던 것도 걷었다 (S15P11A301-377): 읽는
+        // 화면이 하나도 없어 「목이 참으로 만든 값」만 남아 있었다. 실측이 생기면
+        // mcuConnected·motorLinkOk 처럼 폴링에서 채운다.
       }));
       if (!missionIdRef.current) mockMission.current = "SAFE_IDLE";
     }, 1000);
@@ -368,12 +356,6 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
     const timer = setInterval(poll, 2000);
     return () => { cancelled = true; clearInterval(timer); };
   }, [missionId]);
-
-  const sendControl = useCallback((x: number, y: number) => {
-    if (USE_MOCK) return; // mock: robot moves on its own
-    // Real: send via STOMP to /app/control
-    console.log("control", { x, y });
-  }, []);
 
   /**
    * UI 명령 어휘 → 서버 명령(27.4) 매핑 후 발행. manual/auto 는 서버 명령이 없어
@@ -517,26 +499,15 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
   // 주 채널은 STOMP 푸시(S15P11A301-204), REST 폴링은 끊김 대비 저빈도 백업이다.
   // 어느 쪽이 가져와도 서버 상태가 진실이라는 원칙(27.3)은 같다.
 
-  // 푸시와 폴링이 같은 발견을 두 번 목록에 넣지 않도록 본 것을 공유한다.
-  const seenEncounters = useRef(new Set<string>());
-  useEffect(() => { seenEncounters.current.clear(); }, [missionId]);
-
-  const addDetection = useCallback(
-    (id: string, at: number, mapX: number | null, mapY: number | null) => {
-      if (seenEncounters.current.has(id)) return;
-      seenEncounters.current.add(id);
-      const event: DetectionEvent = {
-        id,
-        timestamp: at,
-        confidence: 1,
-        thumbnailColor: "hsl(20, 60%, 30%)",
-        location:
-          mapX !== null && mapY !== null
-            ? `(${mapX.toFixed(1)}, ${mapY.toFixed(1)})`
-            : "위치 미기록",
-      };
-      setDetections(d => [event, ...d].slice(0, 20));
-    }, []);
+  // encounter 목록·배지를 채우던 경로를 걷어냈다 (S15P11A301-377).
+  //
+  // `detections` 를 읽는 화면이 하나도 남지 않았는데 그것을 채우는 사슬 전체가
+  // 살아 있었다 — STOMP 구독, 중복 제거 Set, 그리고 **5초(연결 중 30초)마다
+  // `api.missionEncounters` 를 부르고 결과를 버리던 폴링**이다. 배지가 없어질 때
+  // (S15P11A301-223 계열 정리) 공급 쪽이 남은 형태다.
+  //
+  // 다시 필요해지면 폴링 주기·중복 제거 규칙은 이 커밋 이력에 있다. 화면을 먼저
+  // 만들고 그때 되살린다 — 소비자 없는 공급을 미리 두지 않는다.
 
   // STOMP 연결은 임무와 무관하게 유지한다 — 헤더의 연결 표시등이 이 상태다.
   // 구독은 임무 단위라 missionId 가 바뀌면 갈아타고, 재연결 시 onConnect 가 복구한다.
@@ -553,15 +524,8 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
         // 푸시는 ACK 반영 직후의 새 상태다 — 폴링과 달리 유예 없이 즉시 반영한다.
         if (ev.type === "MISSION_STATUS") applyServerStatus(ev.status);
       }),
-      client.subscribe(missionEncountersTopic(mid), msg => {
-        const ev = JSON.parse(msg.body) as EncounterChangedMessage;
-        // 목록·배지는 신규 발견만 센다. phase 변화 상세는 블랙박스 화면이 다룬다.
-        if (ev.phase === "CONFIRMED") {
-          addDetection(ev.encounterId, Date.parse(ev.detectedAt), ev.mapX, ev.mapY);
-        }
-      }),
     ];
-  }, [applyServerStatus, addDetection]);
+  }, [applyServerStatus]);
 
   useEffect(() => {
     const client = createStompClient();
@@ -655,32 +619,12 @@ export function RobotProvider({ children }: { children: React.ReactNode }) {
     return () => clearInterval(timer);
   }, [missionId, wsConnected, applyServerStatus]);
 
-  // encounter 백업 폴링 — 연결 중 30초, 끊기면 5초. 새 발견을 목록·배지에 반영한다.
-  // 첫 실행이 기존 발견을 조용히 채우는 복구 역할도 그대로 한다(배지 강조는
-  // 배지 쪽 이전 값 비교 담당, S15P11A301-196).
-  useEffect(() => {
-    if (!missionId) return;
-    const timer = setInterval(async () => {
-      try {
-        const list = await api.missionEncounters(missionId);
-        for (const e of list) {
-          addDetection(e.id, Date.parse(e.startedAt), e.mapX, e.mapY);
-        }
-      } catch {
-        // 다음 폴링에 맡긴다.
-      }
-    }, wsConnected ? 30_000 : 5000);
-    return () => clearInterval(timer);
-  }, [missionId, wsConnected, addDetection]);
-
   return (
     <RobotCtx.Provider value={{
       status, sensors, motion,
-      detections,
-      sendControl, sendCommand,
+      sendCommand,
       missionId,
       commandAlert, dismissCommandAlert,
-      videoConnected, videoQuality, setVideoQuality,
       wsConnected,
     }}>
       {children}

@@ -22,15 +22,15 @@ REQUIREMENTS="scripts/ci/contract-test-requirements.txt"
 
 # 검증 대상 패키지. .gitlab-ci.yml 의 script 와 같아야 한다.
 PACKAGES=(
+  esp32_bridge
   sentinel_bridge
   sentinel_drive
   sentinel_mission
   sentinel_recorder
+  sentinel_safety
   sentinel_streaming
 )
 
-# sentinel_perception은 빠져 있습니다. numpy가 필요해 alpine 이미지에서 소스
-# 빌드가 걸리므로 CI에 넣지 않았습니다. 젯슨에서는 그냥 pytest로 돌립니다.
 
 if [[ ! -x "$VENV/bin/python" ]]; then
   echo "CI 환경을 흉내낼 venv를 만든다: $VENV"

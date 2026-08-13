@@ -308,8 +308,10 @@ def generate_launch_description() -> LaunchDescription:
                 default_value='',
                 description=(
                     'Detect 모델 경로 (ai/detection 기준 상대 경로). 비우면 '
-                    'models/yolo26n.engine 을 찾아 쓰고, 없으면 설정 파일 '
-                    '기본값(PyTorch)으로 돌면서 경고를 남긴다'
+                    '설정 파일이 가리키는 TensorRT 엔진을 쓴다. 엔진이 없으면 '
+                    '탐지 노드가 기동을 거부한다 — PyTorch 폴백은 조용히 43% '
+                    '느려진 채 돌아서 없앴다(S15P11A301-329). 스택의 나머지는 '
+                    '계속 돌고, 굽는 명령은 로그에 남는다'
                 ),
             ),
             OpaqueFunction(function=setup),

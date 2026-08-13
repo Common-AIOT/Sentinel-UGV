@@ -44,9 +44,10 @@ def check_session_gate(
         )
 
     if probe is None:
-        probe = lambda base_url: probe_gms_endpoint(
-            base_url, timeout_seconds=config.GMS_PROBE_TIMEOUT
-        )
+        def probe(base_url):
+            return probe_gms_endpoint(
+                base_url, timeout_seconds=config.GMS_PROBE_TIMEOUT
+            )
     if not probe(config.GMS_BASE_URL):
         return SessionGateResult(
             SessionGateState.GMS_UNAVAILABLE,

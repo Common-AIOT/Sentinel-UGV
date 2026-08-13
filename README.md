@@ -7,10 +7,10 @@
 [![Pipeline](https://lab.ssafy.com/s15-webmobile3-sub1/S15P11A301/badges/develop/pipeline.svg)](https://lab.ssafy.com/s15-webmobile3-sub1/S15P11A301/-/pipelines)
 
 ![시연](https://img.shields.io/badge/%EC%8B%9C%EC%97%B0-%EC%A0%84_%EA%B5%AC%EA%B0%84_%EC%8B%A4%EA%B8%B0%EB%8F%99-2E7D32?style=flat-square)
-![R_min](https://img.shields.io/badge/R__min-1.37m%20%2F%201.76m-455A64?style=flat-square)
+![MVP](https://img.shields.io/badge/MVP-14%2F16%20%EA%B5%AC%ED%98%84-2E7D32?style=flat-square)
+![자동 시험](https://img.shields.io/badge/%EC%9E%90%EB%8F%99%20%EC%8B%9C%ED%97%98-941%EA%B1%B4-2E7D32?style=flat-square)
 ![순항 속도](https://img.shields.io/badge/%EC%88%9C%ED%95%AD-0.30m%2Fs%20%28%EC%8B%A4%EC%86%8D%EB%8F%84%2099%25%29-455A64?style=flat-square)
 ![Detect](https://img.shields.io/badge/Detect-15%20FPS-455A64?style=flat-square)
-![EKF yaw](https://img.shields.io/badge/EKF%20yaw-%EC%98%A4%EC%B0%A8%201.1%25-455A64?style=flat-square)
 ![영상](https://img.shields.io/badge/%EC%98%81%EC%83%81-15FPS%20%C2%B7%201500kbps-455A64?style=flat-square)
 
 **로봇 · 인식**
@@ -38,7 +38,7 @@
 ![MinIO](https://img.shields.io/badge/MinIO-C72E49?style=for-the-badge&logo=minio&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white)
 
-[시연](#시연) · [실행](#로봇-스택-실행) · [모듈별 시작](#개발-시작) · [문서](#개발-문서) · [안전](#안전-원칙) · [상태](#프로젝트-상태) · [트러블슈팅](docs/TROUBLESHOOTING.md) · [TBD](docs/TBD.md)
+[할 수 있는 것](#할-수-있는-것) · [시연](#시연) · [실행](#로봇-스택-실행) · [모듈별 시작](#개발-시작) · [문서](#개발-문서) · [안전](#안전-원칙) · [상태](#프로젝트-상태) · [트러블슈팅](docs/TROUBLESHOOTING.md) · [TBD](docs/TBD.md)
 
 </div>
 
@@ -50,8 +50,9 @@ Jetson Orin Nano에서 ROS 2, SLAM, Nav2, 사람 탐지와 안전 제어를 수�
 제공합니다.
 
 시연 시나리오 **「탐사 시작 → 자율 탐사 → 사람 발견 → 접근 → 음성 대화 → 보고 → 임무 종료」**
-전 구간이 실기동으로 동작합니다. 구현 완료 범위와 미구현·제한은 [프로젝트 상태](#프로젝트-상태)에
-분리해 적었고, 전체 기준은 통합 명세서 [v2.1](docs/README.md)입니다.
+전 구간이 실기동으로 동작합니다. 무엇을 하는 로봇인지는 [할 수 있는 것](#할-수-있는-것)에,
+미구현·폐기·제한은 [프로젝트 상태](#프로젝트-상태)에 나눠 적었습니다. 전체 기준은 통합 명세서
+[v2.1](docs/README.md)입니다.
 
 ## 시연
 
@@ -79,6 +80,50 @@ Jetson Orin Nano에서 ROS 2, SLAM, Nav2, 사람 탐지와 안전 제어를 수�
 [frontend/docs/wireframe.md](frontend/docs/wireframe.md), 시연 시나리오 전문은
 [01장 4.2 핵심 시연 시퀀스](docs/01-프로젝트-개요.md#42-핵심-시연-시퀀스)입니다.
 
+## 할 수 있는 것
+
+MVP 필수 기능([01장 2.2](docs/01-프로젝트-개요.md#22-mvp-필수-기능)) 16개 중 **14개를 구현했습니다.**
+남은 둘은 **MVP-13 자동 복귀**(home pose 저장까지만 되어 있고 복귀 주행이 없다)와 **MVP-06의 사람
+map 좌표 추정**(encounter 생성은 되지만 위치가 로봇 위치로 남는다 — 부분 구현이므로 셈에서 뺐다)이며,
+사유는 [끝내지 못한 것](#끝내지-못한-것)에 적었습니다. 아래 수치는 전부 실기동 실측입니다.
+
+**미지 공간을 스스로 돌아다닙니다**
+
+- YDLIDAR X4 Pro와 SLAM Toolbox로 2D 지도를 실시간 생성하고, Frontier로 미탐사 영역을 스스로
+  고릅니다. 지도는 임무마다 초기화됩니다(`MISSION_START`에서 SLAM 재시작).
+- 경로는 Nav2 **Smac Hybrid-A\***(REEDS_SHEPP) + Regulated Pure Pursuit입니다. **제자리 회전을
+  하지 못하는 전륜 조향 차량**이라는 제약에서 나온 선택이며, 실측 `R_min` 좌 1.37m·우 1.76m를
+  안전측 1.8m로 planner에 넣었습니다.
+- 순항 0.30m/s 명령 대비 실속도 99%, EKF yaw는 90° 회전에서 오차 1.1%입니다.
+
+**사람을 찾아 안전거리까지 접근합니다**
+
+- YOLO26n Detect로 person을 상시 약 15FPS 탐지하고 BoT-SORT로 추적합니다. 같은 사람을 시간·위치
+  조건으로 하나의 encounter에 묶습니다.
+- 3프레임 이상 연속 감지되면 Pose를 약 2FPS로 **조건부** 실행해 쓰러짐을 판정합니다. 임계값은
+  E-FPDS 정답 2,658건과 대조해 검증했습니다(쓰러짐 점수 중앙 0.919 / 비쓰러짐 0.032).
+- bearing-only 주행으로 1.5~2.0m 안전거리까지 접근합니다(접근 속도 0.25m/s).
+
+**발견한 사람에게 말을 걸고 답을 정리합니다**
+
+- 마이크 → Silero VAD → 원격 Qwen3-ASR-1.7B(L40S FastAPI) → GMS 구조화 → 승인된 사전 녹음 안내
+  재생으로 이어집니다.
+- **STT 실패를 요구조자의 무응답으로 분류하지 않습니다.** 위험도는 LLM이 아니라 규칙이 산출합니다.
+
+**관제에서 실시간으로 보고 명령합니다**
+
+- WebRTC 저지연 영상(15FPS·1500kbps), Foxglove 브리지로 받는 실시간 SLAM 지도, 2Hz 텔레메트리.
+- 임무 시작·일시정지·재개·종료, 자율/수동 모드 전환, 모바일 페이지 수동 조종.
+- 사람 확정 전 3초 + 상호작용 전체 + 종료 후 3초를 이벤트 영상으로 잘라 S3에 올립니다.
+- 임무·시계열·이벤트·미디어를 TimescaleDB와 S3에 남기고 과거 임무 페이지에서 조회합니다.
+
+**안전은 여러 층으로 막습니다**
+
+- ESP32 watchdog 300ms, 수동 조종 TTL 250ms, `collision_monitor` 정지·감속 구역(실측 차체 기준),
+  `safety_gate`, 관제 임무 정지. 물리 E-Stop 미도입이 이 프로토타입의 가장 큰 안전 한계이며
+  [안전 원칙](#안전-원칙)에 그대로 적었습니다.
+- 자동 시험 **941건**이 CI에서 돕니다 — ROS 2 682 · 프런트 171 · 백엔드 55 · 탐지 33.
+
 ## 시스템 구성
 
 - **차량**: BMW M7 유아전동차 베이스. 후륜 좌·우 RS540 2개(BTS7960 2개)가 전·후진, 전륜 타이로드에
@@ -104,12 +149,10 @@ Jetson Orin Nano에서 ROS 2, SLAM, Nav2, 사람 탐지와 안전 제어를 수�
 │  │  ├─ sentinel_{bringup,drive,exploration,safety,bridge}/
 │  │  ├─ sentinel_{approach,mission,recorder,streaming,description}/
 │  │  └─ esp32_bridge/, usb_cam/, ydlidar_ros2_driver/
-│  ├─ config/               # 로봇 공통 설정
 │  ├─ models/               # 모델 메타데이터(가중치·엔진은 Git 제외)
-│  ├─ streaming_poc/        # 스트리밍 PoC 기록
-│  └─ tests/                # 온보드 단위·통합 테스트
+│  └─ streaming_poc/        # 스트리밍 PoC 기록
 ├─ ai/
-│  ├─ detection/            # YOLO 사람 탐지·추적 (ROS 래퍼는 jetson/ros2_ws)
+│  ├─ detection/            # YOLO 사람 탐지·추적 (ROS 노드가 아니라 .venv 파이썬)
 │  └─ voice/                # 음성 파이프라인·ASR 서버·평가 도구·잡음 제거 워커
 ├─ hardware/
 │  ├─ esp32/{motor,sensor,jetson-comm}/   # 펌웨어(Arduino-ESP32)와 프레이밍·CRC 시험 벡터
@@ -207,12 +250,17 @@ Jetson에서 스택을 올리고 내리는 진입점은 **둘뿐**입니다. 다
 
 ### 실기동으로 확인된 것
 
+기능 목록은 [할 수 있는 것](#할-수-있는-것)에 있습니다. 여기에는 **그 구현이 실제로 어느 층에서
+성립하는지** — 설계 문서만 보면 오해하기 쉬운 것들을 적습니다.
+
 - 센서·주행 명령 체인, 임무 상태 머신, 자율 탐사, 사람 탐지·접근, 음성 상호작용, 스트리밍·
-  이벤트 녹화, MQTT·REST·STOMP 관제 경로.
+  이벤트 녹화, MQTT·REST·STOMP 관제 경로가 전 구간 실기동으로 확인됐습니다.
 - 주행은 Nav2 **Smac Hybrid-A\*** (REEDS_SHEPP, `minimum_turning_radius` 1.8) + Regulated Pure
-  Pursuit(후진 추종) 구성이며, 곡률 상한을 실제로 지키는 층은 `vehicle_kinematics`의 δ 클램프입니다.
-- 지도는 임무마다 초기화됩니다(`MISSION_START`에서 SLAM 재시작).
+  Pursuit(후진 추종) 구성이지만, **곡률 상한을 실제로 지키는 층은 planner 도 controller 도 아니라**
+  `vehicle_kinematics`의 δ 클램프입니다(RPP에는 곡률 상한 기능 자체가 없습니다 — 04장 24.1).
+- 지도는 임무마다 초기화됩니다(`MISSION_START`에서 SLAM 재시작). 재개(`RESUME`)에는 걸리지 않습니다.
 - 안전의 주 방어는 실측 차체 기준으로 다시 그린 `collision_monitor` 정지·감속 구역입니다.
+  초음파는 관측 전용이라 이 방어에 들어가지 않습니다.
 
 ### 확정된 실측값
 
@@ -275,10 +323,11 @@ Jetson에서 스택을 올리고 내리는 진입점은 **둘뿐**입니다. 다
 - 구동 속도·조향은 엔코더 폐루프 PID가 아니라 실측 회귀 기반 **개루프**입니다. 조향은 서보가
   각도·fault를 출력하지 않아 링키지 이탈을 전기적으로 감지할 수 없고, IMU 기대 yaw rate 대조가
   유일한 간접 판정입니다.
-- 프런트엔드 상수 `USE_MOCK`는 이름보다 범위가 좁습니다
-  ([RobotContext.tsx](frontend/features/robot/RobotContext.tsx#L34)). 임무 명령·조회, 텔레메트리,
-  온습도·MCU 상태, 지도, STOMP 푸시는 모두 실 경로입니다. 남은 목은 **접속 연출(1초 뒤 connected)과
-  `lidarOk`·`cameraOk` 램프 고정**, 그리고 미사용 `sendControl`의 no-op뿐입니다.
+- 프런트엔드 상수 `USE_MOCK`는 이름보다 범위가 훨씬 좁습니다
+  ([RobotContext.tsx](frontend/features/robot/RobotContext.tsx#L31)). 임무 명령·조회, 텔레메트리,
+  온습도·MCU 상태, 지도, STOMP 푸시는 모두 실 경로입니다. **남은 목은 접속 연출(1초 뒤
+  `connected`) 하나뿐**입니다 — `lidarOk`·`cameraOk` 램프 고정과 미사용 `sendControl`의 no-op은
+  S15P11A301-377에서 걷어냈습니다.
 
 > **왜 미구현을 적는가.** 명세가 "구현한다"고 적고 있는데 실제로 없으면, 통합 검사에서 "왜 안
 > 되나"를 매번 다시 조사하게 되고 최악의 경우 **보안처럼 없는 보호를 있다고 믿습니다.** 그래서

@@ -154,6 +154,31 @@ lint:shell:
     # 일반 운영 스크립트와 CI 보조 스크립트를 모두 검사합니다.
     - shellcheck scripts/*.sh scripts/ci/*.sh
 
+# 파이썬 린터 (S15P11A301-377).
+#
+# 파이썬 239개 파일에 린터가 없었습니다. 프런트만 `next build` 가 ESLint 를 돌려
+# 강제되고, 파이썬은 아무도 보지 않아서 미사용 import 8건과 미사용 지역변수 1건이
+# 남아 있었습니다.
+#
+# 규칙과 그 근거는 저장소 루트 `ruff.toml` 에 적습니다. 도입 시점에 위반 0으로
+# 맞춰 두었으므로 **이 job 은 처음부터 초록불이어야 합니다** — 빨간불로 시작하면
+# 아무도 보지 않습니다.
+#
+# 버전을 고정합니다. 린터가 올라가면서 새 규칙이 기본에 들어오면, 코드를 건드리지
+# 않은 MR 이 갑자기 실패합니다. 올릴 때는 위반을 함께 정리하는 MR 로 올립니다.
+lint:python:
+  stage: lint
+  image: python:3.10-alpine
+  rules:
+    - changes:
+        - "**/*.py"
+        - ruff.toml
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+  before_script:
+    - pip install --quiet ruff==0.16.2
+  script:
+    - ruff check .
+
 # Runner 환경 문제를 조사할 때만 GitLab UI에서 수동 실행하는 진단 job입니다.
 diagnose:runner:
   stage: lint
@@ -319,6 +344,10 @@ test:backend:
     # 시험을 만들어 놓고 돌지 않는 것이 없는 것보다 나쁘다(검사한다고 믿게 된다).
     # 이제 전부 돌린다. DB 가 붙었으므로 contextLoads 도 여기 포함된다.
     - ./gradlew --no-daemon test
+    # Java 린터 (S15P11A301-377). 별도 job 으로 두지 않는 이유는 JDK 와 gradle
+    # 캐시를 여기서 이미 받았기 때문이다 — lint stage 에 두면 같은 것을 두 번 받는다.
+    # 규칙과 근거는 backend/config/checkstyle/checkstyle.xml.
+    - ./gradlew --no-daemon checkstyleMain checkstyleTest
 
 # Dockerfile 자체의 오류를 MR 단계에서 잡습니다 (S15P11A301-130).
 #
@@ -374,7 +403,6 @@ test:backend-dockerfile:
 # 없애 줍니다.
 # 탐사·접근 순수 모듈 시험 (S15P11A301-172·247). numpy 가 필요해서 contract 잡(alpine —
 # musl 이라 numpy 휠이 없다)에 넣지 못하고 slim 이미지로 따로 돈다.
-# sentinel_perception 이 같은 이유로 빠져 있는 것과 같은 제약이다.
 test:exploration:
   stage: test
   image: python:3.10-slim
@@ -422,11 +450,12 @@ test:message-contract:
     - changes:
         - common/schemas/**/*
         - common/samples/**/*
+        - jetson/ros2_ws/src/esp32_bridge/**/*
         - jetson/ros2_ws/src/sentinel_bridge/**/*
         - jetson/ros2_ws/src/sentinel_drive/**/*
         - jetson/ros2_ws/src/sentinel_mission/**/*
         - jetson/ros2_ws/src/sentinel_recorder/**/*
-        - jetson/ros2_ws/src/sentinel_perception/**/*
+        - jetson/ros2_ws/src/sentinel_safety/**/*
         - jetson/ros2_ws/src/sentinel_streaming/**/*
         - scripts/ci/contract-test-requirements.txt
         - scripts/ci/run_contract_tests.sh
@@ -452,11 +481,13 @@ test:message-contract:
     # 순수 모듈이라 gi도 rclpy도 필요 없습니다. 나머지 스트리밍 코드는 GStreamer
     # 요소를 다루므로 젯슨에서만 검증합니다.
     - python -m pytest jetson/ros2_ws/src/sentinel_streaming/test -q
-    # sentinel_perception은 아직 넣지 않습니다. detector.py가 모듈 최상위에서
-    # numpy를 import하고, python:3.10-alpine에는 musl용 numpy 휠이 없어 소스
-    # 빌드로 몇 분이 걸립니다. numpy를 지연 import로 바꾸는 것은
-    # S15P11A301-136 쪽 정리이므로 그때 이 줄을 살립니다.
-    # - python -m pytest jetson/ros2_ws/src/sentinel_perception/test -q
+    # esp32_bridge 137건·sentinel_safety 29건은 이 잡이 생긴 뒤로도 빠져 있었다
+    # (S15P11A301-377). 안전 게이트·명령 먹스·시리얼 프레이밍·CRC 가 어느 job
+    # 에서도 돌지 않았다. 두 패키지의 시험 파일은 rclpy 를 import 하지 않으므로
+    # 위 다섯과 조건이 같다 — 실측 0.46초, 보드도 ROS도 필요 없다.
+    # esp32_bridge 만 pyserial 이 필요하다(요구 파일 참고).
+    - python -m pytest jetson/ros2_ws/src/esp32_bridge/test -q
+    - python -m pytest jetson/ros2_ws/src/sentinel_safety/test -q
 
 # ROS 2 패키지의 colcon 빌드는 CI에 넣지 않습니다. Runner가 x86이면
 # nvv4l2decoder와 usb_cam 패치, Tegra 전용 요소를 다룰 수 없어 CI 통과가

@@ -26,7 +26,6 @@ from .schemas import (
     Detection,
     FrameResult,
     PersonObservation,
-    PostureResult,
     build_encounter_data,
     build_envelope,
     new_uuid,

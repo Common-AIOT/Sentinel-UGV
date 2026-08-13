@@ -11,6 +11,29 @@
 - [`voice/denoise/`](voice/denoise/) — 블랙박스 오디오의 서버 측 잡음 제거.
   온라인 STT 입력에는 사용하지 않는다.
 
+## 두 프로젝트의 레이아웃이 다르다
+
+같은 `ai/` 아래인데 구조가 갈린다. 새로 들어온 사람이 가장 먼저 걸리는 자리라
+적어 둔다 (S15P11A301-377).
+
+| | `voice/` | `detection/` |
+|---|---|---|
+| 코드 위치 | `sentinel_voice/` (정식 패키지) | `src/` (평면) |
+| 패키지 설정 | 있다 | **없다** |
+| 실행 | 패키지 이름으로 import | `python -m src.main`, `python -m src.ros_main` |
+| 작업 디렉터리 | 무관 | **`ai/detection` 고정 필요** |
+
+`detection/` 이 `src` 를 패키지 이름처럼 쓰기 때문에 생기는 대가가 둘이다.
+`cwd` 를 고정하지 않으면 import 가 깨지고 — 그래서
+[`detection.launch.py`](../jetson/ros2_ws/src/sentinel_bringup/launch/detection.launch.py)
+가 `.venv` 파이썬을 `ExecuteProcess` 로 부르면서 `cwd` 를 함께 넘긴다 — 다른
+프로젝트에서 이 코드를 라이브러리로 가져다 쓸 수 없다.
+
+**고치지 않고 남겨 둔다.** `src/` 를 패키지 이름으로 바꾸면 launch·시험·설정
+주석·`AGENTS.md` 가 함께 움직이는데, 그 launch 경로를 검증하려면 젯슨 실기가
+필요하다. 시연이 끝난 시점에 실기 검증 없이 건드릴 값이 아니다. 되살릴 때
+바뀌어야 하는 자리는 위 표의 「실행」 행이 전부다.
+
 ## 음성 운영 구성
 
 ```text

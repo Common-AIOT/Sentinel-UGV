@@ -31,7 +31,7 @@ score() 와 REAR_GAIN_FLOOR 의 주석에 근거가 있다.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import numpy as np
 

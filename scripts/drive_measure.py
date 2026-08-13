@@ -8,7 +8,10 @@
 언제든 0 으로 덮었다 — 2026-08-09 시험에서 6.7초 발행 중 비영 구간이 0.60초뿐인
 일이 실제로 벌어졌고, 그 측정은 무효였다. 원인은 셋이 겹쳤다.
 
-  * 초음파 보호정지가 `STOP_COMMAND` 를 중계한다(센서 오측이어도 막는다)
+  * 초음파 보호정지가 `STOP_COMMAND` 를 중계했다(센서 오측이어도 막았다).
+    **이것은 2026-08-09 당시의 상태다** — 지금은 펌웨어가 `PROXIMITY_STOP_ENABLED
+    = false` 로 발동을 꺼서 이 층은 더 이상 막지 않는다(03장 CTRL-18). 나머지
+    둘은 그대로 유효하므로 이 도구의 존재 이유는 변하지 않았다
   * `safety_gate` 가 같은 신호를 **독립적으로** 또 본다 — 끄는 파라미터가 없고,
     토픽을 끊으면 이번엔 `PROXIMITY_STALE` 로 막는다(침묵도 차단 사유다)
   * 자율 주행 중에는 Nav2·탐사가 같은 토픽에 명령을 실어 측정과 섞인다
@@ -18,8 +21,10 @@
 값을 바꾸면 측정 자체가 성립하지 않는다.
 
 **안전 체인을 우회하므로 시험 전용이다.** 초음파·Nav2 정지가 걸리지 않는다.
-사람이 앞을 비우고 물리 E-Stop 에 손이 닿는 상태에서만 쓴다. 상한(|v| ≤ 0.5,
-지속 ≤ 10s)과 종료 시 정지 명령은 그 전제 위의 최소 장치다.
+사람이 앞을 비우고 **12V 배터리 분리 담당자가 그 지점에 붙은 상태에서만** 쓴다 —
+래칭형 물리 E-Stop 은 도입하지 않았고 하드웨어 차단은 배터리 분리뿐이다
+(03장 34-10). 상한(|v| ≤ 0.5, 지속 ≤ 10s)과 종료 시 정지 명령은 그 전제 위의
+최소 장치다.
 
 오도메트리 시작·끝을 스스로 찍어 **보고 거리**를 낸다. 줄자 실측과 나란히 놓으면
 「엔코더가 맞나」와 「로봇이 갔나」가 한 번에 갈린다.
@@ -27,6 +32,7 @@
 
 from __future__ import annotations
 
+import atexit
 import json
 import os
 import signal
@@ -109,6 +115,60 @@ def _signal_all(pids: list[int], sig: int) -> None:
             os.kill(pid, sig)
         except (ProcessLookupError, PermissionError):
             pass
+
+
+# 멈춰 둔 PID. 되살리는 경로가 여럿이라 한 곳에서 관리한다.
+#
+# **`finally` 하나로는 부족하다.** 그것이 도는 것은 파이썬이 정상적으로 풀려나갈
+# 때뿐이라 `Ctrl+Z`(SIGTSTP)·SIGHUP(터미널 종료)·SIGTERM(`kill`)에서는 안 돈다.
+# 그러면 `vehicle_kinematics` 가 멈춘 채 남고, 증상은 「자율 주행이 조용히 안 된다」
+# 하나이며 원인이 프로세스 상태(T)라 로그에도 안 나온다 — 위 주석이 경고한 바로
+# 그 상태를 이 스크립트 자신이 만들 수 있었다.
+_paused_pids: list[int] = []
+
+
+def _resume_paused() -> None:
+    """멈춰 둔 발행자를 되살린다. 여러 번 불려도 안전하다."""
+    global _paused_pids
+    if not _paused_pids:
+        return
+    pids, _paused_pids = _paused_pids, []
+    _signal_all(pids, signal.SIGCONT)
+    print(f"경쟁 발행자 복구 완료: {pids}")
+
+
+def _install_resume_guards() -> None:
+    """정상 종료·시그널·중단 어느 경로로 나가도 되살아나게 한다."""
+    atexit.register(_resume_paused)
+
+    def _on_terminating(signum, _frame):
+        _resume_paused()
+        # 기본 동작으로 되돌려 다시 보낸다. 종료 코드가 시그널을 그대로 반영한다.
+        signal.signal(signum, signal.SIG_DFL)
+        os.kill(os.getpid(), signum)
+
+    def _on_suspend(_signum, _frame):
+        # Ctrl+Z. 우리가 멈추면 되살릴 주체가 없어지므로 먼저 되살린다.
+        # 그 순간 경쟁 발행자가 다시 명령을 쏘므로 **이 측정은 무효다** —
+        # 재개해서 이어가지 않고 여기서 끝낸다.
+        print("\n★ 멈춤 요청. 경쟁 발행자를 되살리고 종료한다 — 이 측정은 무효다.")
+        _resume_paused()
+        sys.exit(130)
+
+    # 이 도구는 젯슨(리눅스) 전용이지만 시그널을 이름으로 찾는다. 없는 플랫폼에서
+    # 설치가 실패하더라도 atexit·finally 는 그대로 살아 있어야 하기 때문이다.
+    for name, handler in (
+        ("SIGTERM", _on_terminating),
+        ("SIGHUP", _on_terminating),
+        ("SIGTSTP", _on_suspend),
+    ):
+        sig = getattr(signal, name, None)
+        if sig is None:
+            continue
+        try:
+            signal.signal(sig, handler)
+        except (ValueError, OSError):
+            pass  # 메인 스레드가 아니거나 플랫폼이 막으면 넘어간다.
 
 
 class Measure(Node):
@@ -235,12 +295,18 @@ def main() -> None:
         print(f"★ 안전 상한: |v| ≤ {MAX_SPEED_MPS}, 지속 ≤ {MAX_DURATION_S:g}s")
         sys.exit(1)
 
-    # 경쟁 발행자를 멈춘다. **되살리는 것은 finally 가 보장한다** — 여기서 죽으면
-    # vehicle_kinematics 가 멈춘 채로 남아 자율 주행이 조용히 안 된다.
+    # 경쟁 발행자를 멈춘다. 되살리는 것은 atexit·시그널 핸들러·finally 셋이 함께
+    # 보장한다(_install_resume_guards). 멈춘 채로 남으면 vehicle_kinematics 가
+    # 죽은 것처럼 보이지 않으면서 자율 주행만 조용히 안 된다.
     paused = _competing_pids()
     if paused:
+        _install_resume_guards()
+        _paused_pids.extend(paused)
         _signal_all(paused, signal.SIGSTOP)
         print(f"경쟁 발행자 {len(paused)}개를 잠시 멈춘다 (측정 뒤 자동 복구): {paused}")
+        # 위 셋이 전부 실패하는 경우(SIGKILL, 전원 차단)를 위해 손으로 되살리는
+        # 명령을 미리 찍는다. 그때는 이 줄이 유일한 단서다.
+        print(f"  자동 복구가 안 되면: kill -CONT {' '.join(str(p) for p in paused)}")
 
     rclpy.init()
     node = Measure(speed, duration)
@@ -255,10 +321,9 @@ def main() -> None:
         node.destroy_node()
         rclpy.shutdown()
         # **반드시 되살린다.** 멈춘 채로 두면 자율 주행이 조용히 안 되고, 원인이
-        # 프로세스 상태(T)라 로그에도 안 나온다.
-        if paused:
-            _signal_all(paused, signal.SIGCONT)
-            print(f"경쟁 발행자 복구 완료: {paused}")
+        # 프로세스 상태(T)라 로그에도 안 나온다. 정상 경로는 여기서 끝나고,
+        # 여기까지 못 오는 경로는 atexit 과 시그널 핸들러가 받는다.
+        _resume_paused()
     sys.exit(code)
 
 

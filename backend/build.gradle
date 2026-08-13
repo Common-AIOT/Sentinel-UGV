@@ -1,7 +1,16 @@
 plugins {
   id 'java'
+  id 'checkstyle'
   id 'org.springframework.boot' version '4.1.0'
   id 'io.spring.dependency-management' version '1.1.7'
+}
+
+// Java 린터 (S15P11A301-377). 규칙과 그 근거는 config/checkstyle/checkstyle.xml.
+// 도입 시점에 위반 0으로 맞췄으므로 처음부터 초록불이어야 한다.
+checkstyle {
+  toolVersion = '10.21.0'
+  // 경고를 0으로 두면 severity=error 만 빌드를 세운다. 설정 파일이 전부 error 다.
+  maxWarnings = 0
 }
 
 group = 'com.sentinel'
@@ -20,7 +29,10 @@ repositories {
 
 dependencies {
   implementation 'org.springframework.boot:spring-boot-starter-actuator'
-  implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+  // JPA 가 아니라 JDBC 다. DB 접근은 전부 JdbcTemplate 이고 @Entity 는 하나도 없다 —
+  // TimescaleDB hypertable 과 그 위의 시계열 질의를 ORM 으로 감싸지 않기로 한 결정이다.
+  // data-jpa 를 끌어오던 동안 Hibernate 가 검증 대상 0개로 기동해 시간만 썼다.
+  implementation 'org.springframework.boot:spring-boot-starter-jdbc'
   implementation 'org.springframework.boot:spring-boot-starter-flyway'
   implementation 'org.springframework.boot:spring-boot-starter-security'
   implementation 'org.springframework.boot:spring-boot-starter-validation'
@@ -39,7 +51,7 @@ dependencies {
   implementation 'software.amazon.awssdk:s3'
   annotationProcessor 'org.projectlombok:lombok'
   testImplementation 'org.springframework.boot:spring-boot-starter-actuator-test'
-  testImplementation 'org.springframework.boot:spring-boot-starter-data-jpa-test'
+  testImplementation 'org.springframework.boot:spring-boot-starter-jdbc-test'
   testImplementation 'org.springframework.boot:spring-boot-starter-flyway-test'
   testImplementation 'org.springframework.boot:spring-boot-starter-security-test'
   testImplementation 'org.springframework.boot:spring-boot-starter-validation-test'

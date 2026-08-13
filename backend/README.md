@@ -40,6 +40,30 @@ Mosquitto만 띄웁니다. 미디어·지도 업로드를 시험하려면
 응답은 `ApiResponse { data, message, status }` 봉투를 사용합니다. 전체 요청·응답 계약은
 Swagger와 [통합 명세 27·31장](../docs/05-통신-서버-영상.md)을 기준으로 합니다.
 
+## 계층 이름 규칙
+
+패키지는 도메인별(`control`, `encounter`, `media`, `mission`, `robot`, `telemetry`)로
+나누고, 그 안의 클래스 이름이 **입력이 어디서 오는지**를 나타냅니다.
+
+| 접미사 | 입력 | 부르는 쪽 |
+|---|---|---|
+| `~Controller` | HTTP·STOMP 요청 | 브라우저·젯슨 |
+| `~Service` | 컨트롤러가 넘긴 요청 | `~Controller` |
+| `~Writer` | MQTT 로 올라온 로봇 보고 | `MqttGateway` **단독** |
+
+`~Service`와 `~Writer`는 **같은 계층**입니다. 스테레오타입도 둘 다 `@Service`이고
+`JdbcTemplate`을 직접 씁니다. 이름을 나눈 것은 계층이 달라서가 아니라 **경로가 다르기
+때문**입니다 — Writer 는 사람이 기다리는 요청이 아니라 초당 수 건씩 올라오는 보고를
+받으므로, 실패했을 때 응답으로 알릴 상대가 없고 재시도·멱등이 그쪽 관심사입니다.
+
+규칙은 지켜지고 있습니다. Writer 6개(`TelemetryWriter`, `RobotStateWriter`,
+`RobotPresenceWriter`, `EncounterWriter`, `InteractionReportWriter`, `CommandAckWriter`)는
+전부 `MqttGateway` 에만 주입되고, 컨트롤러에서 부르는 것은 하나도 없습니다. 같은 도메인의
+조회는 `~QueryService` 로 갈라 둡니다(`EncounterQueryService`, `TelemetryQueryService`).
+
+**새 클래스를 만들 때는 이 표를 먼저 봅니다.** MQTT 수신을 `~Service` 로 만들면 규칙이
+조용히 무너지고, 그러면 어느 쪽이 사용자 응답 경로인지 이름으로 알 수 없게 됩니다.
+
 ## 설정
 
 애플리케이션은 저장소 루트의 `.env`를 읽지 않습니다. 로컬 실행에서는
@@ -59,7 +83,12 @@ cd backend
 ```
 
 스키마는 `src/main/resources/db/migration/`의 Flyway SQL만으로 변경합니다.
-JPA의 `ddl-auto`는 `validate`이므로 엔티티만 바꾸고 migration을 누락하면 기동이 실패합니다.
+
+**JPA는 쓰지 않습니다.** `@Entity`도 `JpaRepository`도 없고 DB 접근은 전부
+`JdbcTemplate`입니다. TimescaleDB hypertable과 그 위의 시계열 질의를 ORM으로 감싸지
+않기로 한 결정입니다. 따라서 스키마와 코드를 이어 주는 자동 검증(`ddl-auto: validate`)이
+없습니다 — **migration과 SQL 문자열이 어긋나면 기동이 아니라 그 질의를 부를 때 깨집니다.**
+컬럼을 바꿀 때는 해당 SQL을 직접 찾아 함께 고치고, `./gradlew test`로 확인합니다.
 
 ## 배포 이미지와 롤백
 

@@ -8,9 +8,10 @@ spring:
     name: backend
   profiles:
     active: ${SPRING_PROFILES_ACTIVE:local}
-  docker:
-    compose:
-      file: backend/compose.yaml
+  # spring.docker.compose.file 은 두지 않는다. 종전 값 `backend/compose.yaml` 은
+  # 없는 파일이었고(실제 파일은 compose.local.yaml·compose.prod.yaml), local 프로필이
+  # `spring.docker.compose.enabled: false` 로 이 지원 자체를 끈다. 로컬 컨테이너는
+  # 그쪽 주석대로 compose 로 직접 올린다: docker compose -f compose.local.yaml up -d
 
 app:
   cors:
@@ -27,8 +28,15 @@ app:
     username: ${MQTT_USERNAME:}
     password: ${MQTT_PASSWORD:}
   s3:
-    endpoint: ${S3_ENDPOINT:https://s3.sentinel-ugv.xyz}
-    region: ${S3_REGION:us-east-1}
-    bucket: ${S3_BUCKET:sentinel-ugv-assets}
-    access-key: ${S3_ACCESS_KEY:admin}
-    secret-key: ${S3_SECRET_KEY:}
+    # **기본값을 두지 않는다.** 종전에는 endpoint 가 운영 MinIO(s3.sentinel-ugv.xyz),
+    # access-key 가 admin 이었다. 이 파일은 프로필 공통이므로, 주입이 하나라도 빠지면
+    # 조용히 운영 스토리지를 admin 으로 가리켰다 — 틀린 곳에 쓰기 시작할 때까지
+    # 아무 신호가 없는 형태다. 비워 두면 그 경우 기동이 바로 실패한다.
+    #
+    # 운영은 compose.prod.yaml 이 .env 에서 다섯 값을 모두 넘기고, 로컬 기본값은
+    # application-local.yml 에 있다.
+    endpoint: ${S3_ENDPOINT}
+    region: ${S3_REGION}
+    bucket: ${S3_BUCKET}
+    access-key: ${S3_ACCESS_KEY}
+    secret-key: ${S3_SECRET_KEY}

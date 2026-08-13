@@ -228,6 +228,19 @@ Jetson에서 스택을 올리고 내리는 진입점은 **둘뿐**입니다. 다
 | [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | 증상에서 규범 절차로 가는 현장 진단 인덱스 |
 | [git_convention.md](docs/git_convention.md) | 브랜치·커밋·MR 규칙 |
 
+## 라이선스
+
+**프로젝트 자체 라이선스는 아직 정하지 않았습니다.** 루트에 `LICENSE` 파일이 없습니다.
+
+제3자 구성요소와 그 라이선스는 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)에 있습니다.
+확인한 것과 아직 확인하지 않은 것을 나눠 적었습니다. **`ultralytics`가 AGPL-3.0이라 저장소를
+공개·배포할 때 선택지가 제약됩니다** — AGPL은 네트워크 너머로 서비스를 제공하는 경우까지 소스
+공개 의무를 걸고, 이 프로젝트는 관제 웹이 탐지 결과를 제공하므로 그 경계에 닿습니다. 결정 전에
+그 문서를 먼저 읽습니다.
+
+프런트엔드 글꼴·컴포넌트 고지는 [frontend/ATTRIBUTIONS.md](frontend/ATTRIBUTIONS.md)입니다
+(Asta Sans·D2Coding은 SIL OFL 1.1로 **고지 의무**가 있습니다).
+
 ## 안전 원칙
 
 - **래칭형 물리 E-Stop 스위치는 도입하지 않았습니다.** 하드웨어 차단 수단은 12V 모터 배터리

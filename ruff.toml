@@ -1,0 +1,45 @@
+# Python 린터 설정 (S15P11A301-377).
+#
+# 파이썬 239개 파일에 린터가 없었다. 프런트만 `next build` 가 ESLint 를 돌려
+# 강제되고, 파이썬과 자바는 아무도 보지 않았다.
+#
+# `pyproject.toml` 이 아니라 `ruff.toml` 을 쓴다. 저장소 루트에 `pyproject.toml`
+# 을 두면 이 모노레포가 하나의 파이썬 패키지처럼 보이고, `ai/detection` 처럼
+# 패키지 설정이 없는 하위 프로젝트의 사정과 섞인다. 린터 설정만 필요하다.
+#
+# ## 규칙을 이렇게 고른 이유
+#
+# 도입 시점 실측이 근거다. 기존 코드가 이미 일관적이라 위반이 12건뿐이었고
+# 그것을 전부 고치고 시작했다 — **0에서 시작하지 않으면 아무도 보지 않는다.**
+#
+#   F   (pyflakes)     9건. 미사용 import 8, 미사용 지역변수 1
+#   E   (pycodestyle)  3건. 긴 줄 1(120 기준), lambda 대입 2
+#
+# 규칙을 더 넓히는 것은 그 다음 사람의 몫이다. 참고로 도입 시점 실측:
+# `I`(import 정렬) 62건, `B`+`UP` 62건. 둘 다 기계적이지만 파일 수가 많아
+# 리뷰 가능한 크기로 나눠야 한다.
+
+line-length = 120
+target-version = "py310"
+
+exclude = [
+    ".venv",
+    "venv",
+    "node_modules",
+    ".next",
+    "build",
+    "install",
+    "log",
+    # 프런트엔드에는 파이썬이 없다. 훑을 이유가 없어 통째로 뺀다.
+    "frontend",
+    # 외부 드라이버는 우리 코드가 아니다(.gitignore 대상이지만 작업 트리에는 있다).
+    "jetson/ros2_ws/src/usb_cam",
+    "jetson/ros2_ws/src/ydlidar_ros2_driver",
+]
+
+[lint]
+select = ["E", "F", "W"]
+
+[lint.per-file-ignores]
+# ROS 2 의 setup.py 는 setuptools 관례를 그대로 따르는 상용구다.
+"**/setup.py" = ["E501"]

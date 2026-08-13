@@ -16,15 +16,20 @@ spring:
     username: ${SPRING_DATASOURCE_USERNAME:myuser}
     password: ${SPRING_DATASOURCE_PASSWORD:secret}
     driver-class-name: org.postgresql.Driver
-  jpa:
-    hibernate:
-      # 스키마는 Flyway 마이그레이션이 단독으로 관리한다.
-      ddl-auto: validate
-    show-sql: true
-    properties:
-      hibernate:
-        format_sql: true
-        dialect: org.hibernate.dialect.PostgreSQLDialect
   flyway:
     enabled: true
     baseline-on-migrate: true
+
+app:
+  s3:
+    # 로컬·CI 기본값. **운영 주소를 기본값으로 두지 않는다** — 공통 파일에 두었더니
+    # 주입이 빠졌을 때 운영 스토리지를 가리켰다(application.yml 주석 참고).
+    #
+    # compose.local.yaml 에는 MinIO 가 없으므로 실제 업로드는 되지 않는다. 기동과
+    # 시험을 통과시키기 위한 값이다 — SDK 가 빈 자격증명을 거부해서 값이 아예
+    # 없으면 contextLoads 가 스토리지와 무관한 이유로 죽는다.
+    endpoint: ${S3_ENDPOINT:http://localhost:9000}
+    region: ${S3_REGION:us-east-1}
+    bucket: ${S3_BUCKET:sentinel-ugv-assets}
+    access-key: ${S3_ACCESS_KEY:local-dev}
+    secret-key: ${S3_SECRET_KEY:local-dev-secret}

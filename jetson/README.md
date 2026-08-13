@@ -57,8 +57,9 @@ DDS 격리 설정을 함께 불러옵니다.
 기본으로 켜지는 항목은 SLAM, 스트리밍, 녹화, 임무, 클라우드 브리지, 음성, 탐지,
 Foxglove 지도입니다. `enable_nav2`, `enable_exploration`, `enable_approach`,
 `enable_safety`, `enable_ekf`는 기본 `false`입니다. 특히 `enable_safety:=true`는
-`/cmd_vel`을 전륜 운동학과 모터 브리지까지 연결하므로 차량을 띄우고 E-Stop을 확인한
-뒤에만 켭니다.
+`/cmd_vel`을 전륜 운동학과 모터 브리지까지 연결하므로, **차량을 들어 바퀴를 띄운 상태에서
+12V 모터 배터리 분리를 담당할 사람을 지정한 뒤에만** 켭니다. 래칭형 물리 E-Stop 은
+도입하지 않았고 하드웨어 차단은 그 배터리 분리뿐입니다([03장 34-10](../docs/03-제어-캘리브레이션.md)).
 
 현재 후방 초음파는 `/range/rear` 관측까지 구현되어 있습니다. 방향별 임계 실측 전이라
 `protective_stop`과 Nav2 후진 안전에는 사용하지 않습니다. 전방 보호 정지도 빈 공간

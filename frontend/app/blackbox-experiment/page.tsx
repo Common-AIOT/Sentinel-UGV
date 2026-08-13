@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { notFound } from "next/navigation";
 import { ChevronLeft, Play, Film, User, MapPin, Clock, Volume2, VolumeX } from "lucide-react";
 import type {
   EncounterDetail,
@@ -84,6 +85,15 @@ function fmtDate(iso: string) {
 }
 
 export default function MissionHistoryPage() {
+  // **운영 배포에서는 열리지 않는다** (S15P11A301-377). 이 파일은 `app/` 아래에
+  // 있어서 Vercel 운영 도메인의 /blackbox-experiment 로 그대로 열렸다. 목 데이터로
+  // 도는 참조 구현이 실제 관제와 같은 주소 공간에 있으면, 링크를 받은 사람은 그것이
+  // 진짜 화면인지 알 수 없다.
+  //
+  // NODE_ENV 는 빌드 시점에 인라인되므로 운영 번들에서는 이 분기가 상수가 된다.
+  // `npm run dev` 에서는 그대로 열린다 — 이 파일의 용도가 그것이다.
+  if (process.env.NODE_ENV === "production") notFound();
+
   const [missions, setMissions] = useState<MissionSummary[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [selected, setSelected] = useState<MissionSummary | null>(null);

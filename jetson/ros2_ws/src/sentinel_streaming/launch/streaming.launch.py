@@ -24,7 +24,6 @@ from launch.conditions import IfCondition
 from launch.substitutions import (
     LaunchConfiguration,
     PythonExpression,
-    TextSubstitution,
 )
 from launch_ros.actions import Node
 

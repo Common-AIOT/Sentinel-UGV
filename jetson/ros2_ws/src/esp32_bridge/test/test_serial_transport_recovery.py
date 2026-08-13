@@ -15,7 +15,6 @@ rclpy 가 `ValueError: Logger severity cannot be changed between calls.` 를 냈
   3. 쓰기 실패가 포트를 닫아 재연결을 시작시킨다
 """
 
-import threading
 import time
 
 import pytest

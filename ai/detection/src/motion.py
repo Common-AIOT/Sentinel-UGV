@@ -25,7 +25,7 @@ UGV는 주행하며 촬영하므로 카메라 이동이 bbox 이동으로 나타
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass

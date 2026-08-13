@@ -177,7 +177,7 @@ def test_소멸_판정은_생존자_수를_센다():
 def test_미지가_어느_방향에_있든_frontier다():
     # 4-이웃 판정은 numpy 시프트 4개로 만든다. 한 방향이 빠져도 나머지가
     # 대부분을 덮어서 실지도 시험은 통과한다 — 방향별로 못박아야 잡힌다.
-    info = GridInfo(resolution=0.05, origin_x=0.0, origin_y=0.0, width=5, height=5)
+    # frontier_mask 는 격자만 본다 — GridInfo(해상도·원점)는 여기서 필요 없다.
     for d_row, d_col in ((-1, 0), (1, 0), (0, -1), (0, 1)):
         grid = np.zeros((5, 5), dtype=np.int8)
         grid[2 + d_row, 2 + d_col] = -1

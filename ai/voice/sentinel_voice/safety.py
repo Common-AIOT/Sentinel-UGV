@@ -168,7 +168,9 @@ def is_valid_stt(text, no_speech_prob, prompt_text=""):
     if tokens and max(tokens.count(token) for token in set(tokens)) >= 4:
         return False, "반복 환각"
 
-    normalize = lambda value: value.replace(" ", "").replace(",", "")
+    def normalize(value: str) -> str:
+        return value.replace(" ", "").replace(",", "")
+
     prompt_tokens = {
         normalize(token)
         for token in prompt_text.replace(",", " ").split()

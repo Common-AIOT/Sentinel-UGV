@@ -131,7 +131,6 @@ from .wheel_odometry import (
     Pose2D,
     WheelOdometry,
     WheelOdometryConfig,
-    default_meters_per_tick,
     yaw_to_quaternion,
 )
 

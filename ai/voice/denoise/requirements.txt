@@ -16,8 +16,11 @@ deepfilternet==0.5.6   # 잡음 제거 모델. 0.5.6이 마지막 릴리스(2023
 torch                  # deepfilternet 런타임
 torchaudio             # deepfilternet이 요구. 2.11+는 torchaudio_compat.py로 보완
 numpy<2                # deepfilternet 핀과 일치시켜 해석 충돌을 줄인다
-scipy                  # 리샘플(48kHz 아닌 입력 대비)
-av                     # MP4 디먹스·AAC 인코딩 (ffmpeg CLI 불필요)
+# scipy 는 뺐다 (S15P11A301-380). 「리샘플(48kHz 아닌 입력 대비)」 용도로 넣었으나
+# 실제 리샘플은 av 가 한다 — enhance_media.py 의 av.AudioResampler. 이 트리에
+# import scipy 는 한 곳도 없다. 이미지 무게를 줄이려고 CPU 전용 torch 까지 쓰는
+# 파일이라 쓰지 않는 무게를 남길 이유가 없다.
+av                     # MP4 디먹스·AAC 인코딩 + 리샘플 (ffmpeg CLI 불필요)
 requests               # worker.py의 백엔드 media API 호출
 
 # 검증 전용

@@ -159,7 +159,7 @@ Optional small LLM
 **"파이프라인 → 연결 검증 게이트 → 데이터 → 학습"** 으로 바꾸었다. 근거와 상세 계획은 §26 참고.
 
 ### 완료된 기반 작업
-- Git 저장소 및 `ai/detection` 기본 디렉터리 구조(`data/`, `docs/`, `models/`, `notebooks/`, `runs/`, `src/`)
+- Git 저장소 및 `ai/detection` 기본 디렉터리 구조(`data/`, `docs/`, `models/`, `runs/`, `src/`)
 - `requirements.txt` 작성 (Python/CUDA/PyTorch 버전 고정)
 - **miniforge conda 가상환경 `sentinel-yolo` 구축 완료 및 검증** — Python 3.10.20 / torch 2.11.0+cu128 /
   CUDA 12.8 사용 가능, ultralytics 8.4.104 (§7)
@@ -591,7 +591,7 @@ conda activate sentinel-yolo && python --version   # 또는 §7의 절대경로 
 | `scripts/` | `bench_jetson.py` 하나. 나머지 10개는 2026-08-06 삭제(아래 §11.2) |
 | `docs/` | 로컬 placeholder만 유지. 탐지 문서의 단일 기준은 `../../docs/07-AI-탐지.md` |
 | `data/` | 존재 (`raw/`, `processed/`, `pose_test/`만 존재, 각 `.gitkeep.txt`). **`raw/`는 여전히 비어 있음** |
-| `notebooks/` | 존재(내용 없음) — 용도 확인 필요 |
+| `notebooks/` | **미존재 — S15P11A301-378 에서 삭제.** 끝까지 비어 있었고 쓸 계획이 없었다 |
 | `README.md`(detection 전용) | 존재 (2026-08-05 신규). 외부 개발자 진입점. 상세는 이 문서로 넘긴다 |
 | `requirements.txt` | 존재. `lap`·`onnxruntime-gpu` 반영 완료(2026-08-05, §35 9번) |
 | `requirements-jetson.txt` | **미존재 — 의도적**(JetPack 버전 미확인, §7.1) |
@@ -632,7 +632,6 @@ ai/detection/
 │   └── pose_test/     # Pose 테스트 영상 (존재)
 ├── docs/               # 로컬 placeholder만 유지. 문서는 루트 ../../docs/07-AI-탐지.md 기준
 ├── models/            # 모델 가중치 (Git 추가 금지, .gitignore가 *.pt/*.onnx 차단)
-├── notebooks/          # 탐색용 노트북(용도 확인 필요)
 ├── runs/               # 추론 산출물 (Git 추가 금지, 실행별 타임스탬프 하위 폴더)
 ├── scripts/            # bench_jetson.py 하나 (§11.2)
 ├── configs/            # 실행 프로파일 4종 (§7.1)
@@ -1889,7 +1888,7 @@ AI-Hub 데이터가 끝내 확보되지 않아도 아래는 반드시 충족한�
 | 3 | ~~클래스 범위 불일치~~ → **2026-07-28 해결: person 단일, 다중 클래스는 이월** | 해결됨 | — | §6 |
 | 4 | ~~가중치 미다운로드~~ → **해결: yolo26n.pt / yolo26n-pose.pt / yolo26n-reid.onnx 확보** | 해결됨 | — | §13, §14 |
 | 5 | `aihubshell`의 Windows 동작 여부 미확인 | 경미(대안 있음) | 사용자 | §11.1 |
-| 6 | `notebooks/` 디렉터리 용도 불명 | 경미 | 팀 | §8 |
+| 6 | ~~`notebooks/` 디렉터리 용도 불명~~ → **S15P11A301-378 에서 해결.** 끝까지 비어 있어 삭제했다 | 해결됨 | — | §8 |
 | 7 | ~~명세 이탈 미승인~~ → **2026-08-05 팀 승인.** BoT-SORT·Pose crop 2건은 현재 구현대로 간다. **ReID는 2026-08-06 두 프로파일 모두에서 꺼져 이탈이 해소됐다**(젯슨 미채택 → 최종 시연 범위 제외). 명세 개정(`poseStatus` 2값) 공지도 완료 | 해결됨 | — | §0 |
 | 8 | 클래스 4종 중 현재 `person`만 MVP에 포함 | 문서 정합 완료 | ISSUE-01 | §6·`docs/07-AI-탐지.md` 25.3 |
 | 9 | ~~`requirements.txt`에 `lap`·`onnxruntime` 미반영~~ → **해결.** `lap`은 추가했다(없으면 추적이 ImportError). **`onnxruntime`은 넣지 않는다** — ReID 전용이었고 2026-08-06 두 프로파일 모두에서 꺼졌다. 다시 켤 때 필요한 마커·aarch64 주의사항은 `requirements.txt` 주석에 남겼다 | 해결됨 | — | §7 |

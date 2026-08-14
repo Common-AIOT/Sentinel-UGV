@@ -176,6 +176,11 @@ map 좌표 추정**(encounter 생성은 되지만 위치가 로봇 위치로 남
   [안전 원칙](#안전-원칙)에 그대로 적었습니다.
 - 자동 시험 **941건**이 CI에서 돕니다 — ROS 2 682 · 프런트 171 · 백엔드 55 · 탐지 33.
 
+> 여기까지 오는 동안 기록해 둔 사고와 원인 분석은
+> [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)와 [명세 변경 이력](docs/README.md)에 남아
+> 있습니다 — 이벤트 영상 마감 실패, `enable_ekf` 누락으로 인한 스택 침묵, 회전반경을 모르는
+> planner의 조향 고착 등.
+
 ## 시스템 구성
 
 <div align="center">
@@ -203,6 +208,28 @@ map 좌표 추정**(encounter 생성은 되지만 위치가 로봇 위치로 남
 - **Frontend**: 실시간 영상·지도·상태 관제, 운행 모드 전환과 임무 명령, 임무 이력.
 - **Infrastructure**: PostgreSQL/TimescaleDB, MinIO, Mosquitto, MediaMTX, Docker Compose.
 - **Common**: 외부 프로토콜, 스키마, 샘플 메시지의 단일 기준점.
+
+### 기술 선택과 활용
+
+| 기술 | 어떻게 썼나 |
+|---|---|
+| **ROS 2 Humble** | 노드를 격리해 하나가 죽어도 스택이 계속 돕니다. 실제로 클라우드 브리지가 조용히 죽어 관제 텔레메트리가 전부 끊긴 적이 있어, CI에 콜백 존재 검증을 넣었습니다 |
+| **Jetson Orin Nano 8GB** | 온디바이스 추론. 탐지 1.6GB·SLAM 0.55GB가 이미 물려 음성 인식까지 올릴 여유가 없어 그것만 원격 GPU로 뺐습니다 |
+| **Nav2 Smac Hybrid-A\*** | 제자리 회전을 못 하는 전륜 조향이라 회전반경을 아는 planner가 필요했습니다. 실측 `R_min`(좌 1.37·우 1.76m)을 안전측 1.8로 넣고 후진 계획까지 켰습니다 |
+| **Regulated Pure Pursuit** | 후진 추종용. 다만 RPP에는 곡률 상한 기능이 없어, 상한은 controller가 아니라 역운동학 층의 δ 클램프가 지킵니다 |
+| **SLAM Toolbox** | 임무마다 초기화합니다. 이전 임무의 지도가 남으면 새 현장의 통로를 잘못 그립니다 |
+| **YOLO26n · BoT-SORT** | Detect는 상시 15FPS, Pose는 3프레임 연속 감지될 때만 2FPS로 켭니다. 항상 켜면 Jetson 자원이 남지 않습니다 |
+| **Silero VAD** | 발화 구간만 골라 보내 원격 전송량과 지연을 줄입니다 |
+| **Qwen3-ASR 1.7B** | Jetson 여유가 없어 L40S GPU 서버에 FastAPI로 올리고 HTTPS로 부릅니다 |
+| **GMS gpt-5.4-mini** | 대화 정리 전용입니다. **위험도 판정은 LLM이 아니라 규칙이 합니다** — 사람 목숨이 걸린 판정을 확률 모델에 맡기지 않았습니다 |
+| **DeepFilterNet** | 관제 청취본 후처리에만 씁니다. 원본이 증거이므로 인식 입력에는 넣지 않습니다 |
+| **ESP32 ×2** | 모터와 센서를 물리적으로 분리했습니다. 한 보드가 멈춰도 다른 계통이 살고, 모터 보드는 300ms watchdog으로 스스로 정지합니다 |
+| **Spring Boot 4 + JDBC** | JPA를 걷어냈습니다. 시계열 hypertable을 ORM으로 감싸지 않기로 했고, `@Entity`가 하나도 없는데 Hibernate가 검증 0건으로 기동하며 시간만 썼습니다 |
+| **TimescaleDB** | 2Hz 텔레메트리 원본을 보관합니다. 집계·retention은 선택 기능이라 원본 조회로 갈음했습니다 |
+| **MQTT 5 + STOMP** | 로봇→관제는 유실을 허용하는 2Hz라 MQTT, 관제→브라우저는 즉시 푸시라 STOMP로 나눴습니다 |
+| **MediaMTX (WebRTC)** | 저지연 우선. 15FPS·1500kbps로 고정하고 카메라 캡처는 29.93FPS를 유지한 채 인코딩 분기에서만 낮춥니다 |
+| **S3 호환 스토리지** | 이벤트 MP4와 지도를 presigned URL로 직접 올립니다. 백엔드가 파일 본문을 거치지 않습니다 |
+| **GitLab CI** | 941건이 매 MR에서 돕니다. 젯슨에선 통과하고 CI에선 깨지는 일이 반복돼 전용 venv로 환경 차이를 없앴습니다 |
 
 ## 저장소 구조
 

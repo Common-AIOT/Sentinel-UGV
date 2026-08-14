@@ -4,60 +4,28 @@
 
 ### 사람이 들어가기 전에, 로봇이 먼저 들어가 *묻습니다*
 
+[![Watch Demo](https://img.shields.io/badge/YouTube-Watch_Demo-FF0000?style=for-the-badge&logo=youtube&logoColor=white)](https://www.youtube.com/watch?v=guyA2-h8ZME)
+[![Docs](https://img.shields.io/badge/Docs-v2.1-1F4E79?style=for-the-badge&logo=readthedocs&logoColor=white)](docs/README.md)
+[![Quick Start](https://img.shields.io/badge/Quick_Start-Robot_Stack-E8873A?style=for-the-badge&logo=gnubash&logoColor=white)](#로봇-스택-실행)
+[![Troubleshooting](https://img.shields.io/badge/Troubleshooting-Field_Guide-455A64?style=for-the-badge)](docs/TROUBLESHOOTING.md)
+
+**✅ 검증 상태**
+
 [![Pipeline](https://lab.ssafy.com/s15-webmobile3-sub1/S15P11A301/badges/develop/pipeline.svg)](https://lab.ssafy.com/s15-webmobile3-sub1/S15P11A301/-/pipelines)
+[![시연](https://img.shields.io/badge/%EC%8B%9C%EC%97%B0-%EC%A0%84_%EA%B5%AC%EA%B0%84_%EC%8B%A4%EA%B8%B0%EB%8F%99-2E7D32?style=flat-square)](#시연)
+[![MVP](https://img.shields.io/badge/MVP-14%2F16%20%EA%B5%AC%ED%98%84-2E7D32?style=flat-square)](#할-수-있는-것)
+[![자동 시험](https://img.shields.io/badge/%EC%9E%90%EB%8F%99%20%EC%8B%9C%ED%97%98-941%EA%B1%B4-2E7D32?style=flat-square)](https://lab.ssafy.com/s15-webmobile3-sub1/S15P11A301/-/pipelines)
 
-![시연](https://img.shields.io/badge/%EC%8B%9C%EC%97%B0-%EC%A0%84_%EA%B5%AC%EA%B0%84_%EC%8B%A4%EA%B8%B0%EB%8F%99-2E7D32?style=flat-square)
-![MVP](https://img.shields.io/badge/MVP-14%2F16%20%EA%B5%AC%ED%98%84-2E7D32?style=flat-square)
-![자동 시험](https://img.shields.io/badge/%EC%9E%90%EB%8F%99%20%EC%8B%9C%ED%97%98-941%EA%B1%B4-2E7D32?style=flat-square)
-![순항 속도](https://img.shields.io/badge/%EC%88%9C%ED%95%AD-0.30m%2Fs%20%28%EC%8B%A4%EC%86%8D%EB%8F%84%2099%25%29-455A64?style=flat-square)
-![Detect](https://img.shields.io/badge/Detect-15%20FPS-455A64?style=flat-square)
-![영상](https://img.shields.io/badge/%EC%98%81%EC%83%81-15FPS%20%C2%B7%201500kbps-455A64?style=flat-square)
+**📈 실측 성능**
 
-![EKF](https://img.shields.io/badge/EKF%20yaw-%EC%98%A4%EC%B0%A8%201.1%25-455A64?style=flat-square)
+[![순항 속도](https://img.shields.io/badge/%EC%88%9C%ED%95%AD-0.30m%2Fs%20%28%EC%8B%A4%EC%86%8D%EB%8F%84%2099%25%29-455A64?style=flat-square)](#확정된-실측값)
+[![Detect](https://img.shields.io/badge/Detect-15%20FPS-455A64?style=flat-square)](#확정된-실측값)
+[![영상](https://img.shields.io/badge/%EC%98%81%EC%83%81-15FPS%20%C2%B7%201500kbps-455A64?style=flat-square)](#확정된-실측값)
+[![EKF](https://img.shields.io/badge/EKF%20yaw-%EC%98%A4%EC%B0%A8%201.1%25-455A64?style=flat-square)](#확정된-실측값)
 
-**로봇 · 제어**
+[🎯 배경](#왜-만들었나) · [🎬 시연](#시연) · [✨ 핵심 기능](#할-수-있는-것) · [🧩 시스템](#시스템-구성) · [🚀 실행](#로봇-스택-실행) · [🛠️ 개발 시작](#개발-시작)
 
-![ROS 2](https://img.shields.io/badge/ROS%202%20Humble-22314E?style=for-the-badge&logo=ros&logoColor=white)
-![Jetson](https://img.shields.io/badge/Jetson%20Orin%20Nano-76B900?style=for-the-badge&logo=nvidia&logoColor=white)
-![Nav2](https://img.shields.io/badge/Nav2%20Smac%20%C2%B7%20SLAM%20Toolbox-22314E?style=for-the-badge&logo=ros&logoColor=white)
-![Foxglove](https://img.shields.io/badge/Foxglove%20Bridge-8B5CF6?style=for-the-badge&logo=ros&logoColor=white)
-![ESP32](https://img.shields.io/badge/ESP32%20%C3%972%20%C2%B7%20FreeRTOS-E7352C?style=for-the-badge&logo=espressif&logoColor=white)
-![C++](https://img.shields.io/badge/C%2B%2B-00599C?style=for-the-badge&logo=cplusplus&logoColor=white)
-
-**인식 · 음성**
-
-![Python](https://img.shields.io/badge/Python%203.10-3776AB?style=for-the-badge&logo=python&logoColor=white)
-![PyTorch](https://img.shields.io/badge/PyTorch%202.11%20cu128-EE4C2C?style=for-the-badge&logo=pytorch&logoColor=white)
-![YOLO](https://img.shields.io/badge/YOLO26n%20%C2%B7%20BoT--SORT-111F68?style=for-the-badge&logo=ultralytics&logoColor=white)
-![OpenCV](https://img.shields.io/badge/OpenCV-5C3EE8?style=for-the-badge&logo=opencv&logoColor=white)
-![Qwen3-ASR](https://img.shields.io/badge/Qwen3--ASR%201.7B-6F42C1?style=for-the-badge&logo=alibabacloud&logoColor=white)
-![Silero VAD](https://img.shields.io/badge/Silero%20VAD-EE4C2C?style=for-the-badge&logo=pytorch&logoColor=white)
-![GMS](https://img.shields.io/badge/GMS%20gpt--5.4--mini-8D73FF?style=for-the-badge)
-![DeepFilterNet](https://img.shields.io/badge/DeepFilterNet-1B6AC6?style=for-the-badge)
-![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white)
-
-**관제 웹 · API**
-
-![TypeScript](https://img.shields.io/badge/TypeScript%205-3178C6?style=for-the-badge&logo=typescript&logoColor=white)
-![Next.js](https://img.shields.io/badge/Next.js%2014-000000?style=for-the-badge&logo=nextdotjs&logoColor=white)
-![React](https://img.shields.io/badge/React%2018-61DAFB?style=for-the-badge&logo=react&logoColor=black)
-![Tailwind CSS](https://img.shields.io/badge/Tailwind%20CSS%204-06B6D4?style=for-the-badge&logo=tailwindcss&logoColor=white)
-![Java](https://img.shields.io/badge/Java%2021-ED8B00?style=for-the-badge&logo=openjdk&logoColor=white)
-![Spring Boot](https://img.shields.io/badge/Spring%20Boot%204-6DB33F?style=for-the-badge&logo=springboot&logoColor=white)
-![Gradle](https://img.shields.io/badge/Gradle-02303A?style=for-the-badge&logo=gradle&logoColor=white)
-
-**데이터 · 인프라**
-
-![PostgreSQL](https://img.shields.io/badge/PostgreSQL%2015-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)
-![TimescaleDB](https://img.shields.io/badge/TimescaleDB-FDB515?style=for-the-badge&logo=postgresql&logoColor=white)
-![Mosquitto](https://img.shields.io/badge/Mosquitto%20MQTT%205-3C5280?style=for-the-badge&logo=eclipsemosquitto&logoColor=white)
-![WebRTC](https://img.shields.io/badge/WebRTC%20%C2%B7%20MediaMTX-333333?style=for-the-badge&logo=webrtc&logoColor=white)
-![MinIO](https://img.shields.io/badge/MinIO-C72E49?style=for-the-badge&logo=minio&logoColor=white)
-![AWS EC2](https://img.shields.io/badge/AWS%20EC2-232F3E?style=for-the-badge)
-![Docker](https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white)
-![GitLab CI](https://img.shields.io/badge/GitLab%20CI-FC6D26?style=for-the-badge&logo=gitlab&logoColor=white)
-
-[왜 만들었나](#왜-만들었나) · [할 수 있는 것](#할-수-있는-것) · [시연](#시연) · [시스템 구성](#시스템-구성) · [실행](#로봇-스택-실행) · [모듈별 시작](#개발-시작) · [문서](#개발-문서) · [안전](#안전-원칙) · [상태](#프로젝트-상태) · [회고](#회고) · [팀](#팀) · [트러블슈팅](docs/TROUBLESHOOTING.md) · [TBD](docs/TBD.md)
+[📚 문서](#개발-문서) · [🛡️ 안전](#안전-원칙) · [📊 상태](#프로젝트-상태) · [💡 회고](#회고) · [👥 팀](#팀) · [🩺 트러블슈팅](docs/TROUBLESHOOTING.md) · [📌 TBD](docs/TBD.md)
 
 </div>
 
@@ -73,7 +41,9 @@ Jetson Orin Nano에서 ROS 2, SLAM, Nav2, 사람 탐지와 안전 제어를 수�
 미구현·폐기·제한은 [프로젝트 상태](#프로젝트-상태)에 나눠 적었습니다. 전체 기준은 통합 명세서
 [v2.1](docs/README.md)입니다.
 
-## 왜 만들었나
+<a id="왜-만들었나"></a>
+
+## 🎯 왜 만들었나
 
 <div align="center">
   <img src="docs/assets/why-unknown.png" width="900" alt="진입 전에 모르는 3가지 — 통로, 요구조자, 2차 위험">
@@ -91,7 +61,9 @@ Jetson Orin Nano에서 ROS 2, SLAM, Nav2, 사람 탐지와 안전 제어를 수�
 탐지와 음성 대화가 요구조자의 수·상태·응답 여부를, 온습도와 이벤트 영상이 판단 근거를
 남깁니다. 사람을 대신하는 로봇이 아니라 **사람보다 먼저 들어가 묻는 로봇**입니다.
 
-## 시연
+<a id="시연"></a>
+
+## 🎬 시연
 
 <div align="center">
   <img src="docs/assets/ugv-views.png" width="960" alt="Sentinel UGV 실물 — 전면·좌측면·우측면·후면">
@@ -102,6 +74,12 @@ Jetson Orin Nano에서 ROS 2, SLAM, Nav2, 사람 탐지와 안전 제어를 수�
   <a href="https://www.youtube.com/watch?v=guyA2-h8ZME">
     <img src="https://img.youtube.com/vi/guyA2-h8ZME/maxresdefault.jpg" width="720" alt="Sentinel UGV 시연 영상">
   </a>
+  <br>
+  <a href="https://www.youtube.com/watch?v=guyA2-h8ZME">
+    <img src="https://img.shields.io/badge/YouTube-%EC%8B%9C%EC%97%B0_%EC%98%81%EC%83%81_%EB%B3%B4%EA%B8%B0-FF0000?style=for-the-badge&logo=youtube&logoColor=white" alt="YouTube에서 Sentinel UGV 시연 영상 보기">
+  </a>
+  <br>
+  <sub>▶️ 위 썸네일 또는 빨간 배지를 클릭하면 YouTube 시연 영상이 재생됩니다.</sub>
 </div>
 
 차체는 BMW M7 유아전동차 베이스에 LiDAR·카메라를 고정 마운트로 올린 구성입니다. 상단 원통이
@@ -127,11 +105,12 @@ YDLIDAR X4 Pro, 전면 중앙이 BRIO 100입니다. 조향 기하가 있어 제�
 > 두 캡처 모두 호스트명·IP 가 나타나지 않고 사람 얼굴은 가려 두었습니다. API·MediaMTX·8765 가
 > 모두 무인증이라 화면에 보이는 주소가 그대로 접근 경로가 되기 때문입니다(06장 36-4).
 
-시연 영상은 추가 예정입니다. 관제 화면 설계는
-[frontend/docs/wireframe.md](frontend/docs/wireframe.md), 시연 시나리오 전문은
+관제 화면 설계는 [frontend/docs/wireframe.md](frontend/docs/wireframe.md), 시연 시나리오 전문은
 [01장 4.2 핵심 시연 시퀀스](docs/01-프로젝트-개요.md#42-핵심-시연-시퀀스)입니다.
 
-## 할 수 있는 것
+<a id="할-수-있는-것"></a>
+
+## ✨ 할 수 있는 것
 
 MVP 필수 기능([01장 2.2](docs/01-프로젝트-개요.md#22-mvp-필수-기능)) 16개 중 **14개를 구현했습니다.**
 남은 둘은 **MVP-13 자동 복귀**(home pose 저장까지만 되어 있고 복귀 주행이 없다)와 **MVP-06의 사람
@@ -194,13 +173,22 @@ map 좌표 추정**(encounter 생성은 되지만 위치가 로봇 위치로 남
 > 있습니다 — 이벤트 영상 마감 실패, `enable_ekf` 누락으로 인한 스택 침묵, 회전반경을 모르는
 > planner의 조향 고착 등.
 
-## 시스템 구성
+<a id="시스템-구성"></a>
+
+## 🧩 시스템 구성
+
+<div align="center">
+
+![전원 구성](https://img.shields.io/badge/%EC%A0%84%EC%9B%90-%EC%8B%A4%EC%B0%A8_3%EA%B3%84%ED%86%B5-F9A825?style=flat-square)
+
+</div>
 
 <div align="center">
   <img src="docs/assets/ugv-hardware.png" width="900" alt="UGV 하드웨어 구성 — LiDAR·카메라·IMU·초음파·Jetson·ESP32 2개·모터 드라이버·전원 배치">
 </div>
 
-> 위 그림에는 전원이 12V 메인과 Jetson 보조 **2계통**으로 그려져 있습니다. 시연 차량은 실제로
+> ⚠️ **도면 정정:** 위 그림에는 전원이 12V 메인과 Jetson 보조 **2계통**으로 그려져 있습니다.
+> 시연 차량은 실제로
 > **3계통**으로 돌았습니다 — 여기에 **모터 드라이버용 별도 5V 배터리**가 더 있습니다
 > (2026-08-11 실물 확인, [02장 6.6](docs/02-하드웨어.md)).
 
@@ -221,6 +209,54 @@ map 좌표 추정**(encounter 생성은 되지만 위치가 로봇 위치로 남
 - **Frontend**: 실시간 영상·지도·상태 관제, 운행 모드 전환과 임무 명령, 임무 이력.
 - **Infrastructure**: PostgreSQL/TimescaleDB, MinIO, Mosquitto, MediaMTX, Docker Compose.
 - **Common**: 외부 프로토콜, 스키마, 샘플 메시지의 단일 기준점.
+
+### 기술 스택
+
+<div align="center">
+
+**🤖 로봇 · 제어**
+
+![ROS 2](https://img.shields.io/badge/ROS%202%20Humble-22314E?style=for-the-badge&logo=ros&logoColor=white)
+![Jetson](https://img.shields.io/badge/Jetson%20Orin%20Nano-76B900?style=for-the-badge&logo=nvidia&logoColor=white)
+![Nav2](https://img.shields.io/badge/Nav2%20Smac%20%C2%B7%20SLAM%20Toolbox-22314E?style=for-the-badge&logo=ros&logoColor=white)
+![Foxglove](https://img.shields.io/badge/Foxglove%20Bridge-8B5CF6?style=for-the-badge&logo=ros&logoColor=white)
+![ESP32](https://img.shields.io/badge/ESP32%20%C3%972%20%C2%B7%20FreeRTOS-E7352C?style=for-the-badge&logo=espressif&logoColor=white)
+![C++](https://img.shields.io/badge/C%2B%2B-00599C?style=for-the-badge&logo=cplusplus&logoColor=white)
+
+**👁️ 인식 · 음성**
+
+![Python](https://img.shields.io/badge/Python%203.10-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![PyTorch](https://img.shields.io/badge/PyTorch%202.11%20cu128-EE4C2C?style=for-the-badge&logo=pytorch&logoColor=white)
+![YOLO](https://img.shields.io/badge/YOLO26n%20%C2%B7%20BoT--SORT-111F68?style=for-the-badge&logo=ultralytics&logoColor=white)
+![OpenCV](https://img.shields.io/badge/OpenCV-5C3EE8?style=for-the-badge&logo=opencv&logoColor=white)
+![Qwen3-ASR](https://img.shields.io/badge/Qwen3--ASR%201.7B-6F42C1?style=for-the-badge&logo=alibabacloud&logoColor=white)
+![Silero VAD](https://img.shields.io/badge/Silero%20VAD-EE4C2C?style=for-the-badge&logo=pytorch&logoColor=white)
+![GMS](https://img.shields.io/badge/GMS%20gpt--5.4--mini-8D73FF?style=for-the-badge)
+![DeepFilterNet](https://img.shields.io/badge/DeepFilterNet-1B6AC6?style=for-the-badge)
+![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white)
+
+**🖥️ 관제 웹 · API**
+
+![TypeScript](https://img.shields.io/badge/TypeScript%205-3178C6?style=for-the-badge&logo=typescript&logoColor=white)
+![Next.js](https://img.shields.io/badge/Next.js%2014-000000?style=for-the-badge&logo=nextdotjs&logoColor=white)
+![React](https://img.shields.io/badge/React%2018-61DAFB?style=for-the-badge&logo=react&logoColor=black)
+![Tailwind CSS](https://img.shields.io/badge/Tailwind%20CSS%204-06B6D4?style=for-the-badge&logo=tailwindcss&logoColor=white)
+![Java](https://img.shields.io/badge/Java%2021-ED8B00?style=for-the-badge&logo=openjdk&logoColor=white)
+![Spring Boot](https://img.shields.io/badge/Spring%20Boot%204-6DB33F?style=for-the-badge&logo=springboot&logoColor=white)
+![Gradle](https://img.shields.io/badge/Gradle-02303A?style=for-the-badge&logo=gradle&logoColor=white)
+
+**🗄️ 데이터 · 인프라**
+
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL%2015-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)
+![TimescaleDB](https://img.shields.io/badge/TimescaleDB-FDB515?style=for-the-badge&logo=postgresql&logoColor=white)
+![Mosquitto](https://img.shields.io/badge/Mosquitto%20MQTT%205-3C5280?style=for-the-badge&logo=eclipsemosquitto&logoColor=white)
+![WebRTC](https://img.shields.io/badge/WebRTC%20%C2%B7%20MediaMTX-333333?style=for-the-badge&logo=webrtc&logoColor=white)
+![MinIO](https://img.shields.io/badge/MinIO-C72E49?style=for-the-badge&logo=minio&logoColor=white)
+![AWS EC2](https://img.shields.io/badge/AWS%20EC2-232F3E?style=for-the-badge)
+![Docker](https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white)
+![GitLab CI](https://img.shields.io/badge/GitLab%20CI-FC6D26?style=for-the-badge&logo=gitlab&logoColor=white)
+
+</div>
 
 ### 기술 선택과 활용
 
@@ -244,7 +280,9 @@ map 좌표 추정**(encounter 생성은 되지만 위치가 로봇 위치로 남
 | **S3 호환 스토리지** | 이벤트 MP4와 지도를 presigned URL로 직접 올립니다. 백엔드가 파일 본문을 거치지 않습니다 |
 | **GitLab CI** | 941건이 매 MR에서 돕니다. 젯슨에선 통과하고 CI에선 깨지는 일이 반복돼 전용 venv로 환경 차이를 없앴습니다 |
 
-## 저장소 구조
+<a id="저장소-구조"></a>
+
+## 🗂️ 저장소 구조
 
 ```text
 .
@@ -269,7 +307,9 @@ map 좌표 추정**(encounter 생성은 되지만 위치가 로봇 위치로 남
 └─ .gitlab-ci.yml           # GitLab CI/CD 파이프라인
 ```
 
-## 로봇 스택 실행
+<a id="로봇-스택-실행"></a>
+
+## 🚀 로봇 스택 실행
 
 Jetson에서 스택을 올리고 내리는 진입점은 **둘뿐**입니다. 다른 경로로 띄운 스택은 중복 기동
 검사와 정리 대상에서 빠질 수 있습니다.
@@ -290,7 +330,9 @@ Jetson에서 스택을 올리고 내리는 진입점은 **둘뿐**입니다. 다
 - 증상별 진단 경로는 [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md), 스크립트 상세는
   [scripts/README.md](scripts/README.md)입니다.
 
-## 개발 시작
+<a id="개발-시작"></a>
+
+## 🛠️ 개발 시작
 
 모듈마다 실행 환경이 다르므로 아래 README에서 시작합니다.
 
@@ -312,7 +354,9 @@ Jetson에서 스택을 올리고 내리는 진입점은 **둘뿐**입니다. 다
 브랜치를 생성합니다. 공통 메시지를 바꾸면 `common/`의 스키마·샘플과 생산자/소비자 테스트를 함께
 갱신하고, 코드가 `docs/`의 서술과 어긋나게 되면 같은 MR에서 문서를 고칩니다.
 
-## 개발 문서
+<a id="개발-문서"></a>
+
+## 📚 개발 문서
 
 통합 명세서는 장 번호(1~38장)와 부록(A~L)이 전역으로 이어지는 하나의 문서이며, 역할별 파일로
 나눠 관리합니다. 문서 버전·변경 이력은 [docs/README.md](docs/README.md)에서만 관리합니다.
@@ -332,7 +376,9 @@ Jetson에서 스택을 올리고 내리는 진입점은 **둘뿐**입니다. 다
 | [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | 증상에서 규범 절차로 가는 현장 진단 인덱스 |
 | [git_convention.md](docs/git_convention.md) | 브랜치·커밋·MR 규칙 |
 
-## 라이선스
+<a id="라이선스"></a>
+
+## ⚖️ 라이선스
 
 **프로젝트 자체 라이선스는 아직 정하지 않았습니다.** 루트에 `LICENSE` 파일이 없습니다.
 
@@ -345,7 +391,9 @@ Jetson에서 스택을 올리고 내리는 진입점은 **둘뿐**입니다. 다
 프런트엔드 글꼴·컴포넌트 고지는 [frontend/ATTRIBUTIONS.md](frontend/ATTRIBUTIONS.md)입니다
 (Asta Sans·D2Coding은 SIL OFL 1.1로 **고지 의무**가 있습니다).
 
-## 안전 원칙
+<a id="안전-원칙"></a>
+
+## 🛡️ 안전 원칙
 
 - **래칭형 물리 E-Stop 스위치는 도입하지 않았습니다.** 하드웨어 차단 수단은 12V 모터 배터리
   연결 분리뿐이며, 시연·시험에서는 이를 담당할 사람을 지정합니다(03장 34-10).
@@ -361,7 +409,9 @@ Jetson에서 스택을 올리고 내리는 진입점은 **둘뿐**입니다. 다
 - `.env`, 인증서, SSH 키, 모델 가중치와 클라우드 자격 증명은 커밋하지 않습니다.
 - 개인 음성(요구조자·팀원 녹음)은 어떤 경우에도 커밋하지 않습니다.
 
-## 프로젝트 상태
+<a id="프로젝트-상태"></a>
+
+## 📊 프로젝트 상태
 
 명세 v2.1(2026-08-11, 시연 종료 시점 코드·실측 정합본) 기준입니다.
 
@@ -422,12 +472,21 @@ Jetson에서 스택을 올리고 내리는 진입점은 **둘뿐**입니다. 다
 
 ### 끝내지 못한 것
 
+#### MVP 미완료 — 2개
+
+![MVP 미완료](https://img.shields.io/badge/MVP_%EB%AF%B8%EC%99%84%EB%A3%8C-2%EA%B0%9C-E8873A?style=flat-square)
+
 - **자동 복귀(`RETURNING`)** — home pose 저장까지만 되어 있고 복귀 주행이 없습니다. 임무는
   `COMPLETED`로 끝나고 로봇은 종료 지점에 섭니다(38-3 FR-020).
-- **7분 탐사 타임아웃** — `mission_state.tick()`이 탐사 경과를 재지 않고 관련 파라미터도 없습니다.
-  자동 종료 조건이 없어 임무는 운영자 STOP으로만 끝납니다.
 - **사람의 map 좌표(`human_localizer`)** — encounter pose는 확정 시점의 로봇 위치이며, 카메라
   방위각·LiDAR 거리 결합은 접근 제어에만 씁니다.
+
+#### 후속 개선 — MVP 외 3개
+
+![후속 개선](https://img.shields.io/badge/%ED%9B%84%EC%86%8D_%EA%B0%9C%EC%84%A0-3%EA%B0%9C-455A64?style=flat-square)
+
+- **7분 탐사 타임아웃** — `mission_state.tick()`이 탐사 경과를 재지 않고 관련 파라미터도 없습니다.
+  자동 종료 조건이 없어 임무는 운영자 STOP으로만 끝납니다.
 - **카메라 hfov 실측** — 접근 방향 미세 오차의 유력 원인입니다(S15P11A301-371).
 - 브라우저 bbox 오버레이와 `detections` 적재, 로컬/원격 스트림 자동 전환(현재 수동 토글).
 
@@ -453,7 +512,9 @@ Jetson에서 스택을 올리고 내리는 진입점은 **둘뿐**입니다. 다
 구현 상태의 세부 근거와 남은 검증은 [통합 명세서](docs/README.md)와
 [TBD 대장](docs/TBD.md)을 기준으로 합니다.
 
-## 회고
+<a id="회고"></a>
+
+## 💡 회고
 
 **조용히 죽는 실패가 가장 비쌌습니다.** 클라우드 브리지가 기동 직후 죽어도 나머지 노드는
 계속 돌아 관제 텔레메트리만 끊겼고, URDF 조인트 4줄이 지워져도 XML은 여전히 유효해
@@ -479,7 +540,9 @@ Jetson에서 스택을 올리고 내리는 진입점은 **둘뿐**입니다. 다
 채 시연까지 갔고, 하드웨어 차단 수단은 배터리 분리뿐이었습니다. 다음 하드웨어 프로젝트에서는
 안전 부품 확정을 1주차 안에 끝내겠습니다.
 
-## 팀
+<a id="팀"></a>
+
+## 👥 팀
 
 역삼역역무실관제센터 · 6명 · 2026-07-14 ~ 08-11(약 4주) · SSAFY 15기 자율 프로젝트
 

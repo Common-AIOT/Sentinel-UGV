@@ -4,11 +4,6 @@
 
 ### 사람이 들어가기 전에, 로봇이 먼저 들어가 *묻습니다*
 
-[![Watch Demo](https://img.shields.io/badge/YouTube-Watch_Demo-FF0000?style=for-the-badge&logo=youtube&logoColor=white)](https://www.youtube.com/watch?v=guyA2-h8ZME)
-[![Docs](https://img.shields.io/badge/Docs-v2.1-1F4E79?style=for-the-badge&logo=readthedocs&logoColor=white)](docs/README.md)
-[![Quick Start](https://img.shields.io/badge/Quick_Start-Robot_Stack-E8873A?style=for-the-badge&logo=gnubash&logoColor=white)](#로봇-스택-실행)
-[![Troubleshooting](https://img.shields.io/badge/Troubleshooting-Field_Guide-455A64?style=for-the-badge)](docs/TROUBLESHOOTING.md)
-
 **✅ 검증 상태**
 
 [![Pipeline](https://lab.ssafy.com/s15-webmobile3-sub1/S15P11A301/badges/develop/pipeline.svg)](https://lab.ssafy.com/s15-webmobile3-sub1/S15P11A301/-/pipelines)
@@ -25,7 +20,7 @@
 
 [🎯 배경](#왜-만들었나) · [🎬 시연](#시연) · [✨ 핵심 기능](#할-수-있는-것) · [🧩 시스템](#시스템-구성) · [🚀 실행](#로봇-스택-실행) · [🛠️ 개발 시작](#개발-시작)
 
-[📚 문서](#개발-문서) · [🛡️ 안전](#안전-원칙) · [📊 상태](#프로젝트-상태) · [💡 회고](#회고) · [👥 팀](#팀) · [🩺 트러블슈팅](docs/TROUBLESHOOTING.md) · [📌 TBD](docs/TBD.md)
+[📚 문서](#개발-문서) · [🛡️ 안전](#안전-원칙) · [📊 상태](#프로젝트-상태) · [💡 회고](#회고) · [👥 팀](#팀)
 
 </div>
 

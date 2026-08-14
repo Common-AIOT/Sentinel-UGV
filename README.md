@@ -97,16 +97,12 @@ Jetson Orin Nano에서 ROS 2, SLAM, Nav2, 사람 탐지와 안전 제어를 수�
   <img src="docs/assets/ugv-views.png" width="960" alt="Sentinel UGV 실물 — 전면·좌측면·우측면·후면">
 </div>
 
-<!-- 시연 영상 — VIDEO_ID 두 곳을 YouTube 영상 ID로 바꾸고 이 주석을 푼다.
-     GitLab 마크다운은 <iframe> 을 sanitize 하므로 플레이어는 심을 수 없고 썸네일
-     링크가 유일한 방법이다. img.youtube.com 을 쓰면 레포에 파일을 추가하지 않아도
-     되고, 영상을 다시 편집해 올려도 ID 가 같으면 포스터가 따라온다.
+
 <div align="center">
-  <a href="https://youtu.be/VIDEO_ID">
-    <img src="https://img.youtube.com/vi/VIDEO_ID/maxresdefault.jpg" width="720" alt="Sentinel UGV 시연 영상">
+  <a href="https://www.youtube.com/watch?v=guyA2-h8ZME">
+    <img src="https://img.youtube.com/vi/guyA2-h8ZME/maxresdefault.jpg" width="720" alt="Sentinel UGV 시연 영상">
   </a>
 </div>
--->
 
 차체는 BMW M7 유아전동차 베이스에 LiDAR·카메라를 고정 마운트로 올린 구성입니다. 상단 원통이
 YDLIDAR X4 Pro, 전면 중앙이 BRIO 100입니다. 조향 기하가 있어 제자리 회전은 하지 못합니다.

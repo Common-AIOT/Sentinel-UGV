@@ -15,32 +15,49 @@
 
 ![EKF](https://img.shields.io/badge/EKF%20yaw-%EC%98%A4%EC%B0%A8%201.1%25-455A64?style=flat-square)
 
-**로봇 · 인식**
+**로봇 · 제어**
 
 ![ROS 2](https://img.shields.io/badge/ROS%202%20Humble-22314E?style=for-the-badge&logo=ros&logoColor=white)
 ![Jetson](https://img.shields.io/badge/Jetson%20Orin%20Nano-76B900?style=for-the-badge&logo=nvidia&logoColor=white)
-![YOLO](https://img.shields.io/badge/YOLO26%20%C2%B7%20BoT--SORT-111F68?style=for-the-badge)
 ![Nav2](https://img.shields.io/badge/Nav2%20Smac%20%C2%B7%20SLAM%20Toolbox-22314E?style=for-the-badge&logo=ros&logoColor=white)
-![ESP32](https://img.shields.io/badge/ESP32%20%C3%972-E7352C?style=for-the-badge&logo=espressif&logoColor=white)
+![Foxglove](https://img.shields.io/badge/Foxglove%20Bridge-8B5CF6?style=for-the-badge&logo=ros&logoColor=white)
+![ESP32](https://img.shields.io/badge/ESP32%20%C3%972%20%C2%B7%20FreeRTOS-E7352C?style=for-the-badge&logo=espressif&logoColor=white)
+![C++](https://img.shields.io/badge/C%2B%2B-00599C?style=for-the-badge&logo=cplusplus&logoColor=white)
 
-**음성 상호작용**
+**인식 · 음성**
 
+![Python](https://img.shields.io/badge/Python%203.10-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![PyTorch](https://img.shields.io/badge/PyTorch%202.11%20cu128-EE4C2C?style=for-the-badge&logo=pytorch&logoColor=white)
+![YOLO](https://img.shields.io/badge/YOLO26n%20%C2%B7%20BoT--SORT-111F68?style=for-the-badge&logo=ultralytics&logoColor=white)
+![OpenCV](https://img.shields.io/badge/OpenCV-5C3EE8?style=for-the-badge&logo=opencv&logoColor=white)
 ![Qwen3-ASR](https://img.shields.io/badge/Qwen3--ASR%201.7B-6F42C1?style=for-the-badge&logo=alibabacloud&logoColor=white)
 ![Silero VAD](https://img.shields.io/badge/Silero%20VAD-EE4C2C?style=for-the-badge&logo=pytorch&logoColor=white)
 ![GMS](https://img.shields.io/badge/GMS%20gpt--5.4--mini-8D73FF?style=for-the-badge)
 ![DeepFilterNet](https://img.shields.io/badge/DeepFilterNet-1B6AC6?style=for-the-badge)
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white)
 
-**관제 · 인프라**
+**관제 웹 · API**
 
+![TypeScript](https://img.shields.io/badge/TypeScript%205-3178C6?style=for-the-badge&logo=typescript&logoColor=white)
 ![Next.js](https://img.shields.io/badge/Next.js%2014-000000?style=for-the-badge&logo=nextdotjs&logoColor=white)
+![React](https://img.shields.io/badge/React%2018-61DAFB?style=for-the-badge&logo=react&logoColor=black)
+![Tailwind CSS](https://img.shields.io/badge/Tailwind%20CSS%204-06B6D4?style=for-the-badge&logo=tailwindcss&logoColor=white)
+![Java](https://img.shields.io/badge/Java%2021-ED8B00?style=for-the-badge&logo=openjdk&logoColor=white)
 ![Spring Boot](https://img.shields.io/badge/Spring%20Boot%204-6DB33F?style=for-the-badge&logo=springboot&logoColor=white)
+![Gradle](https://img.shields.io/badge/Gradle-02303A?style=for-the-badge&logo=gradle&logoColor=white)
+
+**데이터 · 인프라**
+
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL%2015-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)
 ![TimescaleDB](https://img.shields.io/badge/TimescaleDB-FDB515?style=for-the-badge&logo=postgresql&logoColor=white)
 ![Mosquitto](https://img.shields.io/badge/Mosquitto%20MQTT%205-3C5280?style=for-the-badge&logo=eclipsemosquitto&logoColor=white)
+![WebRTC](https://img.shields.io/badge/WebRTC%20%C2%B7%20MediaMTX-333333?style=for-the-badge&logo=webrtc&logoColor=white)
 ![MinIO](https://img.shields.io/badge/MinIO-C72E49?style=for-the-badge&logo=minio&logoColor=white)
+![AWS EC2](https://img.shields.io/badge/AWS%20EC2-232F3E?style=for-the-badge)
 ![Docker](https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white)
+![GitLab CI](https://img.shields.io/badge/GitLab%20CI-FC6D26?style=for-the-badge&logo=gitlab&logoColor=white)
 
-[왜 만들었나](#왜-만들었나) · [할 수 있는 것](#할-수-있는-것) · [시연](#시연) · [시스템 구성](#시스템-구성) · [실행](#로봇-스택-실행) · [모듈별 시작](#개발-시작) · [문서](#개발-문서) · [안전](#안전-원칙) · [상태](#프로젝트-상태) · [팀](#팀) · [트러블슈팅](docs/TROUBLESHOOTING.md) · [TBD](docs/TBD.md)
+[왜 만들었나](#왜-만들었나) · [할 수 있는 것](#할-수-있는-것) · [시연](#시연) · [시스템 구성](#시스템-구성) · [실행](#로봇-스택-실행) · [모듈별 시작](#개발-시작) · [문서](#개발-문서) · [안전](#안전-원칙) · [상태](#프로젝트-상태) · [회고](#회고) · [팀](#팀) · [트러블슈팅](docs/TROUBLESHOOTING.md) · [TBD](docs/TBD.md)
 
 </div>
 
@@ -176,6 +193,11 @@ map 좌표 추정**(encounter 생성은 되지만 위치가 로봇 위치로 남
   [안전 원칙](#안전-원칙)에 그대로 적었습니다.
 - 자동 시험 **941건**이 CI에서 돕니다 — ROS 2 682 · 프런트 171 · 백엔드 55 · 탐지 33.
 
+> 여기까지 오는 동안 기록해 둔 사고와 원인 분석은
+> [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)와 [명세 변경 이력](docs/README.md)에 남아
+> 있습니다 — 이벤트 영상 마감 실패, `enable_ekf` 누락으로 인한 스택 침묵, 회전반경을 모르는
+> planner의 조향 고착 등.
+
 ## 시스템 구성
 
 <div align="center">
@@ -203,6 +225,28 @@ map 좌표 추정**(encounter 생성은 되지만 위치가 로봇 위치로 남
 - **Frontend**: 실시간 영상·지도·상태 관제, 운행 모드 전환과 임무 명령, 임무 이력.
 - **Infrastructure**: PostgreSQL/TimescaleDB, MinIO, Mosquitto, MediaMTX, Docker Compose.
 - **Common**: 외부 프로토콜, 스키마, 샘플 메시지의 단일 기준점.
+
+### 기술 선택과 활용
+
+| 기술 | 어떻게 썼나 |
+|---|---|
+| **ROS 2 Humble** | 노드를 격리해 하나가 죽어도 스택이 계속 돕니다. 실제로 클라우드 브리지가 조용히 죽어 관제 텔레메트리가 전부 끊긴 적이 있어, CI에 콜백 존재 검증을 넣었습니다 |
+| **Jetson Orin Nano 8GB** | 온디바이스 추론. 탐지 1.6GB·SLAM 0.55GB가 이미 물려 음성 인식까지 올릴 여유가 없어 그것만 원격 GPU로 뺐습니다 |
+| **Nav2 Smac Hybrid-A\*** | 제자리 회전을 못 하는 전륜 조향이라 회전반경을 아는 planner가 필요했습니다. 실측 `R_min`(좌 1.37·우 1.76m)을 안전측 1.8로 넣고 후진 계획까지 켰습니다 |
+| **Regulated Pure Pursuit** | 후진 추종용. 다만 RPP에는 곡률 상한 기능이 없어, 상한은 controller가 아니라 역운동학 층의 δ 클램프가 지킵니다 |
+| **SLAM Toolbox** | 임무마다 초기화합니다. 이전 임무의 지도가 남으면 새 현장의 통로를 잘못 그립니다 |
+| **YOLO26n · BoT-SORT** | Detect는 상시 15FPS, Pose는 3프레임 연속 감지될 때만 2FPS로 켭니다. 항상 켜면 Jetson 자원이 남지 않습니다 |
+| **Silero VAD** | 발화 구간만 골라 보내 원격 전송량과 지연을 줄입니다 |
+| **Qwen3-ASR 1.7B** | Jetson 여유가 없어 L40S GPU 서버에 FastAPI로 올리고 HTTPS로 부릅니다 |
+| **GMS gpt-5.4-mini** | 대화 정리 전용입니다. **위험도 판정은 LLM이 아니라 규칙이 합니다** — 사람 목숨이 걸린 판정을 확률 모델에 맡기지 않았습니다 |
+| **DeepFilterNet** | 관제 청취본 후처리에만 씁니다. 원본이 증거이므로 인식 입력에는 넣지 않습니다 |
+| **ESP32 ×2** | 모터와 센서를 물리적으로 분리했습니다. 한 보드가 멈춰도 다른 계통이 살고, 모터 보드는 300ms watchdog으로 스스로 정지합니다 |
+| **Spring Boot 4 + JDBC** | JPA를 걷어냈습니다. 시계열 hypertable을 ORM으로 감싸지 않기로 했고, `@Entity`가 하나도 없는데 Hibernate가 검증 0건으로 기동하며 시간만 썼습니다 |
+| **TimescaleDB** | 2Hz 텔레메트리 원본을 보관합니다. 집계·retention은 선택 기능이라 원본 조회로 갈음했습니다 |
+| **MQTT 5 + STOMP** | 로봇→관제는 유실을 허용하는 2Hz라 MQTT, 관제→브라우저는 즉시 푸시라 STOMP로 나눴습니다 |
+| **MediaMTX (WebRTC)** | 저지연 우선. 15FPS·1500kbps로 고정하고 카메라 캡처는 29.93FPS를 유지한 채 인코딩 분기에서만 낮춥니다 |
+| **S3 호환 스토리지** | 이벤트 MP4와 지도를 presigned URL로 직접 올립니다. 백엔드가 파일 본문을 거치지 않습니다 |
+| **GitLab CI** | 941건이 매 MR에서 돕니다. 젯슨에선 통과하고 CI에선 깨지는 일이 반복돼 전용 venv로 환경 차이를 없앴습니다 |
 
 ## 저장소 구조
 
@@ -413,9 +457,35 @@ Jetson에서 스택을 올리고 내리는 진입점은 **둘뿐**입니다. 다
 구현 상태의 세부 근거와 남은 검증은 [통합 명세서](docs/README.md)와
 [TBD 대장](docs/TBD.md)을 기준으로 합니다.
 
+## 회고
+
+**조용히 죽는 실패가 가장 비쌌습니다.** 클라우드 브리지가 기동 직후 죽어도 나머지 노드는
+계속 돌아 관제 텔레메트리만 끊겼고, URDF 조인트 4줄이 지워져도 XML은 여전히 유효해
+`robot_state_publisher`가 그대로 떴습니다. `enable_ekf`를 빠뜨리면 스택 전체가 침묵합니다.
+셋 다 「에러가 안 난다」가 문제였고, 그래서 CI에 콜백 존재·URDF 트리·메시지 계약 검사를
+따로 붙였습니다. 다음에도 **실패가 소리를 내는지 먼저 확인**하겠습니다.
+
+**실측 없이 정한 값은 전부 바뀌었습니다.** 회전반경을 재기 전에 고른 planner는 조향 상한에
+고착했고(NavFn → Smac Hybrid-A\*), 조향 링키지 비는 1:1로 잡았다가 실측 후 2.5:1로,
+초음파 임계는 실측까지 하고도 빈 공간 오측 때문에 결국 발동을 껐습니다. 값이 필요한
+시점보다 앞서 재야 했습니다.
+
+**안전은 층을 늘리는 것보다 어느 층이 실제로 막는지 아는 것이 어려웠습니다.** 초음파는
+달려 있지만 관측 전용이고, 곡률 상한은 planner도 controller도 아닌 역운동학의 δ 클램프가
+지킵니다. 층이 많을수록 「어딘가 막아주겠지」로 흐르기 쉬워서, 문서에 **막는 층을 하나씩
+지목해** 적었습니다.
+
+**문서와 코드를 같은 MR에서 고치는 규칙을 늦게 세웠습니다.** 그러기 전 2주 동안 명세와
+구현이 13곳 어긋났고, 통합 시험마다 「왜 안 되지」를 다시 조사했습니다. 규칙을 세운 뒤로
+그 비용이 사라졌습니다.
+
+**아쉬운 것** — 물리 E-Stop을 끝내 달지 못했습니다. 부품 모델과 차단 정격을 확정하지 못한
+채 시연까지 갔고, 하드웨어 차단 수단은 배터리 분리뿐이었습니다. 다음 하드웨어 프로젝트에서는
+안전 부품 확정을 1주차 안에 끝내겠습니다.
+
 ## 팀
 
-역삼역역무실관제센터 · SSAFY 15기 자율 프로젝트
+역삼역역무실관제센터 · 6명 · 2026-07-14 ~ 08-11(약 4주) · SSAFY 15기 자율 프로젝트
 
 **박종화** — 로봇SW · ROS2
 

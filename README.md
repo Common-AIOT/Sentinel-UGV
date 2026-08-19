@@ -47,7 +47,7 @@
 ![GitLab CI/CD](https://img.shields.io/badge/GitLab%20CI%2FCD-FC6D26?style=for-the-badge&logo=gitlab&logoColor=white)
 ![AWS EC2](https://img.shields.io/badge/AWS%20EC2-232F3E?style=for-the-badge)
 
-[🎯 소개](#-문제와-접근) · [🎬 시연](#-시연) · [✨ 핵심 기능](#-핵심-기능) · [🧩 시스템](#-시스템-구성) · [🚀 실행](#-실행) · [📚 문서](#-개발-문서)
+[🎯 소개](#-소개) · [🎬 시연](#-시연) · [✨ 핵심 기능](#-핵심-기능) · [🧩 시스템](#-시스템-구성) · [🚀 실행](#-실행) · [📚 문서](#-개발-문서)
 
 [📄 발표 자료](docs/Sentinel-UGV-presentation.pdf) · [📊 검증과 한계](#-검증과-한계) · [🛡️ 안전](#-안전) · [💡 회고](#-회고) · [👥 팀](#-팀)
 
@@ -62,7 +62,7 @@ Sentinel UGV는 사람이 진입하기 어려운 재난·사고 현장을 먼저
 Jetson Orin Nano에서 ROS 2 기반 자율주행과 사람 탐지를 수행하고, 음성 인식은 원격 GPU 서버에서
 처리합니다. 관제 시스템은 Spring Boot와 Next.js로 구성했습니다.
 
-## 🎯 문제와 접근
+## 🎯 소개
 
 <div align="center">
   <img src="docs/assets/why-unknown.png" width="900" alt="현장 진입 전에 알기 어려운 통로, 요구조자, 2차 위험">

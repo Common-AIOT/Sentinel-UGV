@@ -2,561 +2,311 @@
 
 ![Sentinel UGV Header](https://capsule-render.vercel.app/api?type=waving&height=260&color=0:0C0C0F,45:1F4E79,100:E8873A&text=Sentinel%20UGV&fontColor=FFFFFF&fontSize=74&fontAlign=50&fontAlignY=38&desc=%EC%9E%AC%EB%82%9C%20%ED%98%84%EC%9E%A5%20%EC%9E%90%EC%9C%A8%20%ED%83%90%EC%82%AC%20%EB%A1%9C%EB%B4%87%20%C2%B7%20%EC%98%A8%EB%94%94%EB%B0%94%EC%9D%B4%EC%8A%A4%20AI%20%EA%B4%80%EC%A0%9C%20%EC%8B%9C%EC%8A%A4%ED%85%9C&descSize=18&descAlign=50&descAlignY=58&animation=fadeIn)
 
-### 사람이 들어가기 전에, 로봇이 먼저 들어가 *묻습니다*
+### 사람이 들어가기 전에, 로봇이 먼저 들어가 묻습니다
 
-**✅ 검증 상태**
+**Robot & Control**
 
-[![Pipeline](https://lab.ssafy.com/s15-webmobile3-sub1/S15P11A301/badges/develop/pipeline.svg)](https://lab.ssafy.com/s15-webmobile3-sub1/S15P11A301/-/pipelines)
-[![시연](https://img.shields.io/badge/%EC%8B%9C%EC%97%B0-%EC%A0%84_%EA%B5%AC%EA%B0%84_%EC%8B%A4%EA%B8%B0%EB%8F%99-2E7D32?style=flat-square)](#-시연)
-[![MVP](https://img.shields.io/badge/MVP-14%2F16%20%EA%B5%AC%ED%98%84-2E7D32?style=flat-square)](#-핵심-기능)
-[![자동 시험](https://img.shields.io/badge/%EC%9E%90%EB%8F%99%20%EC%8B%9C%ED%97%98-941%EA%B1%B4-2E7D32?style=flat-square)](https://lab.ssafy.com/s15-webmobile3-sub1/S15P11A301/-/pipelines)
+![ROS 2](https://img.shields.io/badge/ROS%202%20Humble-22314E?style=flat-square&logo=ros&logoColor=white)
+![Jetson](https://img.shields.io/badge/Jetson%20Orin%20Nano-76B900?style=flat-square&logo=nvidia&logoColor=white)
+![Nav2](https://img.shields.io/badge/Nav2%20%C2%B7%20SLAM%20Toolbox-22314E?style=flat-square&logo=ros&logoColor=white)
+![ESP32](https://img.shields.io/badge/ESP32%20%C3%972-E7352C?style=flat-square&logo=espressif&logoColor=white)
 
-**📈 실측 성능**
+**AI & Voice**
 
-[![순항 속도](https://img.shields.io/badge/%EC%88%9C%ED%95%AD-0.30m%2Fs%20%28%EC%8B%A4%EC%86%8D%EB%8F%84%2099%25%29-455A64?style=flat-square)](#실측값)
-[![Detect](https://img.shields.io/badge/Detect-15%20FPS-455A64?style=flat-square)](#실측값)
-[![영상](https://img.shields.io/badge/%EC%98%81%EC%83%81-15FPS%20%C2%B7%201500kbps-455A64?style=flat-square)](#실측값)
-[![EKF](https://img.shields.io/badge/EKF%20yaw-%EC%98%A4%EC%B0%A8%201.1%25-455A64?style=flat-square)](#실측값)
+![PyTorch](https://img.shields.io/badge/PyTorch-EE4C2C?style=flat-square&logo=pytorch&logoColor=white)
+![YOLO](https://img.shields.io/badge/YOLO26n%20%C2%B7%20BoT--SORT-111F68?style=flat-square&logo=ultralytics&logoColor=white)
+![Qwen3-ASR](https://img.shields.io/badge/Qwen3--ASR%201.7B-6F42C1?style=flat-square)
+![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white)
 
-[🎯 배경](#-배경) · [🎬 시연](#-시연) · [✨ 핵심 기능](#-핵심-기능) · [🧩 시스템](#-시스템) · [🚀 실행](#-실행) · [🛠️ 개발](#-개발)
+**Control Center & Infrastructure**
 
-[📚 문서](#-문서) · [🛡️ 안전](#-안전) · [📊 상태](#-상태) · [💡 회고](#-회고) · [👥 팀](#-팀)
+![Next.js](https://img.shields.io/badge/Next.js%2014-000000?style=flat-square&logo=nextdotjs&logoColor=white)
+![Spring Boot](https://img.shields.io/badge/Spring%20Boot%204-6DB33F?style=flat-square&logo=springboot&logoColor=white)
+![TimescaleDB](https://img.shields.io/badge/TimescaleDB-FDB515?style=flat-square&logo=postgresql&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-2496ED?style=flat-square&logo=docker&logoColor=white)
+
+[프로젝트 소개](#sentinel-ugv) · [시연](#시연) · [핵심 기능](#핵심-기능) · [시스템 구성](#시스템-구성) · [실행](#실행) · [개발 문서](#개발-문서)
 
 </div>
 
 # Sentinel UGV
 
-재난·사고 현장을 자율 탐사하는 온디바이스 AIoT 기반 무인 지상 차량(UGV) 프로젝트입니다.
-Jetson Orin Nano에서 ROS 2, SLAM, Nav2, 사람 탐지와 안전 제어를 수행하고, 발견한 요구조자와
-음성으로 상태를 확인하며, Spring Boot·Next.js 기반 관제 시스템에서 실시간 상태와 임무 이력을
-제공합니다.
+Sentinel UGV는 사람이 진입하기 어려운 재난·사고 현장을 먼저 탐사하는 무인 지상 차량입니다.
+로봇이 현장의 지도를 만들고 사람을 발견해 상태를 확인하면, 관제 시스템이 영상·위치·대화 결과를
+하나의 임무 기록으로 제공합니다.
 
-시연 시나리오 **「탐사 시작 → 자율 탐사 → 사람 발견 → 접근 → 음성 대화 → 보고 → 임무 종료」**
-전 구간이 실기동으로 동작합니다. 무엇을 하는 로봇인지는 [핵심 기능](#-핵심-기능)에,
-미구현·폐기·제한은 [상태](#-상태)에 나눠 적었습니다. 전체 기준은 통합 명세서
-[v2.1](docs/README.md)입니다.
+Jetson Orin Nano에서 ROS 2 기반 자율주행과 사람 탐지를 수행하고, 음성 인식은 원격 GPU 서버에서
+처리합니다. 관제 시스템은 Spring Boot와 Next.js로 구성했습니다.
 
-# 🎯 배경
+## 문제와 접근
 
 <div align="center">
-  <img src="docs/assets/why-unknown.png" width="900" alt="진입 전에 모르는 3가지 — 통로, 요구조자, 2차 위험">
+  <img src="docs/assets/why-unknown.png" width="900" alt="현장 진입 전에 알기 어려운 통로, 요구조자, 2차 위험">
 </div>
 
-붕괴·화재 현장에 사람이 먼저 들어갈 때 모르는 것이 셋입니다. **통로가 어디까지 살아 있는지**,
-**요구조자가 어디에 몇 명 있는지**, **2차 붕괴나 유독가스 같은 위험이 남아 있는지**. 셋 다
-들어가 봐야 알 수 있고, 들어가는 그 순간이 가장 위험합니다.
+재난 현장에 사람이 먼저 들어가면 통로 상태, 요구조자의 위치와 상태, 추가 위험을 직접 확인해야
+합니다. Sentinel UGV는 이 정보를 구조 인력이 진입하기 전에 수집하는 것을 목표로 했습니다.
 
 <div align="center">
-  <img src="docs/assets/impact.png" width="900" alt="Sentinel-UGV로 얻는 3가지 — 내부 지도, 요구조자 정보, 구조 판단의 근거">
+  <img src="docs/assets/impact.png" width="900" alt="로봇이 제공하는 내부 지도, 요구조자 정보, 구조 판단 자료">
 </div>
 
-로봇이 먼저 들어가면 그 셋이 **들어가기 전에 보는 자료**로 바뀝니다. SLAM 지도가 통로를,
-탐지와 음성 대화가 요구조자의 수·상태·응답 여부를, 온습도와 이벤트 영상이 판단 근거를
-남깁니다. 사람을 대신하는 로봇이 아니라 **사람보다 먼저 들어가 묻는 로봇**입니다.
+SLAM으로 내부 지도를 만들고, 카메라로 사람을 탐지하며, 음성 대화로 상태를 확인합니다. 수집한
+영상과 센서 데이터는 관제 화면과 임무 이력에서 확인할 수 있습니다.
 
-# 🎬 시연
+## 시연
 
 <div align="center">
-  <img src="docs/assets/ugv-views.png" width="960" alt="Sentinel UGV 실물 — 전면·좌측면·우측면·후면">
+  <img src="docs/assets/ugv-views.png" width="960" alt="Sentinel UGV 전면, 측면, 후면">
 </div>
-
 
 <div align="center">
   <a href="https://www.youtube.com/watch?v=guyA2-h8ZME">
     <img src="https://img.youtube.com/vi/guyA2-h8ZME/maxresdefault.jpg" width="720" alt="Sentinel UGV 시연 영상">
   </a>
   <br>
-  <a href="https://www.youtube.com/watch?v=guyA2-h8ZME">
-    <img src="https://img.shields.io/badge/YouTube-%EC%8B%9C%EC%97%B0_%EC%98%81%EC%83%81_%EB%B3%B4%EA%B8%B0-FF0000?style=for-the-badge&logo=youtube&logoColor=white" alt="YouTube에서 Sentinel UGV 시연 영상 보기">
-  </a>
-  <br>
-  <sub>▶️ 위 썸네일 또는 빨간 배지를 클릭하면 YouTube 시연 영상이 재생됩니다.</sub>
+  <a href="https://www.youtube.com/watch?v=guyA2-h8ZME">YouTube에서 전체 시연 보기</a>
 </div>
 
-차체는 BMW M7 유아전동차 베이스에 LiDAR·카메라를 고정 마운트로 올린 구성입니다. 상단 원통이
-YDLIDAR X4 Pro, 전면 중앙이 BRIO 100입니다. 조향 기하가 있어 제자리 회전은 하지 못합니다.
+시연에서는 **탐사 시작 → 자율 탐사 → 사람 발견 → 접근 → 음성 대화 → 관제 보고 → 임무 종료**의
+전체 흐름을 실제 차량으로 확인했습니다.
 
-## 관제 화면
+### 관제 화면
 
 <div align="center">
-  <img src="docs/assets/gcs-control.png" width="900" alt="관제 메인 — 실시간 영상, 실시간 SLAM 지도, 온습도, 주행 상태">
+  <img src="docs/assets/gcs-control.png" width="900" alt="실시간 영상, 지도, 센서와 주행 상태를 보여 주는 관제 화면">
 </div>
 
-한 화면에서 실시간 영상(1280×720 · 15FPS · 1.22Mbps · 지연 101ms), 실시간 SLAM 지도, 온습도와
-주행 상태를 봅니다. 하단에서 자율·수동 운행 모드를 바꾸고 탐사를 시작합니다.
+관제 화면에서 실시간 영상과 SLAM 지도, 온습도, 주행 상태를 함께 확인할 수 있습니다. 운영자는
+자율·수동 모드를 전환하고 임무를 시작하거나 중단할 수 있습니다.
 
 <div align="center">
-  <img src="docs/assets/gcs-history.png" width="900" alt="임무 이력 — 이벤트 영상, 소음 제거본, 발견 이벤트와 종료 사유">
+  <img src="docs/assets/gcs-history.png" width="900" alt="발견 이벤트 영상과 임무 결과를 보여 주는 이력 화면">
 </div>
 
-임무 이력에서는 발견 이벤트마다 잘라 둔 MP4를 재생하고, 같은 구간의 **소음 제거본을 따로**
-들을 수 있습니다(제거본은 명료도 보조이고 원본이 증거입니다). 감지 인원, 요구조자가 말한 인원,
-무응답 인원, 종료 사유가 함께 남습니다.
+임무가 끝나면 사람 발견 전후의 영상, 대화 결과, 감지 인원, 종료 사유를 이력으로 조회할 수
+있습니다. 소음 제거 음성은 청취를 돕기 위한 보조 자료이며 원본도 함께 보관합니다.
 
-> 두 캡처 모두 호스트명·IP 가 나타나지 않고 사람 얼굴은 가려 두었습니다. API·MediaMTX·8765 가
-> 모두 무인증이라 화면에 보이는 주소가 그대로 접근 경로가 되기 때문입니다(06장 36-4).
+화면 설계는 [프런트엔드 와이어프레임](frontend/docs/wireframe.md), 상세 시나리오는
+[프로젝트 개요](docs/01-프로젝트-개요.md#42-핵심-시연-시퀀스)에서 확인할 수 있습니다.
 
-관제 화면 설계는 [frontend/docs/wireframe.md](frontend/docs/wireframe.md), 시연 시나리오 전문은
-[01장 4.2 핵심 시연 시퀀스](docs/01-프로젝트-개요.md#42-핵심-시연-시퀀스)입니다.
-
-# ✨ 핵심 기능
-
-MVP 필수 기능([01장 2.2](docs/01-프로젝트-개요.md#22-mvp-필수-기능)) 16개 중 **14개를 구현했습니다.**
-남은 둘은 **MVP-13 자동 복귀**(home pose 저장까지만 되어 있고 복귀 주행이 없다)와 **MVP-06의 사람
-map 좌표 추정**(encounter 생성은 되지만 위치가 로봇 위치로 남는다 — 부분 구현이므로 셈에서 뺐다)이며,
-사유는 [미완료](#미완료)에 적었습니다. 아래 수치는 전부 실기동 실측입니다.
+## 핵심 기능
 
 <div align="center">
-  <img src="docs/assets/features.png" width="900" alt="Sentinel-UGV 3가지 핵심기능 — 내부 지도 생성 및 자율 탐사, 사람 탐지 및 음성 상호작용, 관제 전달 및 이벤트 기록">
+  <img src="docs/assets/features.png" width="900" alt="자율 탐사, 사람 탐지와 음성 상호작용, 관제 기록">
 </div>
 
-| 무엇을 | 어떻게 | 실측 |
-|---|---|---|
-| 미지 공간 자율 탐사 | SLAM Toolbox + Frontier, Nav2 Smac Hybrid-A\* + RPP | 순항 0.30m/s(실속도 99%), `R_min` 좌 1.37m·우 1.76m |
-| 사람 탐지·추적·자세 | YOLO26n Detect + BoT-SORT, 조건부 Pose | Detect 약 15FPS, 쓰러짐 판정 E-FPDS 2,658건 대조 |
-| 안전거리 접근 | bearing-only 주행 | 1.5~2.0m 정지, 접근 0.25m/s |
-| 음성 상호작용 | Silero VAD → 원격 Qwen3-ASR → GMS 구조화 → 사전 녹음 안내 | STT 실패를 무응답으로 분류하지 않음 |
-| 실시간 관제 | WebRTC 영상 · Foxglove 지도 · 2Hz 텔레메트리 | 영상 15FPS·1500kbps |
-| 이벤트 기록 | 발견 전 3초 + 상호작용 + 후 3초 MP4 → S3 | 링 버퍼 8초 순환(약 1.6MB) |
-| 다층 안전 | watchdog 300ms · 수동 TTL 250ms · `collision_monitor` · `safety_gate` | 물리 E-Stop **미도입**([안전](#-안전)) |
+### 자율 탐사
 
-**미지 공간을 스스로 돌아다닙니다**
+- YDLIDAR X4 Pro와 SLAM Toolbox로 임무마다 새로운 2D 지도를 생성합니다.
+- Frontier 탐색으로 아직 확인하지 않은 영역을 선택하고 Nav2로 이동합니다.
+- 제자리 회전이 불가능한 전륜 조향 구조를 고려해 Smac Hybrid-A*와 Regulated Pure Pursuit를
+  사용했습니다.
 
-- YDLIDAR X4 Pro와 SLAM Toolbox로 2D 지도를 실시간 생성하고, Frontier로 미탐사 영역을 스스로
-  고릅니다. 지도는 임무마다 초기화됩니다(`MISSION_START`에서 SLAM 재시작).
-- 경로는 Nav2 **Smac Hybrid-A\***(REEDS_SHEPP) + Regulated Pure Pursuit입니다. **제자리 회전을
-  하지 못하는 전륜 조향 차량**이라는 제약에서 나온 선택이며, 실측 `R_min` 좌 1.37m·우 1.76m를
-  안전측 1.8m로 planner에 넣었습니다.
-- 순항 0.30m/s 명령 대비 실속도 99%, EKF yaw는 90° 회전에서 오차 1.1%입니다.
+### 사람 탐지와 접근
 
-**사람을 찾아 안전거리까지 접근합니다**
+- YOLO26n과 BoT-SORT로 사람을 탐지하고 추적합니다.
+- 사람이 연속으로 확인될 때만 자세 추정을 실행해 쓰러짐 여부를 판정합니다.
+- 사람을 발견하면 카메라 방위각을 기준으로 접근하고 약 1.5~2.0m 거리를 두고 정지합니다.
 
-- YOLO26n Detect로 person을 상시 약 15FPS 탐지하고 BoT-SORT로 추적합니다. 같은 사람을 시간·위치
-  조건으로 하나의 encounter에 묶습니다.
-- 3프레임 이상 연속 감지되면 Pose를 약 2FPS로 **조건부** 실행해 쓰러짐을 판정합니다. 임계값은
-  E-FPDS 정답 2,658건과 대조해 검증했습니다(쓰러짐 점수 중앙 0.919 / 비쓰러짐 0.032).
-- bearing-only 주행으로 1.5~2.0m 안전거리까지 접근합니다(접근 속도 0.25m/s).
+### 음성 상호작용
 
-**발견한 사람에게 말을 걸고 답을 정리합니다**
+- Silero VAD로 발화 구간을 찾고 Qwen3-ASR로 음성을 텍스트로 변환합니다.
+- 대화 모델은 답변을 정리하는 데만 사용하며 위험도는 명시적인 규칙으로 계산합니다.
+- 음성 인식 실패와 사람의 무응답을 구분해 기록합니다.
 
-- 마이크 → Silero VAD → 원격 Qwen3-ASR-1.7B(L40S FastAPI) → GMS 구조화 → 승인된 사전 녹음 안내
-  재생으로 이어집니다.
-- **STT 실패를 요구조자의 무응답으로 분류하지 않습니다.** 위험도는 LLM이 아니라 규칙이 산출합니다.
+### 실시간 관제와 기록
 
-**관제에서 실시간으로 보고 명령합니다**
+- WebRTC 영상, SLAM 지도, 2Hz 텔레메트리를 관제 화면에 전달합니다.
+- 사람 발견 전 3초부터 상호작용 종료 후 3초까지를 하나의 이벤트 영상으로 저장합니다.
+- 임무·센서·이벤트 정보는 TimescaleDB에, 영상과 지도는 S3 호환 스토리지에 보관합니다.
 
-- WebRTC 저지연 영상(15FPS·1500kbps), Foxglove 브리지로 받는 실시간 SLAM 지도, 2Hz 텔레메트리.
-- 임무 시작·일시정지·재개·종료, 자율/수동 모드 전환, 모바일 페이지 수동 조종.
-- 사람 확정 전 3초 + 상호작용 전체 + 종료 후 3초를 이벤트 영상으로 잘라 S3에 올립니다.
-- 임무·시계열·이벤트·미디어를 TimescaleDB와 S3에 남기고 과거 임무 페이지에서 조회합니다.
+### 안전 제어
 
-**안전은 여러 층으로 막습니다**
+- ESP32 watchdog, 수동 조종 명령 만료 시간, Nav2 충돌 감시, 안전 게이트를 단계적으로 적용했습니다.
+- 통신이 끊기거나 제어 명령이 갱신되지 않으면 모터가 정지합니다.
+- 프로토타입의 안전 한계와 운용 조건은 [안전](#안전)에 별도로 정리했습니다.
 
-- ESP32 watchdog 300ms, 수동 조종 TTL 250ms, `collision_monitor` 정지·감속 구역(실측 차체 기준),
-  `safety_gate`, 관제 임무 정지. 물리 E-Stop 미도입이 이 프로토타입의 가장 큰 안전 한계이며
-  [안전](#-안전)에 그대로 적었습니다.
-- 자동 시험 **941건**이 CI에서 돕니다 — ROS 2 682 · 프런트 171 · 백엔드 55 · 탐지 33.
-
-> 여기까지 오는 동안 기록해 둔 사고와 원인 분석은
-> [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)와 [명세 변경 이력](docs/README.md)에 남아
-> 있습니다 — 이벤트 영상 마감 실패, `enable_ekf` 누락으로 인한 스택 침묵, 회전반경을 모르는
-> planner의 조향 고착 등.
-
-# 🧩 시스템
+## 시스템 구성
 
 <div align="center">
-
-![전원 구성](https://img.shields.io/badge/%EC%A0%84%EC%9B%90-%EC%8B%A4%EC%B0%A8_3%EA%B3%84%ED%86%B5-F9A825?style=flat-square)
-
+  <img src="docs/assets/ugv-hardware.png" width="900" alt="Sentinel UGV 센서, 제어 보드와 전원 구성">
 </div>
+
+> 하드웨어 그림에는 전원이 2계통으로 표시되어 있지만, 최종 시연 차량은 12V 메인 전원,
+> Jetson 보조 전원, 모터 드라이버용 5V 전원의 3계통으로 운용했습니다.
 
 <div align="center">
-  <img src="docs/assets/ugv-hardware.png" width="900" alt="UGV 하드웨어 구성 — LiDAR·카메라·IMU·초음파·Jetson·ESP32 2개·모터 드라이버·전원 배치">
+  <img src="docs/assets/architecture.svg" width="1000" alt="센서, Jetson, 원격 GPU와 관제 시스템 사이의 데이터 흐름">
 </div>
 
-> ⚠️ **도면 정정:** 위 그림에는 전원이 12V 메인과 Jetson 보조 **2계통**으로 그려져 있습니다.
-> 시연 차량은 실제로
-> **3계통**으로 돌았습니다 — 여기에 **모터 드라이버용 별도 5V 배터리**가 더 있습니다
-> (2026-08-11 실물 확인, [02장 6.6](docs/02-하드웨어.md)).
+- **차량**: BMW M7 유아전동차를 기반으로 제작했습니다. 후륜 모터 2개가 구동을, 전륜 서보가
+  조향을 담당합니다.
+- **Jetson**: 센서 수집, SLAM, 자율 탐사, Nav2 주행, 안전 제어, 탐지와 영상 처리를 수행합니다.
+- **ESP32**: 모터 제어 보드와 센서 수집 보드를 분리해 각각 Jetson과 USB Serial로 통신합니다.
+- **원격 AI**: Jetson의 메모리 사용량을 고려해 음성 인식 모델은 L40S GPU 서버에서 실행합니다.
+- **관제 시스템**: Spring Boot API, Next.js 웹, TimescaleDB, MinIO, Mosquitto, MediaMTX로
+  구성했습니다.
 
-<div align="center">
-  <img src="docs/assets/architecture.svg" width="1000" alt="Sentinel UGV 시스템 구성 — 센서·ESP32·Jetson·원격 GPU·관제·관제 웹의 데이터 흐름">
-</div>
+## 기술 선택
 
-- **차량**: BMW M7 유아전동차 베이스. 후륜 좌·우 RS540 2개(BTS7960 2개)가 전·후진, 전륜 타이로드에
-  직결된 DS51150 서보가 조향을 담당합니다. 조향 기하가 있어 **제자리 회전은 하지 못합니다**
-  (휠베이스 0.683m, 바퀴 조향각 최대 22°).
-- **Jetson**: 센서 수집, SLAM(SLAM Toolbox), 자율 탐사(Frontier), Nav2 주행, EKF 오도메트리,
-  안전 체인, 이벤트 녹화·스트리밍을 하나의 launch로 실행합니다.
-- **ESP32 2개**: 모터 보드가 구동 PWM·조향 서보·300ms watchdog을, 센서 보드가 엔코더 2개·IMU·
-  온습도·초음파 2개를 담당합니다. 각각 독립된 USB Serial로 Jetson에 붙습니다.
-- **AI**: YOLO26n Detect·BoT-SORT 사람 탐지·추적과 조건부 Pose 쓰러짐 판정(`ai/detection`),
-  음성 상호작용·원격 ASR 서버·녹음 후처리 잡음 제거(`ai/voice`).
-- **Backend**: 임무·텔레메트리·이벤트 API, MQTT 구독, STOMP/WebSocket, S3 호환 스토리지 연계.
-- **Frontend**: 실시간 영상·지도·상태 관제, 운행 모드 전환과 임무 명령, 임무 이력.
-- **Infrastructure**: PostgreSQL/TimescaleDB, MinIO, Mosquitto, MediaMTX, Docker Compose.
-- **Common**: 외부 프로토콜, 스키마, 샘플 메시지의 단일 기준점.
-
-## 기술 스택
-
-<div align="center">
-
-**🤖 로봇 · 제어**
-
-![ROS 2](https://img.shields.io/badge/ROS%202%20Humble-22314E?style=for-the-badge&logo=ros&logoColor=white)
-![Jetson](https://img.shields.io/badge/Jetson%20Orin%20Nano-76B900?style=for-the-badge&logo=nvidia&logoColor=white)
-![Nav2](https://img.shields.io/badge/Nav2%20Smac%20%C2%B7%20SLAM%20Toolbox-22314E?style=for-the-badge&logo=ros&logoColor=white)
-![Foxglove](https://img.shields.io/badge/Foxglove%20Bridge-8B5CF6?style=for-the-badge&logo=ros&logoColor=white)
-![ESP32](https://img.shields.io/badge/ESP32%20%C3%972%20%C2%B7%20FreeRTOS-E7352C?style=for-the-badge&logo=espressif&logoColor=white)
-![C++](https://img.shields.io/badge/C%2B%2B-00599C?style=for-the-badge&logo=cplusplus&logoColor=white)
-
-**👁️ 인식 · 음성**
-
-![Python](https://img.shields.io/badge/Python%203.10-3776AB?style=for-the-badge&logo=python&logoColor=white)
-![PyTorch](https://img.shields.io/badge/PyTorch%202.11%20cu128-EE4C2C?style=for-the-badge&logo=pytorch&logoColor=white)
-![YOLO](https://img.shields.io/badge/YOLO26n%20%C2%B7%20BoT--SORT-111F68?style=for-the-badge&logo=ultralytics&logoColor=white)
-![OpenCV](https://img.shields.io/badge/OpenCV-5C3EE8?style=for-the-badge&logo=opencv&logoColor=white)
-![Qwen3-ASR](https://img.shields.io/badge/Qwen3--ASR%201.7B-6F42C1?style=for-the-badge&logo=alibabacloud&logoColor=white)
-![Silero VAD](https://img.shields.io/badge/Silero%20VAD-EE4C2C?style=for-the-badge&logo=pytorch&logoColor=white)
-![GMS](https://img.shields.io/badge/GMS%20gpt--5.4--mini-8D73FF?style=for-the-badge)
-![DeepFilterNet](https://img.shields.io/badge/DeepFilterNet-1B6AC6?style=for-the-badge)
-![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white)
-
-**🖥️ 관제 웹 · API**
-
-![TypeScript](https://img.shields.io/badge/TypeScript%205-3178C6?style=for-the-badge&logo=typescript&logoColor=white)
-![Next.js](https://img.shields.io/badge/Next.js%2014-000000?style=for-the-badge&logo=nextdotjs&logoColor=white)
-![React](https://img.shields.io/badge/React%2018-61DAFB?style=for-the-badge&logo=react&logoColor=black)
-![Tailwind CSS](https://img.shields.io/badge/Tailwind%20CSS%204-06B6D4?style=for-the-badge&logo=tailwindcss&logoColor=white)
-![Java](https://img.shields.io/badge/Java%2021-ED8B00?style=for-the-badge&logo=openjdk&logoColor=white)
-![Spring Boot](https://img.shields.io/badge/Spring%20Boot%204-6DB33F?style=for-the-badge&logo=springboot&logoColor=white)
-![Gradle](https://img.shields.io/badge/Gradle-02303A?style=for-the-badge&logo=gradle&logoColor=white)
-
-**🗄️ 데이터 · 인프라**
-
-![PostgreSQL](https://img.shields.io/badge/PostgreSQL%2015-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)
-![TimescaleDB](https://img.shields.io/badge/TimescaleDB-FDB515?style=for-the-badge&logo=postgresql&logoColor=white)
-![Mosquitto](https://img.shields.io/badge/Mosquitto%20MQTT%205-3C5280?style=for-the-badge&logo=eclipsemosquitto&logoColor=white)
-![WebRTC](https://img.shields.io/badge/WebRTC%20%C2%B7%20MediaMTX-333333?style=for-the-badge&logo=webrtc&logoColor=white)
-![MinIO](https://img.shields.io/badge/MinIO-C72E49?style=for-the-badge&logo=minio&logoColor=white)
-![AWS EC2](https://img.shields.io/badge/AWS%20EC2-232F3E?style=for-the-badge)
-![Docker](https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white)
-![GitLab CI](https://img.shields.io/badge/GitLab%20CI-FC6D26?style=for-the-badge&logo=gitlab&logoColor=white)
-
-</div>
-
-## 기술 선택 근거
-
-| 기술 | 어떻게 썼나 |
+| 기술 | 선택 이유 |
 |---|---|
-| **ROS 2 Humble** | 노드를 격리해 하나가 죽어도 스택이 계속 돕니다. 실제로 클라우드 브리지가 조용히 죽어 관제 텔레메트리가 전부 끊긴 적이 있어, CI에 콜백 존재 검증을 넣었습니다 |
-| **Jetson Orin Nano 8GB** | 온디바이스 추론. 탐지 1.6GB·SLAM 0.55GB가 이미 물려 음성 인식까지 올릴 여유가 없어 그것만 원격 GPU로 뺐습니다 |
-| **Nav2 Smac Hybrid-A\*** | 제자리 회전을 못 하는 전륜 조향이라 회전반경을 아는 planner가 필요했습니다. 실측 `R_min`(좌 1.37·우 1.76m)을 안전측 1.8로 넣고 후진 계획까지 켰습니다 |
-| **Regulated Pure Pursuit** | 후진 추종용. 다만 RPP에는 곡률 상한 기능이 없어, 상한은 controller가 아니라 역운동학 층의 δ 클램프가 지킵니다 |
-| **SLAM Toolbox** | 임무마다 초기화합니다. 이전 임무의 지도가 남으면 새 현장의 통로를 잘못 그립니다 |
-| **YOLO26n · BoT-SORT** | Detect는 상시 15FPS, Pose는 3프레임 연속 감지될 때만 2FPS로 켭니다. 항상 켜면 Jetson 자원이 남지 않습니다 |
-| **Silero VAD** | 발화 구간만 골라 보내 원격 전송량과 지연을 줄입니다 |
-| **Qwen3-ASR 1.7B** | Jetson 여유가 없어 L40S GPU 서버에 FastAPI로 올리고 HTTPS로 부릅니다 |
-| **GMS gpt-5.4-mini** | 대화 정리 전용입니다. **위험도 판정은 LLM이 아니라 규칙이 합니다** — 사람 목숨이 걸린 판정을 확률 모델에 맡기지 않았습니다 |
-| **DeepFilterNet** | 관제 청취본 후처리에만 씁니다. 원본이 증거이므로 인식 입력에는 넣지 않습니다 |
-| **ESP32 ×2** | 모터와 센서를 물리적으로 분리했습니다. 한 보드가 멈춰도 다른 계통이 살고, 모터 보드는 300ms watchdog으로 스스로 정지합니다 |
-| **Spring Boot 4 + JDBC** | JPA를 걷어냈습니다. 시계열 hypertable을 ORM으로 감싸지 않기로 했고, `@Entity`가 하나도 없는데 Hibernate가 검증 0건으로 기동하며 시간만 썼습니다 |
-| **TimescaleDB** | 2Hz 텔레메트리 원본을 보관합니다. 집계·retention은 선택 기능이라 원본 조회로 갈음했습니다 |
-| **MQTT 5 + STOMP** | 로봇→관제는 유실을 허용하는 2Hz라 MQTT, 관제→브라우저는 즉시 푸시라 STOMP로 나눴습니다 |
-| **MediaMTX (WebRTC)** | 저지연 우선. 15FPS·1500kbps로 고정하고 카메라 캡처는 29.93FPS를 유지한 채 인코딩 분기에서만 낮춥니다 |
-| **S3 호환 스토리지** | 이벤트 MP4와 지도를 presigned URL로 직접 올립니다. 백엔드가 파일 본문을 거치지 않습니다 |
-| **GitLab CI** | 941건이 매 MR에서 돕니다. 젯슨에선 통과하고 CI에선 깨지는 일이 반복돼 전용 venv로 환경 차이를 없앴습니다 |
+| ROS 2 Humble | 센서, 주행, 탐지, 임무 기능을 독립 노드로 나누고 메시지로 연결하기 위해 사용했습니다. |
+| Jetson Orin Nano 8GB | 네트워크 연결이 불안정한 환경에서도 주행과 사람 탐지를 차량에서 처리하기 위해 선택했습니다. |
+| Smac Hybrid-A* | 제자리 회전이 불가능한 차량의 회전반경과 후진 경로를 계획에 반영할 수 있습니다. |
+| SLAM Toolbox | 별도의 사전 지도 없이 현장에서 지도를 생성할 수 있고 Nav2와 연동하기 쉽습니다. |
+| YOLO26n · BoT-SORT | 제한된 연산 자원에서 사람 탐지와 추적을 함께 수행하기 위해 사용했습니다. |
+| Qwen3-ASR 1.7B | Jetson의 자원을 주행과 비전에 우선 배정하고, 음성 인식은 원격 GPU에서 처리했습니다. |
+| ESP32 2대 | 모터 제어와 센서 수집을 분리하고, 모터 보드에서 독립적으로 watchdog을 실행합니다. |
+| TimescaleDB · S3 | 센서 시계열 데이터와 대용량 미디어를 성격에 맞게 분리해 저장했습니다. |
+| MQTT · STOMP | 로봇과 서버 사이의 텔레메트리, 서버와 브라우저 사이의 실시간 갱신을 나눠 처리했습니다. |
 
-# 🗂️ 저장소
+## 저장소 구조
 
 ```text
 .
-├─ jetson/                  # 로봇 온보드 소프트웨어
-│  ├─ ros2_ws/src/          # ROS 2 패키지 13개
-│  │  ├─ sentinel_{bringup,drive,exploration,safety,bridge}/
-│  │  ├─ sentinel_{approach,mission,recorder,streaming,description}/
-│  │  └─ esp32_bridge/, usb_cam/, ydlidar_ros2_driver/
-│  ├─ models/               # 모델 메타데이터(가중치·엔진은 Git 제외)
-│  └─ streaming_poc/        # 스트리밍 PoC 기록
+├─ jetson/                  # ROS 2 기반 온보드 소프트웨어
 ├─ ai/
-│  ├─ detection/            # YOLO 사람 탐지·추적 (ROS 노드가 아니라 .venv 파이썬)
-│  └─ voice/                # 음성 파이프라인·ASR 서버·평가 도구·잡음 제거 워커
-├─ hardware/
-│  ├─ esp32/{motor,sensor,jetson-comm}/   # 펌웨어(Arduino-ESP32)와 프레이밍·CRC 시험 벡터
-│  └─ cad/, wiring/, bom/   # 기구·배선·BOM 산출물
-├─ backend/                 # Spring Boot 관제 API (Dockerfile·compose 포함)
+│  ├─ detection/            # 사람 탐지·추적·자세 판정
+│  └─ voice/                # 음성 인식·대화 정리·잡음 제거
+├─ hardware/                # ESP32 펌웨어, CAD, 배선과 BOM
+├─ backend/                 # Spring Boot 관제 API
 ├─ frontend/                # Next.js 관제 웹
-├─ common/                  # 공유 프로토콜·스키마·샘플
-├─ scripts/                 # 스택 진입점(demo_up.sh/demo_down.sh)·설치·계측 스크립트
-├─ docs/                    # 통합 명세서(01~08장)·TBD 대장·트러블슈팅·Git 컨벤션
-└─ .gitlab-ci.yml           # GitLab CI/CD 파이프라인
+├─ common/                  # 공통 프로토콜과 메시지 스키마
+├─ scripts/                 # 실행·설치·계측 스크립트
+└─ docs/                    # 통합 명세, 시험과 트러블슈팅 문서
 ```
 
-# 🚀 실행
+## 실행
 
-Jetson에서 스택을 올리고 내리는 진입점은 **둘뿐**입니다. 다른 경로로 띄운 스택은 중복 기동
-검사와 정리 대상에서 빠질 수 있습니다.
+Jetson의 전체 스택은 아래 스크립트로 시작하고 종료합니다.
 
 ```bash
-./scripts/demo_up.sh                       # 기본 구성으로 기동
+./scripts/demo_up.sh
+
 ./scripts/demo_up.sh enable_esp32:=true enable_ekf:=true \
-  enable_nav2:=true enable_exploration:=true enable_approach:=true enable_safety:=true
-./scripts/demo_down.sh                     # 내리기(systemd 유닛도 함께 본다)
+  enable_nav2:=true enable_exploration:=true \
+  enable_approach:=true enable_safety:=true
+
+./scripts/demo_down.sh
 ```
 
-- 기본값은 SLAM·스트리밍·녹화·임무·클라우드 브리지·음성·탐지·시각화가 `true`,
-  **ESP32·Nav2·탐사·접근·안전·EKF가 `false`** 입니다. 실주행에 필요한 기능은 인자로 켭니다.
-- **`enable_ekf`를 빠뜨리면 스택이 조용히 침묵합니다**(S15P11A301-359). EKF를 끈 구성의 yaw는
-  근거가 없으므로 주행 판단에 쓰지 않습니다.
-- `sentinel-demo.service`가 active인 동안 손으로 `demo_up.sh`를 부르면 거부됩니다. 두 벌이 뜨면
-  증상이 「안 뜬다」가 아니라 영상 간헐 끊김·시리얼 경합으로 나타나 원인 추적이 어렵습니다.
-- 증상별 진단 경로는 [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md), 스크립트 상세는
-  [scripts/README.md](scripts/README.md)입니다.
+실제 주행에는 `enable_esp32`, `enable_ekf`, `enable_nav2`, `enable_exploration`,
+`enable_approach`, `enable_safety`를 명시적으로 활성화해야 합니다. 특히 EKF를 활성화하지 않으면
+주행에 필요한 자세 정보를 만들 수 없습니다.
 
-# 🛠️ 개발
+운영 절차와 장애 대응은 [실행 스크립트 안내](scripts/README.md)와
+[트러블슈팅 문서](docs/TROUBLESHOOTING.md)를 참고하세요.
 
-모듈마다 실행 환경이 다르므로 아래 README에서 시작합니다.
+## 개발 문서
 
-| 대상 | 실행·검증 문서 |
+| 영역 | 문서 |
 |---|---|
-| 관제 API | [backend/README.md](backend/README.md) |
-| 관제 웹 | [frontend/README.md](frontend/README.md) |
-| Jetson 전체 스택 | [jetson/README.md](jetson/README.md) |
-| ESP32 펌웨어·배선 | [hardware/README.md](hardware/README.md) |
-| 사람 탐지 | [ai/detection/README.md](ai/detection/README.md) |
-| 음성 상호작용 | [ai/voice/README.md](ai/voice/README.md) |
-| 공통 메시지 계약 | [common/README.md](common/README.md) |
+| 전체 명세와 변경 이력 | [docs/README.md](docs/README.md) |
+| 프로젝트 목표와 시나리오 | [docs/01-프로젝트-개요.md](docs/01-프로젝트-개요.md) |
+| 하드웨어와 배선 | [docs/02-하드웨어.md](docs/02-하드웨어.md) |
+| 제어와 캘리브레이션 | [docs/03-제어-캘리브레이션.md](docs/03-제어-캘리브레이션.md) |
+| 자율주행 | [docs/04-자율주행.md](docs/04-자율주행.md) |
+| 통신·서버·영상 | [docs/05-통신-서버-영상.md](docs/05-통신-서버-영상.md) |
+| 테스트·보안·운영 | [docs/06-테스트-보안-운영.md](docs/06-테스트-보안-운영.md) |
+| 사람 탐지 | [docs/07-AI-탐지.md](docs/07-AI-탐지.md) |
+| 음성 상호작용 | [docs/08-AI-음성.md](docs/08-AI-음성.md) |
+| 백엔드 | [backend/README.md](backend/README.md) |
+| 프런트엔드 | [frontend/README.md](frontend/README.md) |
+| Jetson | [jetson/README.md](jetson/README.md) |
+| 하드웨어 | [hardware/README.md](hardware/README.md) |
 
-환경변수는 루트 [`.env.example`](.env.example)을 참고하되, 실제 로딩 위치에 맞게
-`backend/.env.local` 또는 `frontend/.env.local`로 나눠 둡니다. Jetson 런타임 값은 환경변수가
-아니라 ROS 파라미터 YAML과 `~/.config/sentinel/secrets.yaml`에서 관리합니다.
+환경변수 예시는 [`.env.example`](.env.example)에 있습니다. Jetson의 런타임 설정은 ROS 파라미터
+YAML과 `~/.config/sentinel/secrets.yaml`에서 관리합니다.
 
-작업 전에는 Jira 이슈를 만들고 최신 `develop`에서 `<type>/<scope>/<jira-key>-<description>` 형식의
-브랜치를 생성합니다. 공통 메시지를 바꾸면 `common/`의 스키마·샘플과 생산자/소비자 테스트를 함께
-갱신하고, 코드가 `docs/`의 서술과 어긋나게 되면 같은 MR에서 문서를 고칩니다.
+## 검증과 한계
 
-# 📚 문서
+### 검증 범위
 
-통합 명세서는 장 번호(1~38장)와 부록(A~L)이 전역으로 이어지는 하나의 문서이며, 역할별 파일로
-나눠 관리합니다. 문서 버전·변경 이력은 [docs/README.md](docs/README.md)에서만 관리합니다.
+실제 차량으로 자율 탐사, 사람 탐지와 접근, 음성 상호작용, 영상 스트리밍, 이벤트 녹화,
+관제 명령의 전체 흐름을 확인했습니다. 프로젝트 종료 시점에는 GitLab CI에서 총 941개의 자동
+시험을 실행했습니다. 현재 GitHub 저장소에서는 해당 CI를 운영하지 않습니다.
 
-| 문서 | 담는 것 |
-|---|---|
-| [docs/README.md](docs/README.md) | 문서 규칙·버전·변경 이력·읽기 경로·용어집 |
-| [01-프로젝트-개요](docs/01-프로젝트-개요.md) | 개요·목표·시나리오·아키텍처·기술 스택·CI/CD·일정·완료 기준 |
-| [02-하드웨어](docs/02-하드웨어.md) | 기구·인터페이스·전원·배선, BOM·핀맵 |
-| [03-제어-캘리브레이션](docs/03-제어-캘리브레이션.md) | ESP32 저수준 제어·안전 통신, 센서·엔코더·조향 보정 |
-| [04-자율주행](docs/04-자율주행.md) | ROS 그래프·상태 머신·TF·SLAM·Nav2·Mission Manager |
-| [05-통신-서버-영상](docs/05-통신-서버-영상.md) | 통신 계약(규범)·Spring Boot·Next.js·DB/S3·스트리밍·녹화 |
-| [06-테스트-보안-운영](docs/06-테스트-보안-운영.md) | 테스트 계획·보안·운영·요구사항 추적·인수 시험·파라미터 동결표 |
-| [07-AI-탐지](docs/07-AI-탐지.md) | 사람 탐지·추적·자세 판정·피해자 오케스트레이션 |
-| [08-AI-음성](docs/08-AI-음성.md) | 음성 상호작용·GPU ASR·Jetson 실행·실측 |
-| [TBD.md](docs/TBD.md) | 미확정·잔여 항목 단일 대장(담당·기한) |
-| [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | 증상에서 규범 절차로 가는 현장 진단 인덱스 |
-| [git_convention.md](docs/git_convention.md) | 브랜치·커밋·MR 규칙 |
+아래 값은 성능 순위를 주장하기 위한 지표가 아니라, 차량 제어와 안전 영역을 설정할 때 사용한
+실측값입니다.
 
-# ⚖️ 라이선스
+| 항목 | 측정 결과 | 적용 |
+|---|---|---|
+| 최소 회전반경 | 좌 1.37m · 우 1.76m | 경로 계획에는 여유를 둔 1.8m 적용 |
+| 순항 속도 | 0.30m/s 명령 대비 실속도 99% | 자율주행 기본 속도 설정 |
+| 접근 속도 | 0.25m/s | 사람 접근 시 속도 제한 |
+| 조향 범위 | 서보 ±55° · 바퀴 ±22° | 역운동학 조향 한계 설정 |
+| EKF yaw | 90° 회전에서 89.02° | 자세 추정 보정 확인 |
+| 탐지 처리량 | Detect 약 15FPS · Pose 약 2FPS | Pose를 조건부로 실행 |
+| 관제 영상 | 1280×720 · 15FPS · 1500kbps | 네트워크 사용량과 지연 조정 |
 
-**프로젝트 자체 라이선스는 아직 정하지 않았습니다.** 루트에 `LICENSE` 파일이 없습니다.
+### 현재 한계
 
-제3자 구성요소와 그 라이선스는 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)에 있습니다.
-확인한 것과 아직 확인하지 않은 것을 나눠 적었습니다. **`ultralytics`가 AGPL-3.0이라 저장소를
-공개·배포할 때 선택지가 제약됩니다** — AGPL은 네트워크 너머로 서비스를 제공하는 경우까지 소스
-공개 의무를 걸고, 이 프로젝트는 관제 웹이 탐지 결과를 제공하므로 그 경계에 닿습니다. 결정 전에
-그 문서를 먼저 읽습니다.
+- **자동 복귀**: 시작 위치는 저장하지만 복귀 주행은 구현하지 않았습니다. 임무가 끝나면 로봇은
+  현재 위치에서 정지합니다.
+- **사람 위치 표시**: 사람 발견 기록은 생성되지만, 지도에는 사람 위치가 아닌 발견 당시 로봇의
+  위치가 표시됩니다. 카메라와 LiDAR를 결합한 정확한 사람 위치 추정은 아직 지원하지 않습니다.
+- **물리 비상 정지**: 래칭형 E-Stop을 장착하지 않았습니다. 시연 중에는 담당자가 모터 배터리를
+  분리할 수 있는 위치에서 차량을 운용했습니다.
+- **초음파 센서**: 전·후방 거리를 수집하지만 오탐 문제로 자동 정지 조건에는 사용하지 않습니다.
+- **접근 제어**: 속도와 조향은 실측값 기반의 개루프 제어이며, 서보 고장을 직접 감지할 수 없습니다.
+- **접근 권한**: 관제 API와 영상 스트림에 애플리케이션 인증을 구현하지 않았습니다. 공개
+  네트워크가 아닌 제한된 시연 환경을 전제로 합니다.
 
-프런트엔드 글꼴·컴포넌트 고지는 [frontend/ATTRIBUTIONS.md](frontend/ATTRIBUTIONS.md)입니다
-(Asta Sans·D2Coding은 SIL OFL 1.1로 **고지 의무**가 있습니다).
+### 범위에서 제외한 기능
 
-# 🛡️ 안전
+- Frontier가 모두 사라졌다는 이유만으로 탐사를 자동 종료하지 않습니다. LiDAR 지도가 완성되어도
+  전방 카메라가 모든 구역을 확인했다고 볼 수 없기 때문입니다.
+- 사람 탐지 모델은 세 가지 데이터셋과 네 가지 학습 방법을 비교했지만 일반화 성능이 낮아져
+  별도 파인튜닝 없이 사전학습 가중치를 사용했습니다.
+- 게임패드 대신 모바일 수동 조종 화면을 구현했습니다.
+- TimescaleDB의 자동 집계와 보존 기간 정책은 적용하지 않고 원본 시계열을 조회합니다.
 
-- **래칭형 물리 E-Stop 스위치는 도입하지 않았습니다.** 하드웨어 차단 수단은 12V 모터 배터리
-  연결 분리뿐이며, 시연·시험에서는 이를 담당할 사람을 지정합니다(03장 34-10).
-- 실제 정지 수단은 ESP32 watchdog 300ms, 수동 조종 TTL 250ms, `collision_monitor` 정지 구역,
-  `safety_gate`, 관제 임무 정지입니다. 전·후방 초음파는 **거리 관측 전용**이며 보호 정지 발동은
-  꺼져 있습니다.
-- 예상하지 못한 주행·조향이 있으면 관제에서 임무를 정지하고 차량을 들어 바퀴를 띄웁니다.
-  장애 뒤 모터를 자동 재개하지 않고, 원인을 확인한 뒤 `SAFE_IDLE`에서 명시적으로 시작합니다.
-- 조향은 개루프이고 서보가 각도·fault를 출력하지 않아 **링키지 이탈·서보 고장을 전기적으로
-  감지할 수 없습니다.** 기동 전 앞바퀴를 띄운 상태로 조향 스윕을 점검합니다.
-- 모터·전원·안전 체인 변경은 실제 장치 검증과 임베디드 담당 리뷰가 필요합니다.
-- 프로그램 시작·종료·예외 및 제어 명령 TTL 초과 시 모터는 정지 상태여야 합니다.
-- `.env`, 인증서, SSH 키, 모델 가중치와 클라우드 자격 증명은 커밋하지 않습니다.
-- 개인 음성(요구조자·팀원 녹음)은 어떤 경우에도 커밋하지 않습니다.
+세부 근거와 후속 과제는 [통합 명세](docs/README.md)와 [TBD 목록](docs/TBD.md)에 정리되어 있습니다.
 
-# 📊 상태
+## 안전
 
-명세 v2.1(2026-08-11, 시연 종료 시점 코드·실측 정합본) 기준입니다.
+Sentinel UGV는 연구·시연용 프로토타입이며 실제 재난 현장 투입을 인증받은 장비가 아닙니다.
 
-## 실기동 검증
+- 운행 전 차량을 들어 올린 상태에서 모터와 조향 동작을 확인합니다.
+- 예상하지 못한 주행이 발생하면 관제에서 임무를 중단하고 모터 전원을 분리합니다.
+- 통신 장애 후 모터를 자동으로 재가동하지 않으며, 원인을 확인한 뒤 명시적으로 다시 시작합니다.
+- 모터·전원·안전 체인을 변경한 경우 실제 장치에서 다시 검증해야 합니다.
+- 자격 증명, 인증서, SSH 키, 모델 가중치와 개인 음성 데이터는 저장소에 커밋하지 않습니다.
 
-기능 목록은 [핵심 기능](#-핵심-기능)에 있습니다. 여기에는 **그 구현이 실제로 어느 층에서
-성립하는지** — 설계 문서만 보면 오해하기 쉬운 것들을 적습니다.
+## 회고
 
-- 센서·주행 명령 체인, 임무 상태 머신, 자율 탐사, 사람 탐지·접근, 음성 상호작용, 스트리밍·
-  이벤트 녹화, MQTT·REST·STOMP 관제 경로가 전 구간 실기동으로 확인됐습니다.
-- 주행은 Nav2 **Smac Hybrid-A\*** (REEDS_SHEPP, `minimum_turning_radius` 1.8) + Regulated Pure
-  Pursuit(후진 추종) 구성이지만, **곡률 상한을 실제로 지키는 층은 planner 도 controller 도 아니라**
-  `vehicle_kinematics`의 δ 클램프입니다(RPP에는 곡률 상한 기능 자체가 없습니다 — 04장 24.1).
-- 지도는 임무마다 초기화됩니다(`MISSION_START`에서 SLAM 재시작). 재개(`RESUME`)에는 걸리지 않습니다.
-- 안전의 주 방어는 실측 차체 기준으로 다시 그린 `collision_monitor` 정지·감속 구역입니다.
-  초음파는 관측 전용이라 이 방어에 들어가지 않습니다.
+**오류가 드러나지 않는 실패를 먼저 찾아야 했습니다.** 일부 노드가 종료되거나 설정이 빠져도 전체
+프로세스는 실행 중으로 보이는 문제가 있었습니다. 이후 콜백, URDF 구조, 메시지 계약을 자동
+시험에 추가해 기능 단위의 실패가 바로 드러나도록 했습니다.
 
-## 실측값
+**하드웨어 수치를 먼저 확보했어야 했습니다.** 차체와 조향 구조가 늦게 확정되면서 회전반경과
+조향 한계를 이용하는 자율주행 튜닝이 프로젝트 후반에 집중됐습니다. 다음에는 실제 하드웨어와
+같은 제약을 시뮬레이션에 먼저 반영하고 실물에서는 측정값만 교체하는 방식으로 진행할 계획입니다.
 
-| 항목 | 값 |
-|---|---|
-| 최소 회전반경 `R_min` | 좌 1.37m · 우 1.76m (Smac에는 안전측 1.8m) |
-| 순항 속도 | 0.30m/s 명령 대비 실속도 99% |
-| 접근 속도 | 0.25m/s |
-| 펌웨어 데드밴드 | 0.15m/s — 이 아래 명령은 실속도 0 |
-| 조향 링키지 | 서보 ±55° / 바퀴 ±22° (2.5:1) |
-| EKF yaw | 90° 회전에서 89.02°(오차 1.1%), 정지 12초 드리프트 0.14° |
-| 오도메트리 | 단거리 줄자 대비 3% 이내 |
-| 카메라·영상 | 캡처 1280×720 MJPEG 29.93FPS, 관제 인코딩 15FPS·1500kbps, 링 버퍼 약 1.6MB |
-| 탐지 | Detect 상시 약 15FPS 달성, Pose는 조건부 약 2FPS |
+**안전 기능은 개수보다 책임 범위가 중요했습니다.** 센서와 제어 계층이 많아도 실제로 차량을
+멈추는 조건이 무엇인지 명확하지 않으면 안전을 보장할 수 없습니다. 각 정지 조건이 어느 계층에서
+동작하는지 문서와 시험으로 연결했습니다.
 
-## 기본 비활성 기능
+**문서와 코드를 함께 관리해야 했습니다.** 구현 변경과 문서 수정을 같은 MR에서 처리한 뒤부터
+명세와 실제 동작의 차이를 찾는 시간이 크게 줄었습니다.
 
-`enable_esp32`, `enable_nav2`, `enable_exploration`, `enable_approach`, `enable_safety`,
-`enable_ekf`는 기본 `false`입니다. 특히 `enable_safety:=true`는 실제 모터 명령 경로를 연결합니다.
-반대로 SLAM·스트리밍·녹화·임무·클라우드 브리지·음성·탐지·시각화는 기본 `true`입니다.
+## 팀
 
-## 제외 범위와 근거
+역삼역역무실관제센터 · SSAFY 15기 자율 프로젝트 · 2026.07.14 ~ 2026.08.11
 
-- **애플리케이션 인증**을 MVP 범위 밖으로 확정했습니다(36-4). `/api/**`가 `permitAll()`이고
-  로그인 화면과 `users` 테이블이 없습니다. 배포 경계는 네트워크 허용 범위·CORS·TLS이며,
-  Control Session은 조종권 중재이지 인증이 아닙니다. MediaMTX 스트림 경로와 Jetson 8765
-  Foxglove 읽기 경로도 같은 상태입니다(읽기 전용·토픽 화이트리스트·TLS로 범위만 좁혔습니다).
-- **배터리 기반 안전·종료를 폐기**했습니다(14.6). 전압·전류 센서를 장착하지 않아 계측 경로 자체가
-  없습니다. 있는 것처럼 남겨 두면 없는 보호를 믿게 되므로 표시·판정·종료 조건에서 모두 뺐고,
-  충전·전압은 시연 전에 사람이 확인합니다.
-- **YOLO 파인튜닝을 미채택**했습니다. 3개 데이터셋 × 4가지 방법을 교차 평가했으나 일반화 성능이
-  하락해 COCO 사전학습 가중치를 그대로 씁니다(25.4).
-- **게임패드 조종을 폐기**하고 모바일 페이지로 대체했습니다(28장). 조종 입력은 폰이 모터 ESP32에
-  직결하는 경로가 담당합니다.
-- **Frontier 소진 자동 종료를 넣지 않기로** 했습니다(23.4). 지도 완성을 수색 완료로 쓸 수 없다는
-  판단입니다 — 라이다는 360°·원거리라 방 중앙을 한 번 지나가면 지도가 완성되는데, 사람을 찾는
-  것은 전방 약 52° 카메라입니다. frontier만 좇으면 지도는 완벽한데 구석에 쓰러진 사람은 화각에
-  한 번도 들어오지 않습니다. 종료 판정을 넣는다면 기준은 frontier 소진이 아니라 커버리지
-  충족이어야 하고, 그건 실차 검증이 필요한 크기입니다.
-- **통계 집계·retention**(Continuous Aggregate, TimescaleDB retention)은 선택 기능이라 원본
-  시계열 조회로 갈음했습니다.
+| 이름 | 역할 | 주요 작업 |
+|---|---|---|
+| 박종화 | Robot SW · ROS 2 | 자율 탐사, 임무 제어, 안전 체인, 녹화·스트리밍, 관제 연동 |
+| 김민석 | Hardware · Firmware | 모터·센서 펌웨어, 시리얼 통신, 구동·조향 제어, 차체 조립 |
+| 박찬혁 | Hardware · Firmware | 모터 펌웨어, 시리얼 브리지, 차체 조립, 이벤트 녹화 |
+| 도영훈 | Vision AI | 사람 탐지·추적, 조건부 자세 판정, 쓰러짐 판정 검증 |
+| 김호준 | Voice AI | 음성 인식, 원격 GPU 추론, 발화 검출, 대화 정리, 잡음 제거 |
+| 이원빈 | Backend · Infrastructure | 관제 API, 실시간 메시징, 데이터 저장, 관제 웹, 배포 |
 
-## 미완료
+## 라이선스
 
-### MVP 미완료 — 2개
-
-![MVP 미완료](https://img.shields.io/badge/MVP_%EB%AF%B8%EC%99%84%EB%A3%8C-2%EA%B0%9C-E8873A?style=flat-square)
-
-- **자동 복귀(`RETURNING`)** — home pose 저장까지만 되어 있고 복귀 주행이 없습니다. 임무는
-  `COMPLETED`로 끝나고 로봇은 종료 지점에 섭니다(38-3 FR-020).
-- **사람의 map 좌표(`human_localizer`)** — encounter pose는 확정 시점의 로봇 위치이며, 카메라
-  방위각·LiDAR 거리 결합은 접근 제어에만 씁니다.
-
-### 후속 개선 — MVP 외 3개
-
-![후속 개선](https://img.shields.io/badge/%ED%9B%84%EC%86%8D_%EA%B0%9C%EC%84%A0-3%EA%B0%9C-455A64?style=flat-square)
-
-- **7분 탐사 타임아웃** — `mission_state.tick()`이 탐사 경과를 재지 않고 관련 파라미터도 없습니다.
-  자동 종료 조건이 없어 임무는 운영자 STOP으로만 끝납니다.
-- **카메라 hfov 실측** — 접근 방향 미세 오차의 유력 원인입니다(S15P11A301-371).
-- 브라우저 bbox 오버레이와 `detections` 적재, 로컬/원격 스트림 자동 전환(현재 수동 토글).
-
-## 제한 사항
-
-- 전·후방 초음파는 장착·발행까지 구현했으나 **거리 관측 전용**입니다. 전방은 빈 공간 오측 때문에
-  발동을 껐고(커넥터 분리 유지) 후방은 정지 판정에 넣지 않았습니다. 1.4m에서 탐지율이 7~27%라
-  임계를 올리면 놓치는 비율이 그대로 오판이 되므로, 넓히지 않고 좁은 범위를 정확히 아는 쪽을
-  택했습니다(22.2 실측).
-- 구동 속도·조향은 엔코더 폐루프 PID가 아니라 실측 회귀 기반 **개루프**입니다. 조향은 서보가
-  각도·fault를 출력하지 않아 링키지 이탈을 전기적으로 감지할 수 없고, IMU 기대 yaw rate 대조가
-  유일한 간접 판정입니다.
-- 프런트엔드 상수 `USE_MOCK`는 이름보다 범위가 훨씬 좁습니다
-  ([RobotContext.tsx](frontend/features/robot/RobotContext.tsx#L31)). 임무 명령·조회, 텔레메트리,
-  온습도·MCU 상태, 지도, STOMP 푸시는 모두 실 경로입니다. **남은 목은 접속 연출(1초 뒤
-  `connected`) 하나뿐**입니다 — `lidarOk`·`cameraOk` 램프 고정과 미사용 `sendControl`의 no-op은
-  S15P11A301-377에서 걷어냈습니다.
-
-> **왜 미구현을 적는가.** 명세가 "구현한다"고 적고 있는데 실제로 없으면, 통합 검사에서 "왜 안
-> 되나"를 매번 다시 조사하게 되고 최악의 경우 **보안처럼 없는 보호를 있다고 믿습니다.** 그래서
-> 이 저장소는 폐기한 것은 폐기로, 안 하기로 한 것은 안 한다고 적습니다(명세 v2.0 원칙).
-
-구현 상태의 세부 근거와 남은 검증은 [통합 명세서](docs/README.md)와
-[TBD 대장](docs/TBD.md)을 기준으로 합니다.
-
-# 💡 회고
-
-**조용히 죽는 실패가 가장 비쌌습니다.** 클라우드 브리지가 기동 직후 죽어도 나머지 노드는
-계속 돌아 관제 텔레메트리만 끊겼고, URDF 조인트 4줄이 지워져도 XML은 여전히 유효해
-`robot_state_publisher`가 그대로 떴습니다. `enable_ekf`를 빠뜨리면 스택 전체가 침묵합니다.
-셋 다 「에러가 안 난다」가 문제였고, 그래서 CI에 콜백 존재·URDF 트리·메시지 계약 검사를
-따로 붙였습니다. 다음에도 **실패가 소리를 내는지 먼저 확인**하겠습니다.
-
-**하드웨어가 굳는 데 3주가 걸렸고, 자율주행 튜닝은 남은 며칠에 몰렸습니다.** ESP32가 실측값으로
-바퀴를 돌린 것이 7월 14일 시작 후 **3주째인 8월 3일**, 조향이 전륜 서보로 확정된 것이
-**8월 6일**입니다 — 그전 차체는 앞쪽이 캐스터였고 조향 기하 자체가 없었습니다. 자율주행이 쓰는
-값은 전부 그 뒤에 나왔습니다. 휠베이스 0.683m, 최대 조향각 22°, 최소 회전반경 좌 1.37m·우
-1.76m, 링키지 비 2.5:1, mm/s→PWM 매핑까지 — 마지막 상수가 펌웨어에 들어간 날은 **시연 이틀
-전인 8월 9일**이고, 정지·감속 구역을 실측 차체 기준으로 다시 그린 것도 같은 날입니다. 다음에는
-하드웨어에서 나올 값의 **자리를 먼저 비워두고** 시뮬레이션으로 검증까지 끝낸 뒤, 실물에서는
-숫자만 갈아 끼우겠습니다.
-
-**실측 없이 정한 값은 전부 바뀌었습니다.** 회전반경을 재기 전에 고른 planner는 조향 상한에
-고착했고(NavFn → Smac Hybrid-A\*), 조향 링키지 비는 1:1로 잡았다가 실측 후 2.5:1로,
-초음파 임계는 실측까지 하고도 빈 공간 오측 때문에 결국 발동을 껐습니다. 값이 필요한
-시점보다 앞서 재야 했습니다.
-
-**안전은 층을 늘리는 것보다 어느 층이 실제로 막는지 아는 것이 어려웠습니다.** 초음파는
-달려 있지만 관측 전용이고, 곡률 상한은 planner도 controller도 아닌 역운동학의 δ 클램프가
-지킵니다. 층이 많을수록 「어딘가 막아주겠지」로 흐르기 쉬워서, 문서에 **막는 층을 하나씩
-지목해** 적었습니다.
-
-**문서와 코드를 같은 MR에서 고치는 규칙을 늦게 세웠습니다.** 그러기 전 2주 동안 명세와
-구현이 13곳 어긋났고, 통합 시험마다 「왜 안 되지」를 다시 조사했습니다. 규칙을 세운 뒤로
-그 비용이 사라졌습니다.
-
-**아쉬운 것** — 물리 E-Stop을 끝내 달지 못했습니다. 부품 모델과 차단 정격을 확정하지 못한
-채 시연까지 갔고, 하드웨어 차단 수단은 배터리 분리뿐이었습니다. 다음 하드웨어 프로젝트에서는
-안전 부품 확정을 1주차 안에 끝내겠습니다.
-
-# 👥 팀
-
-역삼역역무실관제센터 · 6명 · 2026-07-14 ~ 08-11(약 4주) · SSAFY 15기 자율 프로젝트
-
-**박종화** — 로봇SW · ROS2
-
-- 로봇 스택 전반 — 기동·자율 탐사·임무 상태 머신·안전 체인·녹화·스트리밍·관제 연동
-- 관제 웹, 통합 명세서 관리, CI/CD (이원빈과 함께)
-
-**김민석** — 하드웨어 · 펌웨어
-
-- 모터·센서 보드 펌웨어, 보드와 로봇 컴퓨터를 잇는 시리얼 통신
-- 구동·조향 역운동학
-- 차체 조립과 배선 (박찬혁과 함께)
-
-**박찬혁** — 하드웨어 · 펌웨어
-
-- 모터 보드 펌웨어와 시리얼 브리지
-- 차체 조립과 배선 (김민석과 함께)
-- 이벤트 녹화·기동 일부, 시험·보안 문서
-
-**도영훈** — 비전 AI
-
-- 사람 탐지·추적, 조건부 자세 판정
-- 쓰러짐 임계값 검증(공개 데이터셋 정답 2,658건 대조)
-
-**김호준** — 음성 AI
-
-- 음성 인식 파이프라인과 원격 GPU 추론 서버
-- 발화 구간 검출, 대화 정리 모델 연동, 녹음 잡음 제거
-
-**이원빈** — 백엔드 · 인프라
-
-- 관제 API, 메시지 브로커 구독과 실시간 푸시, 시계열 DB·객체 스토리지
-- 관제 웹 화면 구현
-- CI/CD 파이프라인과 배포 (박종화와 함께)
-
-> 커밋 이력을 기준으로 적고 팀 확인을 거쳤습니다. 조립·배선처럼 이력에 남지 않는 일과
-> 공동 작업은 이력만으로는 갈리지 않습니다. 잔여 항목의 담당은 [TBD 대장](docs/TBD.md)에
-> 역할 코드(`ROS2·주행 A`, `임베디드·기구 B`, `AI A`, `AI B`, `백엔드·영상 A`)로 적혀 있습니다.
+프로젝트 자체 라이선스는 아직 정하지 않았으며 루트에 `LICENSE` 파일이 없습니다. 제3자 구성요소와
+라이선스는 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md), 프런트엔드 자산 고지는
+[frontend/ATTRIBUTIONS.md](frontend/ATTRIBUTIONS.md)에서 확인할 수 있습니다.

@@ -2,30 +2,52 @@
 
 ![Sentinel UGV Header](https://capsule-render.vercel.app/api?type=waving&height=260&color=0:0C0C0F,45:1F4E79,100:E8873A&text=Sentinel%20UGV&fontColor=FFFFFF&fontSize=74&fontAlign=50&fontAlignY=38&desc=%EC%9E%AC%EB%82%9C%20%ED%98%84%EC%9E%A5%20%EC%9E%90%EC%9C%A8%20%ED%83%90%EC%82%AC%20%EB%A1%9C%EB%B4%87%20%C2%B7%20%EC%98%A8%EB%94%94%EB%B0%94%EC%9D%B4%EC%8A%A4%20AI%20%EA%B4%80%EC%A0%9C%20%EC%8B%9C%EC%8A%A4%ED%85%9C&descSize=18&descAlign=50&descAlignY=58&animation=fadeIn)
 
-### 사람이 들어가기 전에, 로봇이 먼저 들어가 묻습니다
+### 사람이 들어가기 전에, 로봇이 먼저 들어가 *묻습니다*
 
-**Robot & Control**
+**🤖 로봇 · 제어**
 
-![ROS 2](https://img.shields.io/badge/ROS%202%20Humble-22314E?style=flat-square&logo=ros&logoColor=white)
-![Jetson](https://img.shields.io/badge/Jetson%20Orin%20Nano-76B900?style=flat-square&logo=nvidia&logoColor=white)
-![Nav2](https://img.shields.io/badge/Nav2%20%C2%B7%20SLAM%20Toolbox-22314E?style=flat-square&logo=ros&logoColor=white)
-![ESP32](https://img.shields.io/badge/ESP32%20%C3%972-E7352C?style=flat-square&logo=espressif&logoColor=white)
+![ROS 2](https://img.shields.io/badge/ROS%202%20Humble-22314E?style=for-the-badge&logo=ros&logoColor=white)
+![Jetson](https://img.shields.io/badge/Jetson%20Orin%20Nano-76B900?style=for-the-badge&logo=nvidia&logoColor=white)
+![Nav2](https://img.shields.io/badge/Nav2%20Smac%20%C2%B7%20SLAM%20Toolbox-22314E?style=for-the-badge&logo=ros&logoColor=white)
+![Foxglove](https://img.shields.io/badge/Foxglove%20Bridge-8B5CF6?style=for-the-badge&logo=ros&logoColor=white)
+![ESP32](https://img.shields.io/badge/ESP32%20%C3%972%20%C2%B7%20FreeRTOS-E7352C?style=for-the-badge&logo=espressif&logoColor=white)
+![C++](https://img.shields.io/badge/C%2B%2B-00599C?style=for-the-badge&logo=cplusplus&logoColor=white)
 
-**AI & Voice**
+**👁️ 인식 · 음성**
 
-![PyTorch](https://img.shields.io/badge/PyTorch-EE4C2C?style=flat-square&logo=pytorch&logoColor=white)
-![YOLO](https://img.shields.io/badge/YOLO26n%20%C2%B7%20BoT--SORT-111F68?style=flat-square&logo=ultralytics&logoColor=white)
-![Qwen3-ASR](https://img.shields.io/badge/Qwen3--ASR%201.7B-6F42C1?style=flat-square)
-![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white)
+![Python](https://img.shields.io/badge/Python%203.10-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![PyTorch](https://img.shields.io/badge/PyTorch%202.11%20cu128-EE4C2C?style=for-the-badge&logo=pytorch&logoColor=white)
+![YOLO](https://img.shields.io/badge/YOLO26n%20%C2%B7%20BoT--SORT-111F68?style=for-the-badge&logo=ultralytics&logoColor=white)
+![OpenCV](https://img.shields.io/badge/OpenCV-5C3EE8?style=for-the-badge&logo=opencv&logoColor=white)
+![Qwen3-ASR](https://img.shields.io/badge/Qwen3--ASR%201.7B-6F42C1?style=for-the-badge&logo=alibabacloud&logoColor=white)
+![Silero VAD](https://img.shields.io/badge/Silero%20VAD-EE4C2C?style=for-the-badge&logo=pytorch&logoColor=white)
+![GMS](https://img.shields.io/badge/GMS%20gpt--5.4--mini-8D73FF?style=for-the-badge)
+![DeepFilterNet](https://img.shields.io/badge/DeepFilterNet-1B6AC6?style=for-the-badge)
+![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white)
 
-**Control Center & Infrastructure**
+**🖥️ 관제 웹 · API**
 
-![Next.js](https://img.shields.io/badge/Next.js%2014-000000?style=flat-square&logo=nextdotjs&logoColor=white)
-![Spring Boot](https://img.shields.io/badge/Spring%20Boot%204-6DB33F?style=flat-square&logo=springboot&logoColor=white)
-![TimescaleDB](https://img.shields.io/badge/TimescaleDB-FDB515?style=flat-square&logo=postgresql&logoColor=white)
-![Docker](https://img.shields.io/badge/Docker-2496ED?style=flat-square&logo=docker&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript%205-3178C6?style=for-the-badge&logo=typescript&logoColor=white)
+![Next.js](https://img.shields.io/badge/Next.js%2014-000000?style=for-the-badge&logo=nextdotjs&logoColor=white)
+![React](https://img.shields.io/badge/React%2018-61DAFB?style=for-the-badge&logo=react&logoColor=black)
+![Tailwind CSS](https://img.shields.io/badge/Tailwind%20CSS%204-06B6D4?style=for-the-badge&logo=tailwindcss&logoColor=white)
+![Java](https://img.shields.io/badge/Java%2021-ED8B00?style=for-the-badge&logo=openjdk&logoColor=white)
+![Spring Boot](https://img.shields.io/badge/Spring%20Boot%204-6DB33F?style=for-the-badge&logo=springboot&logoColor=white)
+![Gradle](https://img.shields.io/badge/Gradle-02303A?style=for-the-badge&logo=gradle&logoColor=white)
 
-[프로젝트 소개](#sentinel-ugv) · [시연](#시연) · [핵심 기능](#핵심-기능) · [시스템 구성](#시스템-구성) · [실행](#실행) · [개발 문서](#개발-문서)
+**🗄️ 데이터 · 인프라**
+
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL%2015-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)
+![TimescaleDB](https://img.shields.io/badge/TimescaleDB-FDB515?style=for-the-badge&logo=postgresql&logoColor=white)
+![Mosquitto](https://img.shields.io/badge/Mosquitto%20MQTT%205-3C5280?style=for-the-badge&logo=eclipsemosquitto&logoColor=white)
+![WebRTC](https://img.shields.io/badge/WebRTC%20%C2%B7%20MediaMTX-333333?style=for-the-badge&logo=webrtc&logoColor=white)
+![MinIO](https://img.shields.io/badge/MinIO-C72E49?style=for-the-badge&logo=minio&logoColor=white)
+![AWS EC2](https://img.shields.io/badge/AWS%20EC2-232F3E?style=for-the-badge)
+![Docker](https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white)
+
+[🎯 소개](#-문제와-접근) · [🎬 시연](#-시연) · [✨ 핵심 기능](#-핵심-기능) · [🧩 시스템](#-시스템-구성) · [🚀 실행](#-실행) · [📚 문서](#-개발-문서)
+
+[📊 검증과 한계](#-검증과-한계) · [🛡️ 안전](#-안전) · [💡 회고](#-회고) · [👥 팀](#-팀)
 
 </div>
 
@@ -38,7 +60,7 @@ Sentinel UGV는 사람이 진입하기 어려운 재난·사고 현장을 먼저
 Jetson Orin Nano에서 ROS 2 기반 자율주행과 사람 탐지를 수행하고, 음성 인식은 원격 GPU 서버에서
 처리합니다. 관제 시스템은 Spring Boot와 Next.js로 구성했습니다.
 
-## 문제와 접근
+## 🎯 문제와 접근
 
 <div align="center">
   <img src="docs/assets/why-unknown.png" width="900" alt="현장 진입 전에 알기 어려운 통로, 요구조자, 2차 위험">
@@ -54,7 +76,7 @@ Jetson Orin Nano에서 ROS 2 기반 자율주행과 사람 탐지를 수행하�
 SLAM으로 내부 지도를 만들고, 카메라로 사람을 탐지하며, 음성 대화로 상태를 확인합니다. 수집한
 영상과 센서 데이터는 관제 화면과 임무 이력에서 확인할 수 있습니다.
 
-## 시연
+## 🎬 시연
 
 <div align="center">
   <img src="docs/assets/ugv-views.png" width="960" alt="Sentinel UGV 전면, 측면, 후면">
@@ -65,7 +87,9 @@ SLAM으로 내부 지도를 만들고, 카메라로 사람을 탐지하며, 음�
     <img src="https://img.youtube.com/vi/guyA2-h8ZME/maxresdefault.jpg" width="720" alt="Sentinel UGV 시연 영상">
   </a>
   <br>
-  <a href="https://www.youtube.com/watch?v=guyA2-h8ZME">YouTube에서 전체 시연 보기</a>
+  <a href="https://www.youtube.com/watch?v=guyA2-h8ZME">
+    <img src="https://img.shields.io/badge/YouTube-%EC%A0%84%EC%B2%B4_%EC%8B%9C%EC%97%B0_%EB%B3%B4%EA%B8%B0-FF0000?style=for-the-badge&logo=youtube&logoColor=white" alt="YouTube에서 Sentinel UGV 전체 시연 보기">
+  </a>
 </div>
 
 시연에서는 **탐사 시작 → 자율 탐사 → 사람 발견 → 접근 → 음성 대화 → 관제 보고 → 임무 종료**의
@@ -90,7 +114,7 @@ SLAM으로 내부 지도를 만들고, 카메라로 사람을 탐지하며, 음�
 화면 설계는 [프런트엔드 와이어프레임](frontend/docs/wireframe.md), 상세 시나리오는
 [프로젝트 개요](docs/01-프로젝트-개요.md#42-핵심-시연-시퀀스)에서 확인할 수 있습니다.
 
-## 핵심 기능
+## ✨ 핵심 기능
 
 <div align="center">
   <img src="docs/assets/features.png" width="900" alt="자율 탐사, 사람 탐지와 음성 상호작용, 관제 기록">
@@ -125,9 +149,9 @@ SLAM으로 내부 지도를 만들고, 카메라로 사람을 탐지하며, 음�
 
 - ESP32 watchdog, 수동 조종 명령 만료 시간, Nav2 충돌 감시, 안전 게이트를 단계적으로 적용했습니다.
 - 통신이 끊기거나 제어 명령이 갱신되지 않으면 모터가 정지합니다.
-- 프로토타입의 안전 한계와 운용 조건은 [안전](#안전)에 별도로 정리했습니다.
+- 프로토타입의 안전 한계와 운용 조건은 [안전](#-안전)에 별도로 정리했습니다.
 
-## 시스템 구성
+## 🧩 시스템 구성
 
 <div align="center">
   <img src="docs/assets/ugv-hardware.png" width="900" alt="Sentinel UGV 센서, 제어 보드와 전원 구성">
@@ -148,7 +172,7 @@ SLAM으로 내부 지도를 만들고, 카메라로 사람을 탐지하며, 음�
 - **관제 시스템**: Spring Boot API, Next.js 웹, TimescaleDB, MinIO, Mosquitto, MediaMTX로
   구성했습니다.
 
-## 기술 선택
+## 🧭 기술 선택
 
 | 기술 | 선택 이유 |
 |---|---|
@@ -162,7 +186,7 @@ SLAM으로 내부 지도를 만들고, 카메라로 사람을 탐지하며, 음�
 | TimescaleDB · S3 | 센서 시계열 데이터와 대용량 미디어를 성격에 맞게 분리해 저장했습니다. |
 | MQTT · STOMP | 로봇과 서버 사이의 텔레메트리, 서버와 브라우저 사이의 실시간 갱신을 나눠 처리했습니다. |
 
-## 저장소 구조
+## 🗂️ 저장소 구조
 
 ```text
 .
@@ -178,7 +202,7 @@ SLAM으로 내부 지도를 만들고, 카메라로 사람을 탐지하며, 음�
 └─ docs/                    # 통합 명세, 시험과 트러블슈팅 문서
 ```
 
-## 실행
+## 🚀 실행
 
 Jetson의 전체 스택은 아래 스크립트로 시작하고 종료합니다.
 
@@ -199,7 +223,7 @@ Jetson의 전체 스택은 아래 스크립트로 시작하고 종료합니다.
 운영 절차와 장애 대응은 [실행 스크립트 안내](scripts/README.md)와
 [트러블슈팅 문서](docs/TROUBLESHOOTING.md)를 참고하세요.
 
-## 개발 문서
+## 📚 개발 문서
 
 | 영역 | 문서 |
 |---|---|
@@ -220,7 +244,7 @@ Jetson의 전체 스택은 아래 스크립트로 시작하고 종료합니다.
 환경변수 예시는 [`.env.example`](.env.example)에 있습니다. Jetson의 런타임 설정은 ROS 파라미터
 YAML과 `~/.config/sentinel/secrets.yaml`에서 관리합니다.
 
-## 검증과 한계
+## 📊 검증과 한계
 
 ### 검증 범위
 
@@ -265,7 +289,7 @@ YAML과 `~/.config/sentinel/secrets.yaml`에서 관리합니다.
 
 세부 근거와 후속 과제는 [통합 명세](docs/README.md)와 [TBD 목록](docs/TBD.md)에 정리되어 있습니다.
 
-## 안전
+## 🛡️ 안전
 
 Sentinel UGV는 연구·시연용 프로토타입이며 실제 재난 현장 투입을 인증받은 장비가 아닙니다.
 
@@ -275,7 +299,7 @@ Sentinel UGV는 연구·시연용 프로토타입이며 실제 재난 현장 투
 - 모터·전원·안전 체인을 변경한 경우 실제 장치에서 다시 검증해야 합니다.
 - 자격 증명, 인증서, SSH 키, 모델 가중치와 개인 음성 데이터는 저장소에 커밋하지 않습니다.
 
-## 회고
+## 💡 회고
 
 **오류가 드러나지 않는 실패를 먼저 찾아야 했습니다.** 일부 노드가 종료되거나 설정이 빠져도 전체
 프로세스는 실행 중으로 보이는 문제가 있었습니다. 이후 콜백, URDF 구조, 메시지 계약을 자동
@@ -292,7 +316,7 @@ Sentinel UGV는 연구·시연용 프로토타입이며 실제 재난 현장 투
 **문서와 코드를 함께 관리해야 했습니다.** 구현 변경과 문서 수정을 같은 MR에서 처리한 뒤부터
 명세와 실제 동작의 차이를 찾는 시간이 크게 줄었습니다.
 
-## 팀
+## 👥 팀
 
 역삼역역무실관제센터 · SSAFY 15기 자율 프로젝트 · 2026.07.14 ~ 2026.08.11
 
@@ -305,7 +329,7 @@ Sentinel UGV는 연구·시연용 프로토타입이며 실제 재난 현장 투
 | 김호준 | Voice AI | 음성 인식, 원격 GPU 추론, 발화 검출, 대화 정리, 잡음 제거 |
 | 이원빈 | Backend · Infrastructure | 관제 API, 실시간 메시징, 데이터 저장, 관제 웹, 배포 |
 
-## 라이선스
+## ⚖️ 라이선스
 
 프로젝트 자체 라이선스는 아직 정하지 않았으며 루트에 `LICENSE` 파일이 없습니다. 제3자 구성요소와
 라이선스는 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md), 프런트엔드 자산 고지는

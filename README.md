@@ -47,9 +47,9 @@
 ![GitLab CI/CD](https://img.shields.io/badge/GitLab%20CI%2FCD-FC6D26?style=for-the-badge&logo=gitlab&logoColor=white)
 ![AWS EC2](https://img.shields.io/badge/AWS%20EC2-232F3E?style=for-the-badge)
 
-[🎯 소개](#-소개) · [🎬 시연](#-시연) · [✨ 핵심 기능](#-핵심-기능) · [🧩 시스템](#-시스템-구성) · [🚀 실행](#-실행) · [📚 문서](#-개발-문서)
+[🎯 소개](#-소개) · [🎬 시연·발표 자료](#-시연-및-발표-자료) · [✨ 핵심 기능](#-핵심-기능) · [🧩 시스템](#-시스템-구성) · [🚀 실행](#-실행) · [📚 문서](#-개발-문서)
 
-[📄 발표 자료](docs/Sentinel-UGV-presentation.pdf) · [📊 검증과 한계](#-검증과-한계) · [🛡️ 안전](#-안전) · [💡 회고](#-회고) · [👥 팀](#-팀)
+[📊 검증과 한계](#-검증과-한계) · [🛡️ 안전](#-안전) · [💡 회고](#-회고) · [👥 팀](#-팀)
 
 </div>
 
@@ -78,7 +78,7 @@ Jetson Orin Nano에서 ROS 2 기반 자율주행과 사람 탐지를 수행하�
 SLAM으로 내부 지도를 만들고, 카메라로 사람을 탐지하며, 음성 대화로 상태를 확인합니다. 수집한
 영상과 센서 데이터는 관제 화면과 임무 이력에서 확인할 수 있습니다.
 
-## 🎬 시연
+## 🎬 시연 및 발표 자료
 
 <div align="center">
   <img src="docs/assets/ugv-views.png" width="960" alt="Sentinel UGV 전면, 측면, 후면">

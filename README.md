@@ -47,7 +47,7 @@
 
 [🎯 소개](#-문제와-접근) · [🎬 시연](#-시연) · [✨ 핵심 기능](#-핵심-기능) · [🧩 시스템](#-시스템-구성) · [🚀 실행](#-실행) · [📚 문서](#-개발-문서)
 
-[📊 검증과 한계](#-검증과-한계) · [🛡️ 안전](#-안전) · [💡 회고](#-회고) · [👥 팀](#-팀)
+[📄 발표 자료](docs/Sentinel-UGV-presentation.pdf) · [📊 검증과 한계](#-검증과-한계) · [🛡️ 안전](#-안전) · [💡 회고](#-회고) · [👥 팀](#-팀)
 
 </div>
 
@@ -89,6 +89,9 @@ SLAM으로 내부 지도를 만들고, 카메라로 사람을 탐지하며, 음�
   <br>
   <a href="https://www.youtube.com/watch?v=guyA2-h8ZME">
     <img src="https://img.shields.io/badge/YouTube-%EC%A0%84%EC%B2%B4_%EC%8B%9C%EC%97%B0_%EB%B3%B4%EA%B8%B0-FF0000?style=for-the-badge&logo=youtube&logoColor=white" alt="YouTube에서 Sentinel UGV 전체 시연 보기">
+  </a>
+  <a href="docs/Sentinel-UGV-presentation.pdf">
+    <img src="https://img.shields.io/badge/PDF-%EB%B0%9C%ED%91%9C_%EC%9E%90%EB%A3%8C_%EB%B3%B4%EA%B8%B0-BD2C00?style=for-the-badge&logo=adobeacrobatreader&logoColor=white" alt="Sentinel UGV 발표 자료 보기">
   </a>
 </div>
 
@@ -161,7 +164,13 @@ SLAM으로 내부 지도를 만들고, 카메라로 사람을 탐지하며, 음�
 > Jetson 보조 전원, 모터 드라이버용 5V 전원의 3계통으로 운용했습니다.
 
 <div align="center">
-  <img src="docs/assets/architecture.svg" width="1000" alt="센서, Jetson, 원격 GPU와 관제 시스템 사이의 데이터 흐름">
+  <img src="docs/assets/architecture-01-overview.png" width="1000" alt="Sentinel UGV 전체 시스템 아키텍처">
+  <br><br>
+  <img src="docs/assets/architecture-02-hardware.png" width="1000" alt="음성 입출력, 환경·주행 센서, 구동·조향과 배터리 구성">
+  <br><br>
+  <img src="docs/assets/architecture-03-jetson.png" width="1000" alt="Jetson Orin Nano 온보드 시스템 구성">
+  <br><br>
+  <img src="docs/assets/architecture-04-cloud.png" width="1000" alt="차량 통신, 데이터 저장, 원격 음성 AI와 클라우드 관제 구성">
 </div>
 
 - **차량**: BMW M7 유아전동차를 기반으로 제작했습니다. 후륜 모터 2개가 구동을, 전륜 서보가
